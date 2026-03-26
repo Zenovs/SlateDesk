@@ -19,9 +19,10 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 1000,
     position: 'relative',
     height: 48,
+    overflow: 'visible',
   },
-  left: { display: 'flex', alignItems: 'center', gap: 12 },
-  right: { display: 'flex', alignItems: 'center', gap: 8 },
+  left: { display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 },
+  right: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
   logo: {
     fontSize: 18,
     fontWeight: 700,
@@ -39,6 +40,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 6,
     fontSize: 13,
+    whiteSpace: 'nowrap' as const,
     transition: 'all 150ms ease',
   },
   activeBtn: {
