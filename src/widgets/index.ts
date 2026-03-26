@@ -12,6 +12,7 @@ import { calendarWidgetDef } from './CalendarWidget';
 import { weatherWidgetDef } from './WeatherWidget';
 import { messagesWidgetDef } from './MessagesWidget';
 import { todoWidgetDef } from './TodoWidget';
+import { newsWidgetDef } from './NewsWidget';
 
 export const initializeWidgets = () => {
   registerWidget(clockWidgetDef);
@@ -19,4 +20,5 @@ export const initializeWidgets = () => {
   registerWidget(weatherWidgetDef);
   registerWidget(messagesWidgetDef);
   registerWidget(todoWidgetDef);
+  registerWidget(newsWidgetDef);
 };

@@ -1,18 +1,90 @@
 /**
- * Weather Widget – Shows weather forecast (mock data).
- * Inspired by Screenshot 2 weather section.
+ * Weather Widget – Shows weather forecast from OpenWeatherMap API.
+ * Falls back to mock data if API key is not configured.
  */
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import type { WidgetProps, WidgetDefinition } from '../types/widget';
-import { mockWeatherData } from '../utils/mockData';
+import { fetchWeatherData, type WeatherResult } from '../utils/weatherApi';
+import { isApiConfigured } from '../utils/apiConfig';
 
 const WeatherComponent: React.FC<WidgetProps> = () => {
-  const today = mockWeatherData[0];
-  const forecast = mockWeatherData.slice(1);
+  const [weather, setWeather] = useState<WeatherResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+
+  const loadWeather = useCallback(async () => {
+    try {
+      const result = await fetchWeatherData();
+      setWeather(result);
+      setLastUpdate(new Date());
+    } catch {
+      console.error('[WeatherWidget] Fehler beim Laden');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadWeather();
+    // Refresh every 30 minutes
+    const interval = setInterval(loadWeather, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [loadWeather]);
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-tertiary)' }}>
+        ⏳ Wetter wird geladen...
+      </div>
+    );
+  }
+
+  if (!weather || weather.data.length === 0) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-tertiary)' }}>
+        ⚠️ Keine Wetterdaten verfügbar
+      </div>
+    );
+  }
+
+  const today = weather.data[0];
+  const forecast = weather.data.slice(1);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 12 }}>
-      {/* Current */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
+      {/* Status indicator */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        fontSize: 'var(--font-size-xs)',
+        color: 'var(--text-tertiary)',
+        paddingBottom: 4,
+      }}>
+        <span>
+          {weather.isLive ? '🟢 Live' : '🔴 Offline'}
+          {weather.city && ` – ${weather.city}`}
+          {!weather.isLive && !isApiConfigured('openWeatherMap') && ' (Mock-Daten)'}
+        </span>
+        {lastUpdate && (
+          <span>{lastUpdate.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })}</span>
+        )}
+      </div>
+
+      {/* Error notice */}
+      {weather.error && !weather.isLive && isApiConfigured('openWeatherMap') && (
+        <div style={{
+          fontSize: 'var(--font-size-xs)',
+          color: 'var(--error-color, #ef4444)',
+          background: 'rgba(239, 68, 68, 0.1)',
+          padding: '4px 8px',
+          borderRadius: 'var(--radius-sm)',
+        }}>
+          ⚠️ {weather.error}
+        </div>
+      )}
+
+      {/* Current weather */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -34,6 +106,7 @@ const WeatherComponent: React.FC<WidgetProps> = () => {
           </div>
         </div>
       </div>
+
       {/* Forecast row */}
       <div style={{
         display: 'flex',
@@ -59,8 +132,8 @@ export const weatherWidgetDef: WidgetDefinition = {
   manifest: {
     id: 'weather',
     name: 'Wetter',
-    description: 'Wettervorhersage (Mock)',
-    version: '1.0.0',
+    description: 'Wettervorhersage (OpenWeatherMap)',
+    version: '2.0.0',
     author: 'SlateDesk',
     minWidth: 3,
     minHeight: 2,

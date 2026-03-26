@@ -2,7 +2,7 @@
 
 > Minimalistisches Smart Office Dashboard für Ubuntu – gebaut mit Tauri + React.
 
-![Phase](https://img.shields.io/badge/Phase-1%20MVP-blue)
+![Phase](https://img.shields.io/badge/Phase-2a%20APIs-blue)
 ![License](https://img.shields.io/badge/License-Open%20Source-green)
 ![Platform](https://img.shields.io/badge/Platform-Ubuntu-orange)
 
@@ -22,6 +22,15 @@ SlateDesk ist ein erweiterbares Desktop-Dashboard für den Office-Einsatz. Es l�
 - ✅ **Widget-Architektur** – Einfach erweiterbar mit Registry-Pattern
 - ✅ **Event Bus** – Inter-Widget Kommunikation
 - ✅ **Layout Persistenz** – Widget-Positionen werden in localStorage gespeichert
+
+### Phase 2a Features (NEU)
+
+- ✅ **Wetter-Widget Live** – OpenWeatherMap API-Integration mit Echtzeit-Wetterdaten
+- ✅ **Nachrichten-Widget** – NewsAPI-Integration mit Top-Schlagzeilen
+- ✅ **API-Konfigurationssystem** – Sichere Verwaltung von API-Keys über `.env`-Datei
+- ✅ **Fallback auf Mock-Daten** – App funktioniert auch ohne API-Keys
+- ✅ **Error-Handling** – Netzwerkfehler, API-Fehler und fehlende Keys werden abgefangen
+- ✅ **Status-Anzeige** – Widgets zeigen Live/Offline-Status an
 
 ## 🚀 Installation & Setup
 
@@ -45,6 +54,19 @@ cd SlateDesk
 npm install
 npm run tauri dev
 ```
+
+### API-Keys konfigurieren (optional)
+
+Für Live-Wetterdaten und Nachrichten, kopiere die Beispiel-Konfiguration und trage deine API-Keys ein:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+👉 **Ausführliche Anleitung:** [API_SETUP.md](./API_SETUP.md)
+
+> Ohne API-Keys funktioniert die App mit Mock-Daten.
 
 ### Nur Frontend (ohne Tauri)
 
@@ -130,7 +152,8 @@ registerWidget(meinWidgetDef);
 | Phase | Features |
 |-------|----------|
 | **1 (MVP)** ✅ | Grid-Layout, Themes, Kalender-Widget (Mock), Widget-Architektur |
-| **2** | Office 365 OAuth, Live-Kalender, Synology NAS Widget |
+| **2a** ✅ | Wetter-API (OpenWeatherMap), News-API (NewsAPI), API-Key-Verwaltung |
+| **2b** | Office 365 OAuth, Live-Kalender, Synology NAS Widget |
 | **3** | Lokale AI (Mistral/Phi-3), Sprachsteuerung |
 | **4** | Gesichtserkennung, Kiosk-Modus, .deb Installer |
 | **5** | Widget-Marketplace, erweiterte Sicherheit |
