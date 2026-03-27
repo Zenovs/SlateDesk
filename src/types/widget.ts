@@ -17,6 +17,7 @@ export interface WidgetManifest {
   defaultHeight: number;
   permissions: string[];
   refreshInterval?: number; // in seconds
+  hasSettings?: boolean; // whether this widget has a settings dialog
 }
 
 export interface WidgetInstance {

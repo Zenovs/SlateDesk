@@ -23,14 +23,27 @@ SlateDesk ist ein erweiterbares Desktop-Dashboard für den Office-Einsatz. Es l�
 - ✅ **Event Bus** – Inter-Widget Kommunikation
 - ✅ **Layout Persistenz** – Widget-Positionen werden in localStorage gespeichert
 
-### Gesichtserkennung Phase 1 (NEU)
+### Widget-Settings-System (NEU)
+
+- ✅ **Generisches Settings-System** – Jedes Widget kann eigene Einstellungen haben
+- ✅ **Settings-Button** – Zahnrad-Icon im Widget-Header (nur bei Widgets mit Settings)
+- ✅ **Settings-Dialog** – Modal mit Widget-spezifischen Einstellungen
+- ✅ **Persistente Settings** – Widget-Einstellungen werden in localStorage gespeichert (Widget-ID basiert)
+- ✅ **Event-basiert** – WidgetWrapper kommuniziert über EventBus mit Widgets
+
+### Gesichtserkennung (verbessert)
 
 - ✅ **Kamera-Widget** – Live-Kamera-Feed via WebRTC (getUserMedia)
 - ✅ **Gesichtserkennung** – Browser-basiert mit face-api.js (TinyFaceDetector)
+- ✅ **Kamera-Auswahl** – Dropdown aller verfügbaren Kameras
+- ✅ **Kamera starten/stoppen** – Button im Widget und in den Einstellungen
+- ✅ **Gesichtserkennung an/aus** – Toggle in den Einstellungen
+- ✅ **Erkennungs-Schwellenwert** – Slider für Score Threshold
+- ✅ **Auto-Start** – Kamera kann beim Widget-Laden automatisch starten
+- ✅ **Error-Handling** – Klare Fehlermeldungen (keine Kamera, Permission verweigert, etc.)
 - ✅ **Status-Anzeige** – "Gesicht erkannt ✅" / "Kein Gesicht ❌" + Anzahl
 - ✅ **Bounding Boxes** – Visuelle Markierung erkannter Gesichter mit Konfidenz
 - ✅ **Privatsphäre** – 100% lokale Verarbeitung, keine Daten werden übertragen
-- ✅ **Start/Stop** – Kamera kann jederzeit aktiviert/deaktiviert werden
 
 ### Phase 2a Features
 
@@ -101,7 +114,7 @@ slatedesk/
 │   ├── components/     # UI-Komponenten (TopBar, Dashboard, WidgetWrapper)
 │   ├── widgets/        # Widget-Implementierungen
 │   ├── styles/         # CSS (Design Tokens, Global, Widgets)
-│   ├── store/          # Zustand State Management (Theme, Layout)
+│   ├── store/          # Zustand State Management (Theme, Layout, Widget Settings)
 │   ├── types/          # TypeScript Type Definitions
 │   ├── utils/          # Widget Registry, Event Bus, Mock Data
 │   ├── App.tsx         # Haupt-App Komponente
@@ -146,6 +159,42 @@ registerWidget(meinWidgetDef);
 ```
 
 3. Fertig! Das Widget erscheint im Widget-Picker.
+
+### Widget mit Einstellungen erstellen
+
+Um ein Widget mit Settings zu versehen:
+
+1. **Setze `hasSettings: true`** im Manifest:
+```tsx
+manifest: {
+  ...
+  hasSettings: true,
+},
+```
+
+2. **Importiere den Settings-Store und EventBus:**
+```tsx
+import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
+import { eventBus } from '../utils/eventBus';
+```
+
+3. **Höre auf das Settings-Event im Widget:**
+```tsx
+useEffect(() => {
+  const handler = () => setSettingsOpen(true);
+  eventBus.on(`widget:openSettings:${instanceId}`, handler);
+  return () => eventBus.off(`widget:openSettings:${instanceId}`, handler);
+}, [instanceId]);
+```
+
+4. **Verwende den WidgetSettingsDialog:**
+```tsx
+<WidgetSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Mein Widget – Einstellungen">
+  {/* Settings-Formular */}
+</WidgetSettingsDialog>
+```
+
+Siehe `CameraWidget.tsx` als Referenz-Implementierung.
 
 ## 🔄 Auto-Update
 

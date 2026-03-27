@@ -79,7 +79,11 @@ export const Dashboard: React.FC = () => {
             const Comp = def.component;
             return (
               <div key={w.instanceId}>
-                <WidgetWrapper instanceId={w.instanceId} title={def.manifest.name}>
+                <WidgetWrapper
+                  instanceId={w.instanceId}
+                  title={def.manifest.name}
+                  hasSettings={def.manifest.hasSettings}
+                >
                   <Comp instanceId={w.instanceId} width={w.w} height={w.h} />
                 </WidgetWrapper>
               </div>

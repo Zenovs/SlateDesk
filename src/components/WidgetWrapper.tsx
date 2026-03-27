@@ -1,10 +1,14 @@
 /**
  * WidgetWrapper – Wraps every widget with a consistent shell:
- * header bar, drag handle, remove button, error boundary.
+ * header bar, drag handle, settings button, remove button, error boundary.
+ * 
+ * Settings button emits 'widget:openSettings:{instanceId}' on the eventBus.
+ * Widgets with settings should listen for this event.
  */
-import React from 'react';
-import { X, GripHorizontal } from 'lucide-react';
+import React, { useCallback } from 'react';
+import { X, GripHorizontal, Settings } from 'lucide-react';
 import { useLayoutStore } from '../store/layoutStore';
+import { eventBus } from '../utils/eventBus';
 import '../styles/widgets.css';
 
 interface Props {
@@ -12,6 +16,8 @@ interface Props {
   title: string;
   icon?: React.ReactNode;
   children: React.ReactNode;
+  /** Whether the widget has settings (shows gear icon) */
+  hasSettings?: boolean;
 }
 
 class ErrorBoundary extends React.Component<
@@ -27,8 +33,18 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-export const WidgetWrapper: React.FC<Props> = ({ instanceId, title, icon, children }) => {
+export const WidgetWrapper: React.FC<Props> = ({
+  instanceId,
+  title,
+  icon,
+  children,
+  hasSettings,
+}) => {
   const { editMode, removeWidget } = useLayoutStore();
+
+  const handleSettingsClick = useCallback(() => {
+    eventBus.emit(`widget:openSettings:${instanceId}`);
+  }, [instanceId]);
 
   return (
     <div className={`widget-container ${editMode ? 'edit-mode' : ''}`}>
@@ -39,6 +55,15 @@ export const WidgetWrapper: React.FC<Props> = ({ instanceId, title, icon, childr
           {title}
         </div>
         <div className="widget-header-actions">
+          {hasSettings && (
+            <button
+              className="widget-header-action"
+              onClick={handleSettingsClick}
+              title="Einstellungen"
+            >
+              <Settings size={14} />
+            </button>
+          )}
           {editMode && (
             <button
               className="widget-header-action"
