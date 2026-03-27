@@ -1,0 +1,18 @@
+[Unit]
+Description=SlateDesk Boot Update Check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=slatedesk
+Group=slatedesk
+ExecStart=/home/slatedesk/SlateDesk/scripts/auto-update.sh
+Environment=SLATEDESK_HOME=/home/slatedesk/SlateDesk
+Environment=SLATEDESK_LOG=/home/slatedesk/slatedesk-update.log
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

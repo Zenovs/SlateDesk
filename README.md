@@ -138,6 +138,23 @@ registerWidget(meinWidgetDef);
 
 3. Fertig! Das Widget erscheint im Widget-Picker.
 
+## 🔄 Auto-Update
+
+SlateDesk verfügt über ein vollautomatisches Update-System:
+
+- **Täglicher Check** um 01:00 Uhr per Cronjob
+- **Boot-Check** falls der Rechner um 01:00 aus war (systemd Service)
+- **Automatischer Rollback** bei Fehlern mit Backup
+- **Kein manueller Eingriff** nötig (sudo ohne Passwort für dpkg)
+
+### Setup
+
+```bash
+sudo bash scripts/setup-auto-update.sh
+```
+
+📖 Vollständige Dokumentation: [AUTO_UPDATE.md](AUTO_UPDATE.md)
+
 ## 🎨 Design System
 
 - **Spacing:** 8px-Raster

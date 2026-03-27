@@ -1,0 +1,10 @@
+# /etc/sudoers.d/slatedesk-update
+# Erlaubt dem Nutzer 'slatedesk' die dpkg-Befehle ohne Passwort auszuführen.
+# Installiert durch scripts/setup-auto-update.sh
+#
+# SICHERHEITSHINWEIS:
+#   Nur die spezifischen dpkg-Befehle sind erlaubt.
+#   Keine Wildcards, keine Shell-Escapes.
+
+slatedesk ALL=(root) NOPASSWD: /usr/bin/dpkg -r slate-desk
+slatedesk ALL=(root) NOPASSWD: /usr/bin/dpkg -i /home/slatedesk/SlateDesk/src-tauri/target/release/bundle/deb/*.deb
