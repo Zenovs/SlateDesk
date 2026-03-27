@@ -2,7 +2,7 @@
 
 > Minimalistisches Smart Office Dashboard für Ubuntu – gebaut mit Tauri + React.
 
-![Phase](https://img.shields.io/badge/Phase-2a%20APIs-blue)
+![Phase](https://img.shields.io/badge/Phase-4a%20Gesichtserkennung-blue)
 ![License](https://img.shields.io/badge/License-Open%20Source-green)
 ![Platform](https://img.shields.io/badge/Platform-Ubuntu-orange)
 
@@ -23,7 +23,16 @@ SlateDesk ist ein erweiterbares Desktop-Dashboard für den Office-Einsatz. Es l�
 - ✅ **Event Bus** – Inter-Widget Kommunikation
 - ✅ **Layout Persistenz** – Widget-Positionen werden in localStorage gespeichert
 
-### Phase 2a Features (NEU)
+### Gesichtserkennung Phase 1 (NEU)
+
+- ✅ **Kamera-Widget** – Live-Kamera-Feed via WebRTC (getUserMedia)
+- ✅ **Gesichtserkennung** – Browser-basiert mit face-api.js (TinyFaceDetector)
+- ✅ **Status-Anzeige** – "Gesicht erkannt ✅" / "Kein Gesicht ❌" + Anzahl
+- ✅ **Bounding Boxes** – Visuelle Markierung erkannter Gesichter mit Konfidenz
+- ✅ **Privatsphäre** – 100% lokale Verarbeitung, keine Daten werden übertragen
+- ✅ **Start/Stop** – Kamera kann jederzeit aktiviert/deaktiviert werden
+
+### Phase 2a Features
 
 - ✅ **Wetter-Widget Live** – OpenWeatherMap API-Integration mit Echtzeit-Wetterdaten
 - ✅ **Nachrichten-Widget** – NewsAPI-Integration mit Top-Schlagzeilen
@@ -172,7 +181,8 @@ sudo bash scripts/setup-auto-update.sh
 | **2a** ✅ | Wetter-API (OpenWeatherMap), News-API (NewsAPI), API-Key-Verwaltung |
 | **2b** | Office 365 OAuth, Live-Kalender, Synology NAS Widget |
 | **3** | Lokale AI (Mistral/Phi-3), Sprachsteuerung |
-| **4** | Gesichtserkennung, Kiosk-Modus, .deb Installer |
+| **4a** ✅ | Gesichtserkennung Phase 1 (Face Detection, Kamera-Widget) |
+| **4b** | Gesichtserkennung Phase 2 (Face Recognition), Kiosk-Modus, .deb Installer |
 | **5** | Widget-Marketplace, erweiterte Sicherheit |
 
 ## 🛡️ Sicherheitskonzept

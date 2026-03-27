@@ -13,6 +13,7 @@ import { weatherWidgetDef } from './WeatherWidget';
 import { messagesWidgetDef } from './MessagesWidget';
 import { todoWidgetDef } from './TodoWidget';
 import { newsWidgetDef } from './NewsWidget';
+import { cameraWidgetDef } from './CameraWidget';
 
 export const initializeWidgets = () => {
   registerWidget(clockWidgetDef);
@@ -21,4 +22,5 @@ export const initializeWidgets = () => {
   registerWidget(messagesWidgetDef);
   registerWidget(todoWidgetDef);
   registerWidget(newsWidgetDef);
+  registerWidget(cameraWidgetDef);
 };
