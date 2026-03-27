@@ -39,7 +39,7 @@ export const Dashboard: React.FC = () => {
   );
 
   return (
-    <div ref={containerRef} style={{ flex: 1, overflow: 'auto', padding: '8px' }}>
+    <div ref={containerRef} style={{ flex: 1, overflow: 'auto', overflowX: 'hidden', padding: '8px', maxWidth: '100vw', width: '100%' }}>
       {width > 0 && (
         <Responsive
           className="layout"

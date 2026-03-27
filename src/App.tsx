@@ -26,7 +26,7 @@ const App: React.FC = () => {
   }, [accentColor]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', maxWidth: '100vw', overflow: 'hidden' }}>
       <TopBar />
       <Dashboard />
     </div>
