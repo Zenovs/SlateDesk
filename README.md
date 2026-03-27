@@ -2,7 +2,7 @@
 
 > Minimalistisches Smart Office Dashboard für Ubuntu – gebaut mit Tauri + React.
 
-![Phase](https://img.shields.io/badge/Phase-4a%20Gesichtserkennung-blue)
+![Phase](https://img.shields.io/badge/Phase-4a%20Widget--Settings-blue)
 ![License](https://img.shields.io/badge/License-Open%20Source-green)
 ![Platform](https://img.shields.io/badge/Platform-Ubuntu-orange)
 
@@ -23,13 +23,20 @@ SlateDesk ist ein erweiterbares Desktop-Dashboard für den Office-Einsatz. Es l�
 - ✅ **Event Bus** – Inter-Widget Kommunikation
 - ✅ **Layout Persistenz** – Widget-Positionen werden in localStorage gespeichert
 
-### Widget-Settings-System (NEU)
+### Widget-Settings-System (Erweitert)
 
 - ✅ **Generisches Settings-System** – Jedes Widget kann eigene Einstellungen haben
 - ✅ **Settings-Button** – Zahnrad-Icon im Widget-Header (nur bei Widgets mit Settings)
-- ✅ **Settings-Dialog** – Modal mit Widget-spezifischen Einstellungen
-- ✅ **Persistente Settings** – Widget-Einstellungen werden in localStorage gespeichert (Widget-ID basiert)
+- ✅ **Erweiterter Settings-Dialog** – 600px Modal mit Scroll, Sektionen und Validierung
+- ✅ **Persistente Settings** – Widget-Einstellungen in localStorage (Widget-ID basiert)
 - ✅ **Event-basiert** – WidgetWrapper kommuniziert über EventBus mit Widgets
+- ✅ **Uhr-Widget Settings** – Zeitformat (12h/24h), Zeitzone, Sekunden, Datumsformat
+- ✅ **Kalender-Widget Settings** – Quelle, Zeitbereich, max. Termine
+- ✅ **Wetter-Widget Settings** – Standort, Temperatur-Einheit (°C/°F), API-Key, Update-Intervall
+- ✅ **News-Widget Settings** – Kategorie, Land, Sprache, Artikelanzahl, API-Key
+- ✅ **Aufgaben-Widget Settings** – Sortierung, Filter (Alle/Offen/Erledigt), Quelle
+- ✅ **Kamera-Widget Settings** – Verbesserte Permission-Anleitung, Schritt-für-Schritt Guide
+- ✅ **Sofortige Aktualisierung** – Widgets reagieren sofort auf Settings-Änderungen
 
 ### Gesichtserkennung (verbessert)
 
@@ -40,7 +47,8 @@ SlateDesk ist ein erweiterbares Desktop-Dashboard für den Office-Einsatz. Es l�
 - ✅ **Gesichtserkennung an/aus** – Toggle in den Einstellungen
 - ✅ **Erkennungs-Schwellenwert** – Slider für Score Threshold
 - ✅ **Auto-Start** – Kamera kann beim Widget-Laden automatisch starten
-- ✅ **Error-Handling** – Klare Fehlermeldungen (keine Kamera, Permission verweigert, etc.)
+- ✅ **Verbesserte Permission-UI** – Schritt-für-Schritt Anleitung, Info-Boxen, Auto-Retry
+- ✅ **Error-Handling** – Klare Fehlermeldungen mit Tipps zur Fehlerbehebung
 - ✅ **Status-Anzeige** – "Gesicht erkannt ✅" / "Kein Gesicht ❌" + Anzahl
 - ✅ **Bounding Boxes** – Visuelle Markierung erkannter Gesichter mit Konfidenz
 - ✅ **Privatsphäre** – 100% lokale Verarbeitung, keine Daten werden übertragen

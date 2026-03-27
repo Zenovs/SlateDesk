@@ -308,188 +308,245 @@ const CameraComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   const faceDetected = faceCount > 0;
 
+  // Request camera permission with better UX
+  const requestPermission = useCallback(async () => {
+    setCameraStatus('loading');
+    setErrorMsg('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach(t => t.stop());
+      await enumerateCameras();
+      setCameraStatus('idle');
+      // Auto-start after permission granted
+      setTimeout(() => startCamera(), 300);
+    } catch {
+      setCameraStatus('permission_needed');
+      setErrorMsg('Kamera-Zugriff wurde verweigert. Bitte erlaube den Zugriff in den Browser-Einstellungen.');
+    }
+  }, [enumerateCameras, startCamera]);
+
   // Settings panel content
   const renderSettingsPanel = () => (
     <div>
       {/* Camera Status */}
-      <div className="settings-field">
-        <label className="settings-label">Status</label>
-        <div className="settings-status">
-          <div
-            className="settings-status-dot"
-            style={{
-              backgroundColor:
-                cameraStatus === 'active'
-                  ? '#4ade80'
-                  : cameraStatus === 'error' || cameraStatus === 'permission_needed'
-                  ? '#ef4444'
-                  : 'var(--text-tertiary)',
-            }}
-          />
-          <span>
-            {cameraStatus === 'idle' && 'Kamera aus'}
-            {cameraStatus === 'loading' && 'Kamera wird gestartet...'}
-            {cameraStatus === 'error' && 'Fehler'}
-            {cameraStatus === 'permission_needed' && 'Berechtigung erforderlich'}
-            {cameraStatus === 'active' && 'Kamera aktiv'}
-          </span>
+      <div className="settings-section">
+        <div className="settings-section-title">Kamera-Status</div>
+        <div className="settings-field">
+          <div className="settings-status">
+            <div
+              className="settings-status-dot"
+              style={{
+                backgroundColor:
+                  cameraStatus === 'active'
+                    ? '#4ade80'
+                    : cameraStatus === 'error' || cameraStatus === 'permission_needed'
+                    ? '#ef4444'
+                    : 'var(--text-tertiary)',
+              }}
+            />
+            <span>
+              {cameraStatus === 'idle' && 'Kamera aus'}
+              {cameraStatus === 'loading' && 'Kamera wird gestartet...'}
+              {cameraStatus === 'error' && 'Fehler'}
+              {cameraStatus === 'permission_needed' && 'Berechtigung erforderlich'}
+              {cameraStatus === 'active' && 'Kamera aktiv'}
+            </span>
+          </div>
+        </div>
+
+        {/* Permission needed - Step by step guide */}
+        {cameraStatus === 'permission_needed' && (
+          <div className="settings-field">
+            <div className="settings-info-box warning" style={{ flexDirection: 'column' }}>
+              <strong>🔐 Kamera-Zugriff erforderlich</strong>
+              <p style={{ margin: '8px 0 4px' }}>Um die Kamera zu nutzen, folge diesen Schritten:</p>
+              <ol className="settings-steps">
+                <li>Klicke auf „Kamera-Zugriff anfordern" unten</li>
+                <li>Der Browser zeigt einen Berechtigungs-Dialog</li>
+                <li>Klicke auf „Erlauben" / „Allow"</li>
+                <li>Die Kamera startet automatisch</li>
+              </ol>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <button className="settings-btn settings-btn-primary" onClick={requestPermission}>
+                🔐 Kamera-Zugriff anfordern
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Error with helpful tips */}
+        {cameraStatus === 'error' && (
+          <div className="settings-field">
+            <div className="settings-info-box error" style={{ flexDirection: 'column' }}>
+              <strong>⚠️ Kamera-Fehler</strong>
+              <p style={{ margin: '4px 0' }}>{errorMsg}</p>
+              <p style={{ margin: '4px 0', fontSize: 'var(--font-size-xs)', opacity: 0.8 }}>
+                <strong>Tipps:</strong> Prüfe ob eine andere App die Kamera nutzt. 
+                Versuche eine andere Kamera auszuwählen oder starte den Browser neu.
+              </p>
+            </div>
+            <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+              <button className="settings-btn settings-btn-primary" onClick={startCamera}>
+                🔄 Erneut versuchen
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Start/Stop Button */}
+        <div className="settings-field">
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {cameraStatus === 'active' ? (
+              <button className="settings-btn settings-btn-danger" onClick={stopCamera}>
+                ⏹ Kamera stoppen
+              </button>
+            ) : cameraStatus !== 'permission_needed' && cameraStatus !== 'error' ? (
+              <button className="settings-btn settings-btn-primary" onClick={startCamera}>
+                ▶ Kamera starten
+              </button>
+            ) : null}
+            <button
+              className="settings-btn"
+              onClick={async () => { await enumerateCameras(); }}
+            >
+              🔄 Kameras aktualisieren
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Camera Selection */}
-      <div className="settings-field">
-        <label className="settings-label">Kamera auswählen</label>
-        <p className="settings-description">
-          Wähle die Kamera, die verwendet werden soll.
-          {availableCameras.length === 0 && ' Starte zuerst die Kamera, um verfügbare Geräte zu sehen.'}
-        </p>
-        <select
-          className="settings-select"
-          value={settings.selectedDeviceId}
-          onChange={(e) => {
-            updateSettings(instanceId, { selectedDeviceId: e.target.value });
-            // Restart camera if active
-            if (cameraStatus === 'active') {
-              stopCamera();
-              setTimeout(() => startCamera(), 300);
-            }
-          }}
-        >
-          <option value="">Standard-Kamera</option>
-          {availableCameras.map((cam) => (
-            <option key={cam.deviceId} value={cam.deviceId}>
-              {cam.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Start/Stop Button */}
-      <div className="settings-field">
-        <label className="settings-label">Kamera steuern</label>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {cameraStatus === 'active' ? (
-            <button className="settings-btn settings-btn-danger" onClick={stopCamera}>
-              ⏹ Kamera stoppen
-            </button>
-          ) : (
-            <button className="settings-btn settings-btn-primary" onClick={startCamera}>
-              ▶ Kamera starten
-            </button>
-          )}
-          <button
-            className="settings-btn"
-            onClick={async () => {
-              await enumerateCameras();
-            }}
-          >
-            🔄 Kameras aktualisieren
-          </button>
-        </div>
-      </div>
-
-      <hr className="settings-divider" />
-
-      {/* Face Detection Toggle */}
-      <div className="settings-field">
-        <div className="settings-toggle">
-          <div>
-            <div className="settings-toggle-label">Gesichtserkennung</div>
-            <div className="settings-toggle-sublabel">
-              Erkennt Gesichter im Kamerabild und zeigt Bounding Boxes
-            </div>
-          </div>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={settings.faceDetectionEnabled}
-              onChange={(e) =>
-                updateSettings(instanceId, { faceDetectionEnabled: e.target.checked })
-              }
-            />
-            <span className="toggle-switch-slider" />
-          </label>
-        </div>
-      </div>
-
-      {/* Score Threshold */}
-      {settings.faceDetectionEnabled && (
+      <div className="settings-section">
+        <div className="settings-section-title">Kamera-Auswahl</div>
         <div className="settings-field">
-          <label className="settings-label">
-            Erkennungs-Schwellenwert
-            <span className="settings-range-value">
-              {Math.round(settings.scoreThreshold * 100)}%
-            </span>
-          </label>
+          <label className="settings-label">Kamera</label>
           <p className="settings-description">
-            Höhere Werte = weniger Fehlerkennungen, niedrigere Werte = mehr Erkennung
-          </p>
-          <input
-            type="range"
-            className="settings-range"
-            min="0.1"
-            max="0.9"
-            step="0.05"
-            value={settings.scoreThreshold}
-            onChange={(e) =>
-              updateSettings(instanceId, { scoreThreshold: parseFloat(e.target.value) })
-            }
-          />
-        </div>
-      )}
-
-      {/* Input Size */}
-      {settings.faceDetectionEnabled && (
-        <div className="settings-field">
-          <label className="settings-label">Eingabegrösse (Input Size)</label>
-          <p className="settings-description">
-            Höhere Werte = genauer aber langsamer
+            Wähle die Kamera, die verwendet werden soll.
+            {availableCameras.length === 0 && ' Starte zuerst die Kamera, um verfügbare Geräte zu sehen.'}
           </p>
           <select
             className="settings-select"
-            value={settings.inputSize}
-            onChange={(e) =>
-              updateSettings(instanceId, { inputSize: parseInt(e.target.value) })
-            }
-          >
-            <option value="128">128 (Schnell)</option>
-            <option value="160">160</option>
-            <option value="224">224 (Standard)</option>
-            <option value="320">320</option>
-            <option value="416">416 (Genau)</option>
-          </select>
-        </div>
-      )}
-
-      <hr className="settings-divider" />
-
-      {/* Auto-Start Toggle */}
-      <div className="settings-field">
-        <div className="settings-toggle">
-          <div>
-            <div className="settings-toggle-label">Auto-Start</div>
-            <div className="settings-toggle-sublabel">
-              Kamera automatisch starten, wenn das Widget geladen wird
-            </div>
-          </div>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={settings.autoStart}
-              onChange={(e) =>
-                updateSettings(instanceId, { autoStart: e.target.checked })
+            value={settings.selectedDeviceId}
+            onChange={(e) => {
+              updateSettings(instanceId, { selectedDeviceId: e.target.value });
+              if (cameraStatus === 'active') {
+                stopCamera();
+                setTimeout(() => startCamera(), 300);
               }
-            />
-            <span className="toggle-switch-slider" />
-          </label>
+            }}
+          >
+            <option value="">Standard-Kamera</option>
+            {availableCameras.map((cam) => (
+              <option key={cam.deviceId} value={cam.deviceId}>
+                {cam.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
-      {/* Info */}
-      <div style={{ marginTop: '16px', padding: '12px', background: 'var(--bg-widget)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-        <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
-          🔒 Alle Daten werden lokal verarbeitet. Es werden keine Kamera-Daten an externe Server übertragen.
-        </span>
+      {/* Face Detection */}
+      <div className="settings-section">
+        <div className="settings-section-title">Gesichtserkennung</div>
+        
+        <div className="settings-field">
+          <div className="settings-toggle">
+            <div>
+              <div className="settings-toggle-label">Gesichtserkennung aktivieren</div>
+              <div className="settings-toggle-sublabel">
+                Erkennt Gesichter im Kamerabild und zeigt Markierungen
+              </div>
+            </div>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={settings.faceDetectionEnabled}
+                onChange={(e) =>
+                  updateSettings(instanceId, { faceDetectionEnabled: e.target.checked })
+                }
+              />
+              <span className="toggle-switch-slider" />
+            </label>
+          </div>
+        </div>
+
+        {settings.faceDetectionEnabled && (
+          <>
+            <div className="settings-field">
+              <label className="settings-label">
+                Erkennungs-Schwellenwert
+                <span className="settings-range-value">
+                  {Math.round(settings.scoreThreshold * 100)}%
+                </span>
+              </label>
+              <p className="settings-description">
+                Höhere Werte = weniger Fehlerkennungen, niedrigere Werte = mehr Erkennung
+              </p>
+              <input
+                type="range"
+                className="settings-range"
+                min="0.1"
+                max="0.9"
+                step="0.05"
+                value={settings.scoreThreshold}
+                onChange={(e) =>
+                  updateSettings(instanceId, { scoreThreshold: parseFloat(e.target.value) })
+                }
+              />
+            </div>
+
+            <div className="settings-field">
+              <label className="settings-label">Eingabegrösse (Input Size)</label>
+              <p className="settings-description">
+                Höhere Werte = genauer aber langsamer
+              </p>
+              <select
+                className="settings-select"
+                value={settings.inputSize}
+                onChange={(e) =>
+                  updateSettings(instanceId, { inputSize: parseInt(e.target.value) })
+                }
+              >
+                <option value="128">128 (Schnell)</option>
+                <option value="160">160</option>
+                <option value="224">224 (Standard)</option>
+                <option value="320">320</option>
+                <option value="416">416 (Genau)</option>
+              </select>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Auto-Start */}
+      <div className="settings-section">
+        <div className="settings-section-title">Verhalten</div>
+        <div className="settings-field">
+          <div className="settings-toggle">
+            <div>
+              <div className="settings-toggle-label">Auto-Start</div>
+              <div className="settings-toggle-sublabel">
+                Kamera automatisch starten, wenn das Widget geladen wird
+              </div>
+            </div>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={settings.autoStart}
+                onChange={(e) =>
+                  updateSettings(instanceId, { autoStart: e.target.checked })
+                }
+              />
+              <span className="toggle-switch-slider" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* Privacy Info */}
+      <div className="settings-info-box success">
+        🔒 Alle Daten werden lokal verarbeitet. Es werden keine Kamera-Daten an externe Server übertragen.
       </div>
     </div>
   );
@@ -552,10 +609,19 @@ const CameraComponent: React.FC<WidgetProps> = ({ instanceId }) => {
               }}
             >
               {cameraStatus === 'permission_needed'
-                ? errorMsg
+                ? 'Kamera-Zugriff erforderlich'
                 : 'Kamera starten um Gesichtserkennung zu aktivieren'}
             </span>
-            {cameraStatus === 'idle' && (
+            {cameraStatus === 'permission_needed' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                <button onClick={requestPermission} style={{ ...styles.toggleBtn, padding: '8px 16px', background: 'var(--accent-color)', color: 'white', borderColor: 'var(--accent-color)' }}>
+                  🔐 Kamera-Zugriff erlauben
+                </button>
+                <span style={{ fontSize: 'var(--font-size-xs, 11px)', color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                  Der Browser wird dich fragen – klicke auf „Erlauben"
+                </span>
+              </div>
+            ) : (
               <button onClick={startCamera} style={{ ...styles.toggleBtn, marginTop: '12px', padding: '8px 16px' }}>
                 ▶ Kamera starten
               </button>

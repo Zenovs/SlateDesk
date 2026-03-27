@@ -72,18 +72,24 @@ export interface WeatherResult {
 /**
  * Fetches weather data from OpenWeatherMap API.
  * Returns mock data if API key is missing or on error.
+ * @param overrideCity Optional city override from widget settings
+ * @param overrideApiKey Optional API key override from widget settings
  */
-export const fetchWeatherData = async (): Promise<WeatherResult> => {
-  if (!isApiConfigured('openWeatherMap')) {
+export const fetchWeatherData = async (overrideCity?: string, overrideApiKey?: string): Promise<WeatherResult> => {
+  const hasOverrideKey = overrideApiKey && overrideApiKey.trim().length > 0;
+  
+  if (!isApiConfigured('openWeatherMap') && !hasOverrideKey) {
     return { data: mockWeatherData, isLive: false, error: 'API-Key nicht konfiguriert' };
   }
 
   const config = getApiConfig().openWeatherMap;
+  const apiKey = hasOverrideKey ? overrideApiKey!.trim() : config.apiKey;
+  const city = overrideCity && overrideCity.trim().length > 0 ? overrideCity.trim() : config.city;
 
   try {
     // Fetch current weather
     const currentRes = await fetch(
-      `${config.baseUrl}/weather?q=${encodeURIComponent(config.city)}&units=metric&lang=de&appid=${config.apiKey}`
+      `${config.baseUrl}/weather?q=${encodeURIComponent(city)}&units=metric&lang=de&appid=${apiKey}`
     );
     if (!currentRes.ok) {
       throw new Error(`Wetter-API Fehler: ${currentRes.status}`);
@@ -92,7 +98,7 @@ export const fetchWeatherData = async (): Promise<WeatherResult> => {
 
     // Fetch 5-day forecast
     const forecastRes = await fetch(
-      `${config.baseUrl}/forecast?q=${encodeURIComponent(config.city)}&units=metric&lang=de&appid=${config.apiKey}`
+      `${config.baseUrl}/forecast?q=${encodeURIComponent(city)}&units=metric&lang=de&appid=${apiKey}`
     );
     if (!forecastRes.ok) {
       throw new Error(`Vorhersage-API Fehler: ${forecastRes.status}`);

@@ -87,18 +87,35 @@ const formatRelativeTime = (isoDate: string): string => {
 /**
  * Fetches news from NewsAPI.
  * Returns mock data if API key is missing or on error.
+ * @param overrideCountry Optional country override from widget settings
+ * @param overrideCategory Optional category override from widget settings
+ * @param maxArticles Optional max articles from widget settings
+ * @param overrideApiKey Optional API key override from widget settings
  */
-export const fetchNewsData = async (): Promise<NewsResult> => {
-  if (!isApiConfigured('newsApi')) {
+export const fetchNewsData = async (
+  overrideCountry?: string,
+  overrideCategory?: string,
+  maxArticles?: number,
+  overrideApiKey?: string,
+): Promise<NewsResult> => {
+  const hasOverrideKey = overrideApiKey && overrideApiKey.trim().length > 0;
+
+  if (!isApiConfigured('newsApi') && !hasOverrideKey) {
     return { articles: mockNewsArticles, isLive: false, error: 'API-Key nicht konfiguriert' };
   }
 
   const config = getApiConfig().newsApi;
+  const apiKey = hasOverrideKey ? overrideApiKey!.trim() : config.apiKey;
+  const country = overrideCountry && overrideCountry.trim().length > 0 ? overrideCountry.trim() : config.country;
+  const category = overrideCategory && overrideCategory.trim().length > 0 ? overrideCategory.trim() : 'general';
+  const pageSize = maxArticles || 10;
 
   try {
-    const res = await fetch(
-      `${config.baseUrl}/top-headlines?country=${encodeURIComponent(config.country)}&pageSize=10&apiKey=${config.apiKey}`
-    );
+    let url = `${config.baseUrl}/top-headlines?country=${encodeURIComponent(country)}&pageSize=${pageSize}&apiKey=${apiKey}`;
+    if (category && category !== 'general') {
+      url += `&category=${encodeURIComponent(category)}`;
+    }
+    const res = await fetch(url);
 
     if (!res.ok) {
       throw new Error(`NewsAPI Fehler: ${res.status}`);
