@@ -162,18 +162,19 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
         {/* Track Info */}
         <div style={{ textAlign: 'center', paddingBottom: 4 }}>
           <div style={{
-            fontSize: 'var(--font-size-sm)',
+            fontSize: 'var(--font-size-3xl)',
             fontWeight: 'var(--font-weight-bold)',
             color: 'var(--text-primary)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
-            marginBottom: 2,
+            marginBottom: 4,
+            lineHeight: 1.1,
           }}>
             {statusIcon} {state.title || '–'}
           </div>
           <div style={{
-            fontSize: 'var(--font-size-xs)',
+            fontSize: 'var(--font-size-xl)',
             color: 'var(--text-secondary)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -183,12 +184,12 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
           </div>
           {state.album && (
             <div style={{
-              fontSize: 'var(--font-size-xs)',
+              fontSize: 'var(--font-size-sm)',
               color: 'var(--text-tertiary)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
-              marginTop: 1,
+              marginTop: 2,
             }}>
               {state.album}
             </div>
