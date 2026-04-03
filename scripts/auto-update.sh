@@ -276,6 +276,12 @@ main() {
         exit 1
     fi
 
+    # Cache leeren (localStorage, WebKit-Cache)
+    log_info "Leere App-Cache..."
+    rm -rf "/home/slatedesk/.local/share/com.slatedesk.app/EBWebView" 2>/dev/null || true
+    rm -rf "/home/slatedesk/.local/share/com.slatedesk.app/storage" 2>/dev/null || true
+    log_info "Cache geleert."
+
     # SlateDesk starten
     start_slatedesk
 
