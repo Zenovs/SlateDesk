@@ -1,26 +1,23 @@
 /**
- * Weather Widget – Shows weather forecast with configurable settings.
- * Settings: Location, temperature unit, API key, update interval.
+ * Weather Widget – Open-Meteo (kostenlos, kein API-Key).
+ * Standort wird automatisch via IP erkannt oder kann manuell gesetzt werden.
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import type { WidgetProps, WidgetDefinition } from '../types/widget';
 import { fetchWeatherData, type WeatherResult } from '../utils/weatherApi';
-import { isApiConfigured } from '../utils/apiConfig';
 import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
 import { WidgetSettingsDialog } from '../components/WidgetSettingsDialog';
 import { eventBus } from '../utils/eventBus';
 
 interface WeatherSettings {
-  city: string;
+  city: string;           // leer = automatisch via IP
   tempUnit: 'celsius' | 'fahrenheit';
-  apiKey: string;
   updateInterval: number; // minutes
 }
 
 const DEFAULT_SETTINGS: WeatherSettings = {
-  city: 'Zurich,CH',
+  city: '',
   tempUnit: 'celsius',
-  apiKey: '',
   updateInterval: 30,
 };
 
@@ -42,7 +39,6 @@ const WeatherComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const { getSettings, updateSettings } = useWidgetSettingsStore();
   const settings = getSettings<WeatherSettings>(instanceId, DEFAULT_SETTINGS);
 
-  // Listen for settings open event
   useEffect(() => {
     const handler = () => setSettingsOpen(true);
     eventBus.on(`widget:openSettings:${instanceId}`, handler);
@@ -51,7 +47,7 @@ const WeatherComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   const loadWeather = useCallback(async () => {
     try {
-      const result = await fetchWeatherData(settings.city, settings.apiKey);
+      const result = await fetchWeatherData(settings.city || undefined);
       setWeather(result);
       setLastUpdate(new Date());
     } catch {
@@ -59,7 +55,7 @@ const WeatherComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     } finally {
       setLoading(false);
     }
-  }, [settings.city, settings.apiKey]);
+  }, [settings.city]);
 
   useEffect(() => {
     loadWeather();
@@ -67,28 +63,25 @@ const WeatherComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     return () => clearInterval(interval);
   }, [loadWeather, settings.updateInterval]);
 
-  const displayTemp = (temp: number) => {
-    if (settings.tempUnit === 'fahrenheit') return `${toF(temp)}°F`;
-    return `${temp}°C`;
-  };
+  const displayTemp = (temp: number) =>
+    settings.tempUnit === 'fahrenheit' ? `${toF(temp)}°F` : `${temp}°C`;
 
-  const displayTempShort = (temp: number) => {
-    if (settings.tempUnit === 'fahrenheit') return `${toF(temp)}°`;
-    return `${temp}°`;
-  };
+  const displayTempShort = (temp: number) =>
+    settings.tempUnit === 'fahrenheit' ? `${toF(temp)}°` : `${temp}°`;
 
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-tertiary)' }}>
-        ⏳ Wetter wird geladen...
+        ⏳ Wetter wird geladen…
       </div>
     );
   }
 
   if (!weather || weather.data.length === 0) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-tertiary)' }}>
-        ⚠️ Keine Wetterdaten verfügbar
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 6, color: 'var(--text-tertiary)' }}>
+        <span>⚠️ Keine Wetterdaten</span>
+        {weather?.error && <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--error-color, #ef4444)' }}>{weather.error}</span>}
       </div>
     );
   }
@@ -99,68 +92,36 @@ const WeatherComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   return (
     <>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
-        {/* Status indicator */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          fontSize: 'var(--font-size-xs)',
-          color: 'var(--text-tertiary)',
-          paddingBottom: 4,
-        }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
           <span>
-            {weather.isLive ? '🟢 Live' : '🔴 Offline'}
-            {weather.city && ` – ${weather.city}`}
-            {!weather.isLive && !isApiConfigured('openWeatherMap') && !settings.apiKey && ' (Mock-Daten)'}
+            {weather.isLive ? '🟢' : '🔴'}
+            {weather.city && ` ${weather.city}`}
+            {!settings.city && ' · Auto'}
           </span>
           {lastUpdate && (
             <span>{lastUpdate.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })}</span>
           )}
         </div>
 
-        {/* Error notice */}
-        {weather.error && !weather.isLive && (isApiConfigured('openWeatherMap') || settings.apiKey) && (
-          <div style={{
-            fontSize: 'var(--font-size-xs)',
-            color: 'var(--error-color, #ef4444)',
-            background: 'rgba(239, 68, 68, 0.1)',
-            padding: '4px 8px',
-            borderRadius: 'var(--radius-sm)',
-          }}>
-            ⚠️ {weather.error}
-          </div>
-        )}
-
-        {/* Current weather */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 16,
-          flex: 1,
-        }}>
+        {/* Aktuelles Wetter */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, flex: 1 }}>
           <span style={{ fontSize: 48 }}>{today.icon}</span>
           <div>
-            <div style={{
-              fontSize: 'var(--font-size-xl)',
-              fontWeight: 'var(--font-weight-bold)',
-              color: 'var(--text-primary)',
-            }}>
+            <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-primary)' }}>
               {displayTemp(today.tempHigh)}
             </div>
-            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>
               {today.condition}
+            </div>
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+              min {displayTempShort(today.tempLow)}
             </div>
           </div>
         </div>
 
-        {/* Forecast row */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-around',
-          borderTop: '1px solid var(--border-color)',
-          paddingTop: 10,
-        }}>
+        {/* Vorhersage */}
+        <div style={{ display: 'flex', justifyContent: 'space-around', borderTop: '1px solid var(--border-color)', paddingTop: 10 }}>
           {forecast.map((f) => (
             <div key={f.day} style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>{f.day}</div>
@@ -173,24 +134,20 @@ const WeatherComponent: React.FC<WidgetProps> = ({ instanceId }) => {
         </div>
       </div>
 
-      <WidgetSettingsDialog
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        title="Einstellungen: Wetter"
-      >
+      <WidgetSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Einstellungen: Wetter">
         <div className="settings-section">
           <div className="settings-section-title">Standort</div>
           <div className="settings-field">
-            <label className="settings-label">Stadt</label>
+            <label className="settings-label">Stadt (optional)</label>
             <input
               className="settings-input"
               type="text"
               value={settings.city}
               onChange={(e) => updateSettings(instanceId, { city: e.target.value })}
-              placeholder="z.B. Zurich,CH oder Berlin,DE"
+              placeholder="Leer lassen für automatische Erkennung"
             />
             <p className="settings-description" style={{ marginTop: 4 }}>
-              Format: Stadt,Ländercode (z.B. Zurich,CH)
+              Leer = Standort wird automatisch via IP erkannt. Oder Stadt eingeben, z.B. «Zürich» oder «Berlin».
             </p>
           </div>
         </div>
@@ -200,61 +157,24 @@ const WeatherComponent: React.FC<WidgetProps> = ({ instanceId }) => {
           <div className="settings-field">
             <label className="settings-label">Temperatur-Einheit</label>
             <div className="settings-radio-group">
-              {([
-                { value: 'celsius', label: '°C (Celsius)' },
-                { value: 'fahrenheit', label: '°F (Fahrenheit)' },
-              ] as const).map(opt => (
-                <label
-                  key={opt.value}
-                  className={`settings-radio-option ${settings.tempUnit === opt.value ? 'active' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="tempUnit"
-                    value={opt.value}
-                    checked={settings.tempUnit === opt.value}
-                    onChange={() => updateSettings(instanceId, { tempUnit: opt.value })}
-                  />
+              {([{ value: 'celsius', label: '°C (Celsius)' }, { value: 'fahrenheit', label: '°F (Fahrenheit)' }] as const).map(opt => (
+                <label key={opt.value} className={`settings-radio-option ${settings.tempUnit === opt.value ? 'active' : ''}`}>
+                  <input type="radio" name="tempUnit" value={opt.value} checked={settings.tempUnit === opt.value} onChange={() => updateSettings(instanceId, { tempUnit: opt.value })} />
                   {opt.label}
                 </label>
               ))}
             </div>
           </div>
-
           <div className="settings-field">
             <label className="settings-label">Update-Intervall</label>
-            <select
-              className="settings-select"
-              value={settings.updateInterval}
-              onChange={(e) => updateSettings(instanceId, { updateInterval: parseInt(e.target.value) })}
-            >
-              {UPDATE_INTERVALS.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
+            <select className="settings-select" value={settings.updateInterval} onChange={(e) => updateSettings(instanceId, { updateInterval: parseInt(e.target.value) })}>
+              {UPDATE_INTERVALS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
           </div>
         </div>
 
-        <div className="settings-section">
-          <div className="settings-section-title">API-Konfiguration</div>
-          <div className="settings-field">
-            <label className="settings-label">OpenWeatherMap API-Key</label>
-            <input
-              className="settings-input"
-              type="password"
-              value={settings.apiKey}
-              onChange={(e) => updateSettings(instanceId, { apiKey: e.target.value })}
-              placeholder="API-Key eingeben (optional)"
-            />
-            <p className="settings-description" style={{ marginTop: 4 }}>
-              Optional – API-Key kann auch in der .env Datei konfiguriert werden.
-              Kostenloser Key unter openweathermap.org erhältlich.
-            </p>
-          </div>
-          <div className="settings-info-box">
-            💡 Ohne API-Key werden Mock-Daten angezeigt. Für Live-Wetterdaten
-            benötigst du einen kostenlosen OpenWeatherMap API-Key.
-          </div>
+        <div className="settings-info-box">
+          💡 Wetterdaten von Open-Meteo – kostenlos, kein API-Key nötig.
         </div>
       </WidgetSettingsDialog>
     </>
@@ -265,8 +185,8 @@ export const weatherWidgetDef: WidgetDefinition = {
   manifest: {
     id: 'weather',
     name: 'Wetter',
-    description: 'Wettervorhersage (OpenWeatherMap)',
-    version: '2.0.0',
+    description: 'Wettervorhersage (automatischer Standort)',
+    version: '3.0.0',
     author: 'SlateDesk',
     minWidth: 3,
     minHeight: 2,

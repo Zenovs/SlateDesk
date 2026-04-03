@@ -1,66 +1,15 @@
 /**
- * OpenWeatherMap API Integration
- * 
- * Fetches current weather and 5-day forecast from OpenWeatherMap.
- * Falls back to mock data if API key is not configured or on error.
+ * Weather API – Open-Meteo (kostenlos, kein API-Key)
+ * Standort: automatisch via IP oder manuell via Stadtname.
  */
-import { getApiConfig, isApiConfigured } from './apiConfig';
-import { mockWeatherData, type WeatherForecast } from './mockData';
 
-interface OWMCurrentResponse {
-  main: { temp: number; temp_min: number; temp_max: number };
-  weather: Array<{ id: number; main: string; description: string; icon: string }>;
-  name: string;
+export interface WeatherForecast {
+  day: string;
+  icon: string;
+  tempHigh: number;
+  tempLow: number;
+  condition: string;
 }
-
-interface OWMForecastItem {
-  dt: number;
-  main: { temp: number; temp_min: number; temp_max: number };
-  weather: Array<{ id: number; main: string; description: string; icon: string }>;
-}
-
-interface OWMForecastResponse {
-  list: OWMForecastItem[];
-}
-
-/** Map OWM icon code to emoji */
-const iconToEmoji = (iconCode: string): string => {
-  const map: Record<string, string> = {
-    '01d': '☀️', '01n': '🌙',
-    '02d': '⛅', '02n': '⛅',
-    '03d': '☁️', '03n': '☁️',
-    '04d': '☁️', '04n': '☁️',
-    '09d': '🌧️', '09n': '🌧️',
-    '10d': '🌦️', '10n': '🌧️',
-    '11d': '⛈️', '11n': '⛈️',
-    '13d': '❄️', '13n': '❄️',
-    '50d': '🌫️', '50n': '🌫️',
-  };
-  return map[iconCode] || '🌡️';
-};
-
-/** Translate OWM condition to German */
-const translateCondition = (main: string): string => {
-  const map: Record<string, string> = {
-    'Clear': 'Klar',
-    'Clouds': 'Bewölkt',
-    'Rain': 'Regen',
-    'Drizzle': 'Nieselregen',
-    'Thunderstorm': 'Gewitter',
-    'Snow': 'Schnee',
-    'Mist': 'Nebel',
-    'Fog': 'Nebel',
-    'Haze': 'Dunst',
-  };
-  return map[main] || main;
-};
-
-/** Get German day name */
-const getDayName = (date: Date, isToday: boolean): string => {
-  if (isToday) return 'Heute';
-  const days = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
-  return days[date.getDay()];
-};
 
 export interface WeatherResult {
   data: WeatherForecast[];
@@ -69,102 +18,86 @@ export interface WeatherResult {
   error?: string;
 }
 
+interface GeoLocation {
+  latitude: number;
+  longitude: number;
+  city: string;
+}
+
+// WMO Wetter-Code → Emoji + Text
+function wmoToWeather(code: number): { icon: string; condition: string } {
+  if (code === 0)                return { icon: '☀️',  condition: 'Klar' };
+  if (code === 1)                return { icon: '🌤️',  condition: 'Überwiegend klar' };
+  if (code === 2)                return { icon: '⛅',  condition: 'Teilweise bewölkt' };
+  if (code === 3)                return { icon: '☁️',  condition: 'Bedeckt' };
+  if (code <= 48)                return { icon: '🌫️',  condition: 'Nebel' };
+  if (code <= 55)                return { icon: '🌦️',  condition: 'Nieselregen' };
+  if (code <= 65)                return { icon: '🌧️',  condition: 'Regen' };
+  if (code <= 77)                return { icon: '❄️',  condition: 'Schnee' };
+  if (code <= 82)                return { icon: '🌦️',  condition: 'Regenschauer' };
+  if (code <= 86)                return { icon: '🌨️',  condition: 'Schneeschauer' };
+  if (code <= 99)                return { icon: '⛈️',  condition: 'Gewitter' };
+  return { icon: '🌡️', condition: 'Unbekannt' };
+}
+
+const DAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+
+// Standort via IP ermitteln
+async function getLocationByIp(): Promise<GeoLocation> {
+  const res = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(5000) });
+  if (!res.ok) throw new Error('IP-Geolocation fehlgeschlagen');
+  const data = await res.json();
+  return { latitude: data.latitude, longitude: data.longitude, city: data.city || data.region || 'Unbekannt' };
+}
+
+// Standort via Stadtname suchen
+async function getLocationByCity(city: string): Promise<GeoLocation> {
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=de`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  if (!res.ok) throw new Error('Geocoding fehlgeschlagen');
+  const data = await res.json();
+  if (!data.results?.length) throw new Error(`Stadt "${city}" nicht gefunden`);
+  const r = data.results[0];
+  return { latitude: r.latitude, longitude: r.longitude, city: `${r.name}, ${r.country}` };
+}
+
+// Wetter von Open-Meteo holen
+async function fetchFromOpenMeteo(loc: GeoLocation): Promise<WeatherResult> {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&daily=temperature_2m_max,temperature_2m_min,weathercode&current=temperature_2m,weathercode&timezone=auto&forecast_days=5`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`Open-Meteo Fehler: ${res.status}`);
+  const data = await res.json();
+
+  const days: WeatherForecast[] = data.daily.time.map((dateStr: string, i: number) => {
+    const date = new Date(dateStr);
+    const { icon, condition } = wmoToWeather(data.daily.weathercode[i]);
+    return {
+      day: i === 0 ? 'Heute' : DAYS[date.getDay()],
+      icon,
+      tempHigh: Math.round(data.daily.temperature_2m_max[i]),
+      tempLow: Math.round(data.daily.temperature_2m_min[i]),
+      condition,
+    };
+  });
+
+  return { data: days, isLive: true, city: loc.city };
+}
+
 /**
- * Fetches weather data from OpenWeatherMap API.
- * Returns mock data if API key is missing or on error.
- * @param overrideCity Optional city override from widget settings
- * @param overrideApiKey Optional API key override from widget settings
+ * Haupt-Funktion: Standort automatisch (IP) oder manuell (Stadtname),
+ * Wetterdaten von Open-Meteo.
  */
-export const fetchWeatherData = async (overrideCity?: string, overrideApiKey?: string): Promise<WeatherResult> => {
-  const hasOverrideKey = overrideApiKey && overrideApiKey.trim().length > 0;
-  
-  if (!isApiConfigured('openWeatherMap') && !hasOverrideKey) {
-    return { data: mockWeatherData, isLive: false, error: 'API-Key nicht konfiguriert' };
-  }
-
-  const config = getApiConfig().openWeatherMap;
-  const apiKey = hasOverrideKey ? overrideApiKey!.trim() : config.apiKey;
-  const city = overrideCity && overrideCity.trim().length > 0 ? overrideCity.trim() : config.city;
-
+export async function fetchWeatherData(cityOverride?: string): Promise<WeatherResult> {
   try {
-    // Fetch current weather
-    const currentRes = await fetch(
-      `${config.baseUrl}/weather?q=${encodeURIComponent(city)}&units=metric&lang=de&appid=${apiKey}`
-    );
-    if (!currentRes.ok) {
-      throw new Error(`Wetter-API Fehler: ${currentRes.status}`);
-    }
-    const current: OWMCurrentResponse = await currentRes.json();
-
-    // Fetch 5-day forecast
-    const forecastRes = await fetch(
-      `${config.baseUrl}/forecast?q=${encodeURIComponent(city)}&units=metric&lang=de&appid=${apiKey}`
-    );
-    if (!forecastRes.ok) {
-      throw new Error(`Vorhersage-API Fehler: ${forecastRes.status}`);
-    }
-    const forecast: OWMForecastResponse = await forecastRes.json();
-
-    // Build today entry
-    const today = new Date();
-    const todayEntry: WeatherForecast = {
-      day: 'Heute',
-      icon: iconToEmoji(current.weather[0]?.icon || '01d'),
-      tempHigh: Math.round(current.main.temp_max),
-      tempLow: Math.round(current.main.temp_min),
-      condition: translateCondition(current.weather[0]?.main || ''),
-    };
-
-    // Group forecast by day and get min/max temps
-    const dailyMap = new Map<string, { tempMin: number; tempMax: number; icon: string; main: string; date: Date }>();
-    for (const item of forecast.list) {
-      const date = new Date(item.dt * 1000);
-      const key = date.toISOString().split('T')[0];
-      const todayKey = today.toISOString().split('T')[0];
-      if (key === todayKey) continue; // skip today
-
-      const existing = dailyMap.get(key);
-      if (existing) {
-        existing.tempMin = Math.min(existing.tempMin, item.main.temp_min);
-        existing.tempMax = Math.max(existing.tempMax, item.main.temp_max);
-        // Use midday icon if available (12:00)
-        if (date.getHours() >= 11 && date.getHours() <= 14) {
-          existing.icon = item.weather[0]?.icon || existing.icon;
-          existing.main = item.weather[0]?.main || existing.main;
-        }
-      } else {
-        dailyMap.set(key, {
-          tempMin: item.main.temp_min,
-          tempMax: item.main.temp_max,
-          icon: item.weather[0]?.icon || '01d',
-          main: item.weather[0]?.main || '',
-          date,
-        });
-      }
-    }
-
-    // Take next 4 days
-    const forecastDays: WeatherForecast[] = Array.from(dailyMap.values())
-      .slice(0, 4)
-      .map((d) => ({
-        day: getDayName(d.date, false),
-        icon: iconToEmoji(d.icon),
-        tempHigh: Math.round(d.tempMax),
-        tempLow: Math.round(d.tempMin),
-        condition: translateCondition(d.main),
-      }));
-
-    return {
-      data: [todayEntry, ...forecastDays],
-      isLive: true,
-      city: current.name,
-    };
+    const loc = cityOverride?.trim()
+      ? await getLocationByCity(cityOverride.trim())
+      : await getLocationByIp();
+    return await fetchFromOpenMeteo(loc);
   } catch (err) {
-    console.error('[WeatherWidget] API-Fehler:', err);
     return {
-      data: mockWeatherData,
+      data: [],
       isLive: false,
       error: err instanceof Error ? err.message : 'Unbekannter Fehler',
     };
   }
-};
+}
