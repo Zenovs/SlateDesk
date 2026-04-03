@@ -98,8 +98,8 @@ const ClockComponent: React.FC<WidgetProps> = ({ instanceId, width, height }) =>
   };
 
   // Schriftgrösse aus Widget-Breite und -Höhe ableiten
-  const timeFontSize  = Math.max(Math.min(width * 8 * 0.18, height * 32 * 0.38), 24);
-  const dateFontSize  = Math.max(timeFontSize * 0.18, 11);
+  const timeFontSize  = Math.max(Math.min(width * 8 * 0.54, height * 32 * 1.14), 72);
+  const dateFontSize  = Math.max(timeFontSize * 0.18, 13);
 
   return (
     <>
