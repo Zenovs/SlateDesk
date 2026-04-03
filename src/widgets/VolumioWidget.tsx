@@ -125,9 +125,9 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     }
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'row', height: '100%', gap: 16, alignItems: 'center' }}>
+      <div style={{ display: 'flex', flexDirection: 'row', height: '100%', gap: 24, alignItems: 'center' }}>
         {/* Cover Art */}
-        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', paddingRight: 8 }}>
           {coverUrl && !coverError ? (
             <img
               src={coverUrl}
@@ -136,7 +136,7 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
               style={{
                 height: '100%',
                 width: 'auto',
-                maxWidth: 200,
+                maxWidth: 300,
                 objectFit: 'contain',
                 borderRadius: 'var(--radius-md, 8px)',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
@@ -144,14 +144,14 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
             />
           ) : (
             <div style={{
-              width: 80,
-              height: 80,
+              width: 120,
+              height: 120,
               borderRadius: 'var(--radius-md, 8px)',
               background: 'var(--bg-secondary)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 36,
+              fontSize: 48,
             }}>
               🎵
             </div>
