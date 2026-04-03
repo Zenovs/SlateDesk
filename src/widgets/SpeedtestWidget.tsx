@@ -139,21 +139,33 @@ function Sparkline({ history, width }: { history: SpeedResult[]; width: number }
   );
 }
 
-const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId, width, height }) => {
+const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const [running, setRunning]           = useState(false);
   const [latest, setLatest]             = useState<SpeedResult | null>(null);
   const [history, setHistory]           = useState<SpeedResult[]>([]);
   const [error, setError]               = useState<string | null>(null);
   const [countdown, setCountdown]       = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [containerSize, setContainerSize] = useState({ w: 320, h: 220 });
+  const containerRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { getSettings, updateSettings } = useWidgetSettingsStore();
   const settings = getSettings<SpeedtestSettings>(instanceId, DEFAULT_SETTINGS);
 
-  // Gauge-Grösse aus Widget-Breite ableiten
-  const gaugeSize = Math.min(Math.floor((width * 8 - 48) / 2), Math.floor(height * 32 * 0.55));
+  // Echte Pixelgrösse via ResizeObserver
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(entries => {
+      const { width: w, height: h } = entries[0].contentRect;
+      setContainerSize({ w, h });
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const gaugeSize = Math.round(Math.min((containerSize.w - 48) / 2, containerSize.h * 0.62));
 
   useEffect(() => {
     const h = () => setSettingsOpen(true);
@@ -198,7 +210,7 @@ const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId, width, height }
 
   return (
     <>
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
+      <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -239,7 +251,7 @@ const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId, width, height }
             <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: 0.5 }}>
               Download-Verlauf
             </div>
-            <Sparkline history={history} width={width * 8 - 32} />
+            <Sparkline history={history} width={containerSize.w - 16} />
           </div>
         )}
 

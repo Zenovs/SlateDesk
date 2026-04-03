@@ -12,18 +12,36 @@ import './styles/global.css';
 // Register all widgets on app start
 initializeWidgets();
 
+const CURSOR_HIDE_DELAY = 50_000; // 50 Sekunden
+
 const App: React.FC = () => {
   const { theme, accentColor } = useThemeStore();
 
-  // Apply theme to document
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
-  // Apply accent color as CSS variable
   useEffect(() => {
     document.documentElement.style.setProperty('--accent-color', accentColor);
   }, [accentColor]);
+
+  // Mauszeiger nach 50s Stillstand ausblenden
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const showCursor = () => {
+      document.body.style.cursor = '';
+      clearTimeout(timer);
+      timer = setTimeout(() => { document.body.style.cursor = 'none'; }, CURSOR_HIDE_DELAY);
+    };
+    document.addEventListener('mousemove', showCursor);
+    document.addEventListener('mousedown', showCursor);
+    timer = setTimeout(() => { document.body.style.cursor = 'none'; }, CURSOR_HIDE_DELAY);
+    return () => {
+      document.removeEventListener('mousemove', showCursor);
+      document.removeEventListener('mousedown', showCursor);
+      clearTimeout(timer);
+    };
+  }, []);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', maxWidth: '100vw', overflow: 'hidden' }}>

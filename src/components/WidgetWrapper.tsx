@@ -48,23 +48,23 @@ export const WidgetWrapper: React.FC<Props> = ({
 
   return (
     <div className={`widget-container ${editMode ? 'edit-mode' : ''}`}>
-      <div className="widget-header">
-        <div className="widget-header-title">
-          <GripHorizontal size={14} />
-          {icon}
-          {title}
-        </div>
-        <div className="widget-header-actions">
-          {hasSettings && (
-            <button
-              className="widget-header-action"
-              onClick={handleSettingsClick}
-              title="Einstellungen"
-            >
-              <Settings size={14} />
-            </button>
-          )}
-          {editMode && (
+      {editMode && (
+        <div className="widget-header">
+          <div className="widget-header-title">
+            <GripHorizontal size={14} />
+            {icon}
+            {title}
+          </div>
+          <div className="widget-header-actions">
+            {hasSettings && (
+              <button
+                className="widget-header-action"
+                onClick={handleSettingsClick}
+                title="Einstellungen"
+              >
+                <Settings size={14} />
+              </button>
+            )}
             <button
               className="widget-header-action"
               onClick={() => removeWidget(instanceId)}
@@ -72,9 +72,9 @@ export const WidgetWrapper: React.FC<Props> = ({
             >
               <X size={14} />
             </button>
-          )}
+          </div>
         </div>
-      </div>
+      )}
       <div className="widget-body">
         <ErrorBoundary fallback={<div className="widget-error">⚠️ Widget-Fehler</div>}>
           {children}
