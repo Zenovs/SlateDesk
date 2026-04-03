@@ -62,32 +62,112 @@ SlateDesk ist ein erweiterbares Desktop-Dashboard für den Office-Einsatz. Es l�
 - ✅ **Error-Handling** – Netzwerkfehler, API-Fehler und fehlende Keys werden abgefangen
 - ✅ **Status-Anzeige** – Widgets zeigen Live/Offline-Status an
 
-## 🚀 Installation & Setup
+## 🚀 Installation (Ubuntu / Kiosk-Gerät)
 
-### Voraussetzungen
-
-- Node.js >= 18
-- Rust & Cargo (via [rustup](https://rustup.rs))
-- Linux-Abhängigkeiten:
+### Schritt 1 – Voraussetzungen installieren
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget \
+sudo apt update
+sudo apt install -y git curl build-essential libwebkit2gtk-4.1-dev \
   libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
   libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
 ```
 
-### Projekt starten
+Node.js installieren (falls noch nicht vorhanden):
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+Rust installieren (falls noch nicht vorhanden):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+```
+
+### Schritt 2 – Nutzer anlegen & Repo klonen
+
+```bash
+sudo useradd -m -s /bin/bash slatedesk
+sudo -u slatedesk git clone https://github.com/Zenovs/SlateDesk.git /home/slatedesk/SlateDesk
+```
+
+### Schritt 3 – Abhängigkeiten & Build
+
+```bash
+cd /home/slatedesk/SlateDesk
+sudo -u slatedesk npm install
+sudo -u slatedesk npx tauri build
+```
+
+> Der Build dauert **10–20 Minuten** (Rust-Kompilierung).
+
+### Schritt 4 – App installieren
+
+```bash
+sudo dpkg -i /home/slatedesk/SlateDesk/src-tauri/target/release/bundle/deb/*.deb
+```
+
+### Schritt 5 – Autostart beim Boot einrichten
+
+```bash
+sudo mkdir -p /etc/systemd/system
+sudo tee /etc/systemd/system/slatedesk.service > /dev/null << 'EOF'
+[Unit]
+Description=SlateDesk Dashboard
+After=graphical.target
+
+[Service]
+Type=simple
+User=slatedesk
+Environment=DISPLAY=:0
+ExecStart=/usr/bin/slate-desk
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable slatedesk.service
+sudo systemctl start slatedesk.service
+```
+
+### Schritt 6 – Auto-Update-System einrichten
+
+```bash
+sudo bash /home/slatedesk/SlateDesk/scripts/setup-auto-update.sh
+```
+
+---
+
+### Manuelles Update (sofort, ohne zu warten)
+
+```bash
+bash /home/slatedesk/SlateDesk/scripts/auto-update.sh
+```
+
+Fortschritt verfolgen:
+
+```bash
+tail -f /home/slatedesk/slatedesk-update.log
+```
+
+---
+
+### Entwicklung (macOS / lokal)
 
 ```bash
 git clone https://github.com/Zenovs/SlateDesk.git
 cd SlateDesk
 npm install
-npm run tauri dev
+npx tauri dev
 ```
 
 ### API-Keys konfigurieren (optional)
-
-Für Live-Wetterdaten und Nachrichten, kopiere die Beispiel-Konfiguration und trage deine API-Keys ein:
 
 ```bash
 cp .env.example .env
@@ -97,22 +177,6 @@ nano .env
 👉 **Ausführliche Anleitung:** [API_SETUP.md](./API_SETUP.md)
 
 > Ohne API-Keys funktioniert die App mit Mock-Daten.
-
-### Nur Frontend (ohne Tauri)
-
-```bash
-npm run dev
-```
-
-Öffne `http://localhost:5173` im Browser.
-
-### Produktions-Build
-
-```bash
-npm run tauri build
-```
-
-Erstellt `.deb` und `.AppImage` in `src-tauri/target/release/bundle/`.
 
 ## 📁 Projektstruktur
 
