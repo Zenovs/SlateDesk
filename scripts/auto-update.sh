@@ -230,6 +230,11 @@ main() {
     # Backup erstellen
     create_backup
 
+    # Lokale Änderungen verwerfen (Kiosk-Gerät, kein Entwicklungsrechner)
+    log_info "Verwerfe lokale Änderungen..."
+    git reset --hard HEAD 2>&1 | tee -a "$LOG_FILE" || true
+    git clean -fd 2>&1 | tee -a "$LOG_FILE" || true
+
     # Git pull
     log_info "Lade neue Änderungen..."
     if ! git pull origin main 2>&1 | tee -a "$LOG_FILE"; then
