@@ -165,9 +165,10 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
             fontWeight: 'var(--font-weight-bold)',
             color: 'var(--text-primary)',
             overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            lineHeight: 1.1,
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            lineHeight: 1.2,
           }}>
             {state.title || '–'}
           </div>
