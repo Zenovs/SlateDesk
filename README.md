@@ -124,6 +124,7 @@ Type=simple
 User=slatedesk
 Environment=DISPLAY=:0
 ExecStart=/usr/bin/slate-desk
+# Fallback falls Binary noch "app" heisst (vor Update): ExecStart=/usr/bin/app
 Restart=always
 RestartSec=5
 

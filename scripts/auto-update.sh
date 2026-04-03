@@ -148,12 +148,15 @@ rollback() {
 # ─── SlateDesk stoppen ───────────────────────────────────────────────────────
 stop_slatedesk() {
     log_info "Stoppe SlateDesk..."
-    # Versuche systemctl zuerst, dann killall
     if systemctl --user is-active slatedesk.service &>/dev/null; then
         systemctl --user stop slatedesk.service 2>/dev/null || true
     fi
+    if systemctl is-active slatedesk.service &>/dev/null; then
+        systemctl stop slatedesk.service 2>/dev/null || true
+    fi
     killall slatedesk 2>/dev/null || true
     killall slate-desk 2>/dev/null || true
+    killall app 2>/dev/null || true
     sleep 2
     log_info "SlateDesk gestoppt."
 }
@@ -161,11 +164,25 @@ stop_slatedesk() {
 # ─── SlateDesk starten ───────────────────────────────────────────────────────
 start_slatedesk() {
     log_info "Starte SlateDesk..."
-    if systemctl --user is-enabled slatedesk.service &>/dev/null; then
+    if systemctl is-enabled slatedesk.service &>/dev/null; then
+        systemctl start slatedesk.service 2>/dev/null || true
+    elif systemctl --user is-enabled slatedesk.service &>/dev/null; then
         systemctl --user start slatedesk.service 2>/dev/null || true
     else
-        # Fallback: Direkt starten
-        nohup slatedesk &>/dev/null &
+        # Fallback: Binary direkt starten
+        local bin=""
+        for candidate in /usr/bin/slate-desk /usr/bin/app; do
+            if [ -x "$candidate" ]; then
+                bin="$candidate"
+                break
+            fi
+        done
+        if [ -n "$bin" ]; then
+            DISPLAY=:0 nohup "$bin" &>/dev/null &
+            log_info "SlateDesk direkt gestartet: $bin"
+        else
+            log_warn "Keine SlateDesk-Binary gefunden."
+        fi
     fi
     sleep 2
     log_info "SlateDesk gestartet."
