@@ -30,22 +30,20 @@ const INTERVAL_OPTIONS = [
   { value: 30, label: '30 Minuten' },
 ];
 
-const MAX_MBPS = 1000;
-
-function speedColor(mbps: number): string {
-  if (mbps >= 100) return '#22c55e';
-  if (mbps >= 25)  return '#f59e0b';
+function speedColor(mbps: number, maxMbps: number): string {
+  if (mbps >= maxMbps * 0.6) return '#22c55e';
+  if (mbps >= maxMbps * 0.25) return '#f59e0b';
   return '#ef4444';
 }
 
 // SVG Halbkreis-Gauge (180°, oben)
-function Gauge({ mbps, label, size }: { mbps: number; label: string; size: number }) {
+function Gauge({ mbps, maxMbps, label, size }: { mbps: number; maxMbps: number; label: string; size: number }) {
   const r = size * 0.38;
   const cx = size / 2;
   const cy = size * 0.54;
   const circumference = Math.PI * r;
-  const pct = Math.min(mbps / MAX_MBPS, 1);
-  const color = speedColor(mbps);
+  const pct = Math.min(mbps / maxMbps, 1);
+  const color = speedColor(mbps, maxMbps);
   const trackColor = 'var(--bg-tertiary, #2a2a35)';
   const fontSize = Math.max(size * 0.18, 12);
   const labelSize = Math.max(size * 0.09, 9);
@@ -167,6 +165,15 @@ const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   const gaugeSize = Math.round(Math.min((containerSize.w - 48) / 2, containerSize.h * 0.62));
 
+  // Dynamische Skala: Maximum aller bisherigen Messungen, mindestens 10 Mbit/s
+  const maxMbps = Math.max(
+    ...history.map(r => r.download_mbps),
+    ...history.map(r => r.upload_mbps),
+    latest?.download_mbps ?? 0,
+    latest?.upload_mbps ?? 0,
+    10,
+  );
+
   useEffect(() => {
     const h = () => setSettingsOpen(true);
     eventBus.on(`widget:openSettings:${instanceId}`, h);
@@ -237,8 +244,8 @@ const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId }) => {
             <div style={{ textAlign: 'center', color: 'var(--error-color, #ef4444)', fontSize: 12 }}>⚠️ {error}</div>
           ) : latest ? (
             <>
-              <Gauge mbps={latest.download_mbps} label="↓ DOWNLOAD" size={gaugeSize} />
-              <Gauge mbps={latest.upload_mbps}   label="↑ UPLOAD"   size={gaugeSize} />
+              <Gauge mbps={latest.download_mbps} maxMbps={maxMbps} label="↓ DOWNLOAD" size={gaugeSize} />
+              <Gauge mbps={latest.upload_mbps}   maxMbps={maxMbps} label="↑ UPLOAD"   size={gaugeSize} />
             </>
           ) : (
             <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Bereit…</span>
