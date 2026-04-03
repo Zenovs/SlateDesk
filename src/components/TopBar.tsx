@@ -149,7 +149,7 @@ export const TopBar: React.FC = () => {
             title={`Update verfügbar: ${updateInfo?.short_current} → ${updateInfo?.short_remote}`}
           >
             <Download size={16} />
-            Update
+            Update möglich
           </button>
         )}
         {updateStatus === 'updating' && (
