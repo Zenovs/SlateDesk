@@ -46,7 +46,7 @@ const DATE_FORMATS = [
   { value: 'YYYY-MM-DD', label: 'YYYY-MM-DD (z.B. 2026-03-27)' },
 ];
 
-const ClockComponent: React.FC<WidgetProps> = ({ instanceId }) => {
+const ClockComponent: React.FC<WidgetProps> = ({ instanceId, width, height }) => {
   const [now, setNow] = useState(new Date());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { getSettings, updateSettings } = useWidgetSettingsStore();
@@ -97,6 +97,10 @@ const ClockComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     updateSettings(instanceId, { [key]: value });
   };
 
+  // Schriftgrösse aus Widget-Breite und -Höhe ableiten
+  const timeFontSize  = Math.max(Math.min(width * 8 * 0.18, height * 32 * 0.38), 24);
+  const dateFontSize  = Math.max(timeFontSize * 0.18, 11);
+
   return (
     <>
       <div style={{
@@ -108,7 +112,7 @@ const ClockComponent: React.FC<WidgetProps> = ({ instanceId }) => {
         gap: 4,
       }}>
         <div style={{
-          fontSize: 'var(--font-size-xs)',
+          fontSize: dateFontSize,
           color: 'var(--text-tertiary)',
           letterSpacing: 2,
           fontWeight: 'var(--font-weight-medium)',
@@ -116,7 +120,7 @@ const ClockComponent: React.FC<WidgetProps> = ({ instanceId }) => {
           {formatDate(now)}
         </div>
         <div style={{
-          fontSize: 'var(--font-size-3xl)',
+          fontSize: timeFontSize,
           fontWeight: 'var(--font-weight-light)',
           color: 'var(--text-primary)',
           letterSpacing: 2,
@@ -126,7 +130,7 @@ const ClockComponent: React.FC<WidgetProps> = ({ instanceId }) => {
         </div>
         {settings.timezone !== 'Europe/Zurich' && (
           <div style={{
-            fontSize: 'var(--font-size-xs)',
+            fontSize: dateFontSize,
             color: 'var(--text-accent)',
             marginTop: 4,
           }}>
