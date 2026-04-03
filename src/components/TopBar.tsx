@@ -1,7 +1,7 @@
 /**
  * TopBar – Minimal toolbar with theme toggle, edit mode, widget picker, and updater.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sun, Moon, Settings, Plus, Check, RefreshCw, Download, AlertCircle } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useThemeStore } from '../store/themeStore';
@@ -91,6 +91,9 @@ export const TopBar: React.FC = () => {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updatePercent, setUpdatePercent] = useState(0);
+  const [updateMessage, setUpdateMessage] = useState('');
+  const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const checkForUpdates = useCallback(async () => {
     setUpdateStatus('checking');
@@ -112,14 +115,35 @@ export const TopBar: React.FC = () => {
 
   const handleUpdate = async () => {
     setUpdateStatus('updating');
+    setUpdatePercent(2);
+    setUpdateMessage('Update gestartet…');
     try {
       await invoke('trigger_update');
-      // Script runs in background and will eventually restart the app
+      // Fortschritt alle 3 Sekunden vom Log lesen
+      progressPollRef.current = setInterval(async () => {
+        try {
+          const p = await invoke<{ percent: number; message: string; done: boolean; error: boolean }>('get_update_progress');
+          setUpdatePercent(p.percent);
+          setUpdateMessage(p.message);
+          if (p.done) {
+            clearInterval(progressPollRef.current!);
+            setUpdateStatus('up-to-date');
+          } else if (p.error) {
+            clearInterval(progressPollRef.current!);
+            setUpdateError(p.message);
+            setUpdateStatus('error');
+          }
+        } catch { /* ignorieren */ }
+      }, 3000);
     } catch (err) {
       setUpdateError(err as string);
       setUpdateStatus('error');
     }
   };
+
+  useEffect(() => {
+    return () => { if (progressPollRef.current) clearInterval(progressPollRef.current); };
+  }, []);
 
   const widgets = getAllWidgets();
 
@@ -153,9 +177,15 @@ export const TopBar: React.FC = () => {
           </button>
         )}
         {updateStatus === 'updating' && (
-          <span style={{ ...styles.btn, opacity: 0.7, cursor: 'default' }}>
-            <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} />
-            Wird aktualisiert…
+          <span style={{ ...styles.btn, cursor: 'default', flexDirection: 'column', gap: 2, padding: '4px 10px', minWidth: 140 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+              <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{updatePercent}%</span>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{updateMessage}</span>
+            </span>
+            <div style={{ width: '100%', height: 3, background: 'var(--border-color)', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${updatePercent}%`, background: 'var(--accent-color)', borderRadius: 2, transition: 'width 1s ease' }} />
+            </div>
           </span>
         )}
         {updateStatus === 'checking' && (

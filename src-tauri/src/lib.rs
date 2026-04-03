@@ -124,6 +124,123 @@ fn run_speed_test() -> Result<SpeedResult, String> {
     Ok(SpeedResult { download_mbps, upload_mbps, interface, interface_type, timestamp })
 }
 
+#[derive(Serialize)]
+struct UpdateProgress {
+    percent: u8,
+    message: String,
+    done: bool,
+    error: bool,
+}
+
+#[tauri::command]
+fn get_update_progress() -> UpdateProgress {
+    let log_path = std::env::var("SLATEDESK_LOG")
+        .unwrap_or_else(|_| "/home/slatedesk/slatedesk-update.log".to_string());
+
+    let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+
+    // Nur den letzten Update-Durchlauf betrachten
+    let start_idx = content.rfind("Auto-Update gestartet").unwrap_or(0);
+    let run = &content[start_idx..];
+
+    let has = |needle: &str| run.contains(needle);
+
+    if has("Update erfolgreich abgeschlossen") {
+        return UpdateProgress { percent: 100, message: "Abgeschlossen!".into(), done: true, error: false };
+    }
+    if has("Rollback") || run.lines().any(|l| l.contains("[ERROR]")) {
+        return UpdateProgress { percent: 0, message: "Fehler – siehe Log".into(), done: false, error: true };
+    }
+    if has("Starte SlateDesk") {
+        return UpdateProgress { percent: 95, message: "Starte SlateDesk…".into(), done: false, error: false };
+    }
+    if has("Installiere neues Paket") {
+        return UpdateProgress { percent: 88, message: "Installiere Paket…".into(), done: false, error: false };
+    }
+    if has("Deinstalliere altes Paket") {
+        return UpdateProgress { percent: 84, message: "Deinstalliere altes Paket…".into(), done: false, error: false };
+    }
+    if has("Stoppe SlateDesk") {
+        return UpdateProgress { percent: 82, message: "Stoppe SlateDesk…".into(), done: false, error: false };
+    }
+
+    // Build-Phase: zeitbasiert von 35% → 81% (ca. 12 Minuten)
+    if has("Baue SlateDesk neu") {
+        let build_pct = run.lines()
+            .find(|l| l.contains("Baue SlateDesk neu"))
+            .and_then(|line| {
+                // Timestamp: [2024-01-15 14:32:05]
+                let ts_str = line.trim_start_matches('[').get(..19)?;
+                let dt = chrono_parse(ts_str)?;
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+                let elapsed_secs = now.saturating_sub(dt);
+                // 12 Minuten = 720 Sekunden für 35%→81%
+                let ratio = (elapsed_secs as f64 / 720.0).min(1.0);
+                Some(35u8 + (ratio * 46.0) as u8)
+            })
+            .unwrap_or(35);
+        return UpdateProgress {
+            percent: build_pct,
+            message: format!("Build läuft… (~{} Min)", (81u8.saturating_sub(build_pct) as f64 / 46.0 * 12.0).ceil() as u8),
+            done: false,
+            error: false,
+        };
+    }
+
+    if has("npm install") {
+        return UpdateProgress { percent: 28, message: "npm install…".into(), done: false, error: false };
+    }
+    if has("Lade neue Änderungen") {
+        return UpdateProgress { percent: 20, message: "git pull…".into(), done: false, error: false };
+    }
+    if has("Erstelle Backup") {
+        return UpdateProgress { percent: 15, message: "Backup erstellen…".into(), done: false, error: false };
+    }
+    if has("Neues Update gefunden") {
+        return UpdateProgress { percent: 12, message: "Update gefunden…".into(), done: false, error: false };
+    }
+    if has("Prüfe auf Updates") {
+        return UpdateProgress { percent: 8, message: "Prüfe auf Updates…".into(), done: false, error: false };
+    }
+    if has("Netzwerk verfügbar") {
+        return UpdateProgress { percent: 5, message: "Netzwerk verbunden…".into(), done: false, error: false };
+    }
+
+    UpdateProgress { percent: 2, message: "Update gestartet…".into(), done: false, error: false }
+}
+
+/// Parst "[YYYY-MM-DD HH:MM:SS]"-Timestamps aus dem Log zu Unix-Sekunden.
+fn chrono_parse(s: &str) -> Option<u64> {
+    // s = "2024-01-15 14:32:05"
+    let parts: Vec<&str> = s.splitn(2, ' ').collect();
+    if parts.len() != 2 { return None; }
+    let date_parts: Vec<u32> = parts[0].split('-').filter_map(|p| p.parse().ok()).collect();
+    let time_parts: Vec<u32> = parts[1].split(':').filter_map(|p| p.parse().ok()).collect();
+    if date_parts.len() != 3 || time_parts.len() != 3 { return None; }
+    // Grobe Umrechnung (ignoriert Zeitzonen, reicht für Fortschrittsschätzung)
+    let days_since_epoch = days_from_ymd(date_parts[0], date_parts[1], date_parts[2]);
+    let secs = days_since_epoch * 86400
+        + time_parts[0] as u64 * 3600
+        + time_parts[1] as u64 * 60
+        + time_parts[2] as u64;
+    Some(secs)
+}
+
+fn days_from_ymd(y: u32, m: u32, d: u32) -> u64 {
+    // Einfache Näherung: Tage seit 1970-01-01
+    let y = y as u64;
+    let m = m as u64;
+    let d = d as u64;
+    let leap = |yr: u64| (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
+    let month_days = [0u64, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut days = (y - 1970) * 365 + (y - 1969) / 4 - (y - 1901) / 100 + (y - 1601) / 400;
+    for mo in 1..m {
+        days += month_days[mo as usize];
+        if mo == 2 && leap(y) { days += 1; }
+    }
+    days + d - 1
+}
+
 #[tauri::command]
 fn trigger_update() -> Result<(), String> {
     let dir = project_dir();
@@ -151,7 +268,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![check_for_updates, trigger_update, run_speed_test])
+        .invoke_handler(tauri::generate_handler![check_for_updates, trigger_update, run_speed_test, get_update_progress])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
