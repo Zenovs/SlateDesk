@@ -127,17 +127,18 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     }
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'row', height: '100%', gap: 16, alignItems: 'center' }}>
         {/* Cover Art */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
           {coverUrl && !coverError ? (
             <img
               src={coverUrl}
               alt="Album Cover"
               onError={() => setCoverError(true)}
               style={{
-                maxWidth: '100%',
-                maxHeight: '100%',
+                height: '100%',
+                width: 'auto',
+                maxWidth: 200,
                 objectFit: 'contain',
                 borderRadius: 'var(--radius-md, 8px)',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
@@ -160,7 +161,7 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
         </div>
 
         {/* Track Info */}
-        <div style={{ textAlign: 'center', paddingBottom: 4 }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
           <div style={{
             fontSize: 'var(--font-size-3xl)',
             fontWeight: 'var(--font-weight-bold)',
@@ -168,10 +169,9 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
-            marginBottom: 4,
             lineHeight: 1.1,
           }}>
-            {statusIcon} {state.title || '–'}
+            {state.title || '–'}
           </div>
           <div style={{
             fontSize: 'var(--font-size-xl)',
@@ -189,7 +189,6 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
-              marginTop: 2,
             }}>
               {state.album}
             </div>
