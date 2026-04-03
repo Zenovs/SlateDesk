@@ -158,6 +158,38 @@ tail -f /home/slatedesk/slatedesk-update.log
 
 ---
 
+### Vollständige Deinstallation (Hard Reset)
+
+Löscht SlateDesk komplett – App, Nutzer, Daten, Services, Logs.
+
+```bash
+# 1. Service stoppen & deaktivieren
+sudo systemctl stop slatedesk.service slatedesk-boot-update.service 2>/dev/null || true
+sudo systemctl disable slatedesk.service slatedesk-boot-update.service 2>/dev/null || true
+sudo rm -f /etc/systemd/system/slatedesk.service
+sudo rm -f /etc/systemd/system/slatedesk-boot-update.service
+sudo systemctl daemon-reload
+
+# 2. App deinstallieren
+sudo dpkg -r slate-desk 2>/dev/null || true
+
+# 3. Cronjob entfernen
+sudo crontab -u slatedesk -r 2>/dev/null || true
+
+# 4. Sudo-Rechte entfernen
+sudo rm -f /etc/sudoers.d/slatedesk-update
+
+# 5. Nutzer, Home-Verzeichnis & alle Daten löschen
+sudo userdel -r slatedesk 2>/dev/null || true
+
+# 6. Systemd neu laden
+sudo systemctl daemon-reload
+```
+
+Danach ist SlateDesk vollständig entfernt. Für eine Neuinstallation die Schritte oben ab **Schritt 1** durchführen.
+
+---
+
 ### Entwicklung (macOS / lokal)
 
 ```bash
