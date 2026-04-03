@@ -15,6 +15,7 @@ import { todoWidgetDef } from './TodoWidget';
 import { newsWidgetDef } from './NewsWidget';
 import { cameraWidgetDef } from './CameraWidget';
 import { volumioWidgetDef } from './VolumioWidget';
+import { speedtestWidgetDef } from './SpeedtestWidget';
 
 export const initializeWidgets = () => {
   registerWidget(clockWidgetDef);
@@ -25,4 +26,5 @@ export const initializeWidgets = () => {
   registerWidget(newsWidgetDef);
   registerWidget(cameraWidgetDef);
   registerWidget(volumioWidgetDef);
+  registerWidget(speedtestWidgetDef);
 };
