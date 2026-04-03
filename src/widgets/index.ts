@@ -14,6 +14,7 @@ import { messagesWidgetDef } from './MessagesWidget';
 import { todoWidgetDef } from './TodoWidget';
 import { newsWidgetDef } from './NewsWidget';
 import { cameraWidgetDef } from './CameraWidget';
+import { volumioWidgetDef } from './VolumioWidget';
 
 export const initializeWidgets = () => {
   registerWidget(clockWidgetDef);
@@ -23,4 +24,5 @@ export const initializeWidgets = () => {
   registerWidget(todoWidgetDef);
   registerWidget(newsWidgetDef);
   registerWidget(cameraWidgetDef);
+  registerWidget(volumioWidgetDef);
 };
