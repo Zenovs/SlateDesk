@@ -16,6 +16,7 @@ import { newsWidgetDef } from './NewsWidget';
 import { cameraWidgetDef } from './CameraWidget';
 import { volumioWidgetDef } from './VolumioWidget';
 import { speedtestWidgetDef } from './SpeedtestWidget';
+import { nasWidgetDef } from './NasWidget';
 
 export const initializeWidgets = () => {
   registerWidget(clockWidgetDef);
@@ -27,4 +28,5 @@ export const initializeWidgets = () => {
   registerWidget(cameraWidgetDef);
   registerWidget(volumioWidgetDef);
   registerWidget(speedtestWidgetDef);
+  registerWidget(nasWidgetDef);
 };

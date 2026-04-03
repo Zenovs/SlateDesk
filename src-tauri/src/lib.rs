@@ -241,6 +241,62 @@ fn days_from_ymd(y: u32, m: u32, d: u32) -> u64 {
     days + d - 1
 }
 
+#[derive(Serialize)]
+struct NasResult {
+    reachable: bool,
+    latency_ms: f64,
+    packet_loss_pct: u8,
+    timestamp: u64,
+}
+
+#[tauri::command]
+fn test_nas_connection(ip: String) -> Result<NasResult, String> {
+    let ip = ip.trim().to_string();
+    if ip.is_empty() {
+        return Err("Keine IP-Adresse angegeben".to_string());
+    }
+    // Einfache Validierung gegen Command-Injection (nur erlaubte Zeichen)
+    if !ip.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ':' || c == '-') {
+        return Err("Ungültige IP-Adresse".to_string());
+    }
+
+    let output = Command::new("ping")
+        .args(["-c", "4", "-W", "2", &ip])
+        .output()
+        .map_err(|e| format!("ping fehlgeschlagen: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Paketverlust parsen: "3 packets transmitted, 3 received, 0% packet loss"
+    let packet_loss_pct = stdout
+        .lines()
+        .find(|l| l.contains("packet loss"))
+        .and_then(|l| {
+            l.split_whitespace()
+                .find(|w| w.ends_with('%'))
+                .and_then(|w| w.trim_end_matches('%').parse::<u8>().ok())
+        })
+        .unwrap_or(100);
+
+    let reachable = packet_loss_pct < 100;
+
+    // Durchschnittliche Latenz parsen: "rtt min/avg/max/mdev = 0.412/0.430/0.456/0.019 ms"
+    let latency_ms = stdout
+        .lines()
+        .find(|l| l.starts_with("rtt "))
+        .and_then(|l| l.split('=').nth(1))
+        .and_then(|vals| vals.trim().split('/').nth(1))
+        .and_then(|avg| avg.parse::<f64>().ok())
+        .unwrap_or(0.0);
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    Ok(NasResult { reachable, latency_ms, packet_loss_pct, timestamp })
+}
+
 #[tauri::command]
 fn trigger_update() -> Result<(), String> {
     let dir = project_dir();
@@ -268,7 +324,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![check_for_updates, trigger_update, run_speed_test, get_update_progress])
+        .invoke_handler(tauri::generate_handler![check_for_updates, trigger_update, run_speed_test, get_update_progress, test_nas_connection])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
