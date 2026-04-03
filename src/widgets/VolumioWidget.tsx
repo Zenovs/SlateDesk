@@ -126,26 +126,26 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'row', height: '100%', gap: 24, alignItems: 'center' }}>
-        {/* Cover Art */}
-        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', paddingRight: 8 }}>
+        {/* Cover Art – quadratisch, so hoch wie das Widget */}
+        <div style={{ flexShrink: 0, height: '100%', aspectRatio: '1 / 1' }}>
           {coverUrl && !coverError ? (
             <img
               src={coverUrl}
               alt="Album Cover"
               onError={() => setCoverError(true)}
               style={{
+                width: '100%',
                 height: '100%',
-                width: 'auto',
-                maxWidth: 300,
-                objectFit: 'contain',
+                objectFit: 'cover',
                 borderRadius: 'var(--radius-md, 8px)',
                 boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+                display: 'block',
               }}
             />
           ) : (
             <div style={{
-              width: 120,
-              height: 120,
+              width: '100%',
+              height: '100%',
               borderRadius: 'var(--radius-md, 8px)',
               background: 'var(--bg-secondary)',
               display: 'flex',
