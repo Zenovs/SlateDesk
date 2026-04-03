@@ -86,8 +86,6 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
       : `http://${settings.ip}${state.albumart}`
     : null;
 
-  const statusIcon = state?.status === 'play' ? '▶' : state?.status === 'pause' ? '⏸' : '⏹';
-
   const renderContent = () => {
     if (!settings.ip.trim()) {
       return (

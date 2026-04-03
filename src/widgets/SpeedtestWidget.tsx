@@ -68,7 +68,7 @@ function SpeedBar({ mbps, label }: { mbps: number; label: string }) {
   );
 }
 
-function Sparkline({ history, key: _ }: { history: SpeedResult[] }) {
+function Sparkline({ history }: { history: SpeedResult[] }) {
   if (history.length < 2) return null;
   const w = 200, h = 32, pad = 2;
   const maxDl = Math.max(...history.map(r => r.download_mbps), 1);
