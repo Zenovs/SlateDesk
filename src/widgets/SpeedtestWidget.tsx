@@ -21,7 +21,7 @@ interface SpeedtestSettings {
   intervalMinutes: number;
 }
 
-const DEFAULT_SETTINGS: SpeedtestSettings = { intervalMinutes: 5 };
+const DEFAULT_SETTINGS: SpeedtestSettings = { intervalMinutes: 30 };
 
 const INTERVAL_OPTIONS = [
   { value: 1,  label: '1 Minute' },
