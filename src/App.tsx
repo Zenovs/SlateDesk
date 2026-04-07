@@ -28,18 +28,20 @@ const App: React.FC = () => {
   // Mauszeiger nach 50s Stillstand ausblenden
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
+    const hideCursor = () => { document.documentElement.classList.add('cursor-hidden'); };
     const showCursor = () => {
-      document.body.style.cursor = '';
+      document.documentElement.classList.remove('cursor-hidden');
       clearTimeout(timer);
-      timer = setTimeout(() => { document.body.style.cursor = 'none'; }, CURSOR_HIDE_DELAY);
+      timer = setTimeout(hideCursor, CURSOR_HIDE_DELAY);
     };
     document.addEventListener('mousemove', showCursor);
     document.addEventListener('mousedown', showCursor);
-    timer = setTimeout(() => { document.body.style.cursor = 'none'; }, CURSOR_HIDE_DELAY);
+    timer = setTimeout(hideCursor, CURSOR_HIDE_DELAY);
     return () => {
       document.removeEventListener('mousemove', showCursor);
       document.removeEventListener('mousedown', showCursor);
       clearTimeout(timer);
+      document.documentElement.classList.remove('cursor-hidden');
     };
   }, []);
 
