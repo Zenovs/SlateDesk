@@ -24,7 +24,14 @@ interface NasSettings {
 
 const DEFAULT_SETTINGS: NasSettings = { ip: '', intervalMinutes: 60 };
 
-const STORAGE_KEY_NAS = 'slatedesk:nas:last';
+const STORAGE_KEY_NAS         = 'slatedesk:nas:last';
+const STORAGE_KEY_NAS_HISTORY = 'slatedesk:nas:history';
+const HISTORY_WINDOW_MS       = 12 * 60 * 60 * 1000; // 12 Stunden
+
+function pruneNasHistory(history: NasResult[]): NasResult[] {
+  const cutoff = (Date.now() - HISTORY_WINDOW_MS) / 1000;
+  return history.filter(r => r.timestamp >= cutoff);
+}
 
 const MAX_RETRIES   = 10;
 const RETRY_DELAY_S = 15; // Sekunden zwischen Retry-Versuchen
@@ -94,14 +101,17 @@ function LatencyGauge({ ms, maxMs, reachable, size }: { ms: number; maxMs: numbe
   );
 }
 
-// Gefüllte Sparkline für Latenz-Verlauf
+// Gefüllte Sparkline für Latenz-Verlauf – X-Achse = echte 12h-Zeitachse
 function LatencySparkline({ history, width }: { history: NasResult[]; width: number }) {
   const reachable = history.filter(r => r.reachable);
   if (reachable.length < 2) return null;
   const h = 36, pad = 2;
   const maxMs = Math.max(...reachable.map(r => r.latency_ms), 1);
-  const pts = history.map((r, i) => ({
-    x: pad + (i / (history.length - 1)) * (width - pad * 2),
+  const now = Date.now() / 1000;
+  const windowSec = 12 * 60 * 60;
+  const earliest = now - windowSec;
+  const pts = history.map(r => ({
+    x: pad + (Math.max(r.timestamp - earliest, 0) / windowSec) * (width - pad * 2),
     y: r.reachable
       ? h - pad - (r.latency_ms / maxMs) * (h - pad * 2 - 4)
       : h - pad,
@@ -128,7 +138,12 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const [latest, setLatest]               = useState<NasResult | null>(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY_NAS) || 'null'); } catch { return null; }
   });
-  const [history, setHistory]             = useState<NasResult[]>([]);
+  const [history, setHistory]             = useState<NasResult[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY_NAS_HISTORY) || '[]');
+      return pruneNasHistory(stored);
+    } catch { return []; }
+  });
   const [error, setError]                 = useState<string | null>(null);
   const [countdown, setCountdown]         = useState(0);
   const [settingsOpen, setSettingsOpen]   = useState(false);
@@ -166,7 +181,11 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     try {
       const result = await invoke<NasResult>('test_nas_connection', { ip: settings.ip.trim() });
       setLatest(result);
-      setHistory(prev => [...prev.slice(-19), result]);
+      setHistory(prev => {
+        const updated = pruneNasHistory([...prev, result]);
+        localStorage.setItem(STORAGE_KEY_NAS_HISTORY, JSON.stringify(updated));
+        return updated;
+      });
       localStorage.setItem(STORAGE_KEY_NAS, JSON.stringify(result));
 
       if (result.reachable) {
