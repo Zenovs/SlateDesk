@@ -24,6 +24,9 @@ interface NasSettings {
 
 const DEFAULT_SETTINGS: NasSettings = { ip: '', intervalMinutes: 60 };
 
+const MAX_RETRIES   = 10;
+const RETRY_DELAY_S = 15; // Sekunden zwischen Retry-Versuchen
+
 const INTERVAL_OPTIONS = [
   { value: 5,  label: '5 Minuten' },
   { value: 10, label: '10 Minuten' },
@@ -126,9 +129,12 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const [countdown, setCountdown]         = useState(0);
   const [settingsOpen, setSettingsOpen]   = useState(false);
   const [containerSize, setContainerSize] = useState({ w: 320, h: 220 });
-  const containerRef = useRef<HTMLDivElement>(null);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const countRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [retryCount, setRetryCount]       = useState(0);
+  const [offlineBanner, setOfflineBanner] = useState(false);
+  const containerRef  = useRef<HTMLDivElement>(null);
+  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { getSettings, updateSettings } = useWidgetSettingsStore();
   const settings = getSettings<NasSettings>(instanceId, DEFAULT_SETTINGS);
@@ -149,14 +155,32 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     return () => { eventBus.off(`widget:openSettings:${instanceId}`, h); };
   }, [instanceId]);
 
-  const runTest = useCallback(async () => {
+  const runTest = useCallback(async (isRetry = false) => {
     if (!settings.ip.trim()) { setError('Bitte IP-Adresse in Einstellungen eintragen'); return; }
     setRunning(true);
-    setError(null);
+    if (!isRetry) setError(null);
     try {
       const result = await invoke<NasResult>('test_nas_connection', { ip: settings.ip.trim() });
       setLatest(result);
       setHistory(prev => [...prev.slice(-19), result]);
+
+      if (result.reachable) {
+        // NAS wieder erreichbar – alles zurücksetzen
+        setRetryCount(0);
+        setOfflineBanner(false);
+        if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+      } else {
+        // NAS nicht erreichbar – Retry planen
+        setRetryCount(prev => {
+          const next = prev + 1;
+          if (next >= MAX_RETRIES) {
+            setOfflineBanner(true);
+          } else {
+            retryTimerRef.current = setTimeout(() => runTest(true), RETRY_DELAY_S * 1000);
+          }
+          return next;
+        });
+      }
     } catch (e) {
       setError(e as string);
     } finally {
@@ -175,6 +199,7 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (countRef.current) clearInterval(countRef.current);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
   }, [runTest, settings.intervalMinutes]);
 
@@ -198,6 +223,32 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   return (
     <>
       <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
+
+        {/* Offline-Banner */}
+        {offlineBanner && (
+          <div style={{
+            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)',
+            borderRadius: 6, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ fontSize: 18 }}>🔴</span>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#ef4444' }}>NAS nicht erreichbar!</div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>
+                {settings.ip} · {MAX_RETRIES} Versuche fehlgeschlagen
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Retry-Hinweis */}
+        {!offlineBanner && retryCount > 0 && retryCount < MAX_RETRIES && (
+          <div style={{
+            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)',
+            borderRadius: 6, padding: '6px 10px', fontSize: 11, color: '#f59e0b',
+          }}>
+            ⚠️ Kein Ping – Versuch {retryCount}/{MAX_RETRIES}, nächster in {RETRY_DELAY_S}s…
+          </div>
+        )}
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -23,6 +23,10 @@ interface SpeedtestSettings {
 
 const DEFAULT_SETTINGS: SpeedtestSettings = { intervalMinutes: 30 };
 
+// Schwellenwerte für Warnung
+const SLOW_DOWNLOAD_MBPS = 10;
+const SLOW_UPLOAD_MBPS   = 2;
+
 const INTERVAL_OPTIONS = [
   { value: 1,  label: '1 Minute' },
   { value: 5,  label: '5 Minuten' },
@@ -218,6 +222,23 @@ const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   return (
     <>
       <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
+
+        {/* Langsam-Banner */}
+        {latest && !running && (latest.download_mbps < SLOW_DOWNLOAD_MBPS || latest.upload_mbps < SLOW_UPLOAD_MBPS) && (
+          <div style={{
+            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)',
+            borderRadius: 6, padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ fontSize: 16 }}>⚠️</span>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b' }}>Internet langsam!</div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>
+                {latest.download_mbps < SLOW_DOWNLOAD_MBPS && `↓ ${latest.download_mbps.toFixed(1)} Mbit/s `}
+                {latest.upload_mbps < SLOW_UPLOAD_MBPS && `↑ ${latest.upload_mbps.toFixed(1)} Mbit/s`}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
