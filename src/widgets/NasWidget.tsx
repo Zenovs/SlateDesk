@@ -31,23 +31,22 @@ const INTERVAL_OPTIONS = [
   { value: 60, label: '60 Minuten' },
 ];
 
-const MAX_LATENCY = 50; // ms – Skalenende der Gauge
-
-function latencyColor(ms: number, reachable: boolean): string {
+function latencyColor(ms: number, maxMs: number, reachable: boolean): string {
   if (!reachable) return '#ef4444';
-  if (ms < 2)  return '#22c55e';
-  if (ms < 10) return '#f59e0b';
+  const ratio = ms / maxMs;
+  if (ratio <= 0.35) return '#22c55e';
+  if (ratio <= 0.70) return '#f59e0b';
   return '#ef4444';
 }
 
 // Halbkreis-Gauge (identisches Konzept wie SpeedtestWidget)
-function LatencyGauge({ ms, reachable, size }: { ms: number; reachable: boolean; size: number }) {
+function LatencyGauge({ ms, maxMs, reachable, size }: { ms: number; maxMs: number; reachable: boolean; size: number }) {
   const r           = size * 0.38;
   const cx          = size / 2;
   const cy          = size * 0.54;
   const circumference = Math.PI * r;
-  const pct         = reachable ? Math.min(ms / MAX_LATENCY, 1) : 1;
-  const color       = latencyColor(ms, reachable);
+  const pct         = reachable ? Math.min(ms / maxMs, 1) : 1;
+  const color       = latencyColor(ms, maxMs, reachable);
   const trackColor  = 'var(--bg-tertiary, #2a2a35)';
   const fontSize    = Math.max(size * 0.20, 12);
   const unitSize    = Math.max(size * 0.08, 8);
@@ -181,6 +180,13 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   const gaugeSize = Math.round(Math.min(containerSize.w * 0.55, containerSize.h * 0.62));
 
+  // Dynamische Skala: schlechtester (höchster) Ping aus History, mindestens 2 ms
+  const maxMs = Math.max(
+    ...history.filter(r => r.reachable).map(r => r.latency_ms),
+    latest?.reachable ? latest.latency_ms : 0,
+    2,
+  );
+
   const formatCountdown = (sec: number) => {
     const m = Math.floor(sec / 60), s = sec % 60;
     return m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}s`;
@@ -228,7 +234,7 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
             <div style={{ textAlign: 'center', color: 'var(--error-color, #ef4444)', fontSize: 12 }}>⚠️ {error}</div>
           ) : latest !== null ? (
             <>
-              <LatencyGauge ms={latest.latency_ms} reachable={latest.reachable} size={gaugeSize} />
+              <LatencyGauge ms={latest.latency_ms} maxMs={maxMs} reachable={latest.reachable} size={gaugeSize} />
               <span style={{ fontSize: Math.max(gaugeSize * 0.09, 9), color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>
                 PING · ROUND TRIP
               </span>
