@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=SlateDesk
+Exec=/usr/bin/slate-desk
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Comment=SlateDesk Kiosk Dashboard

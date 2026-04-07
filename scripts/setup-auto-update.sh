@@ -147,6 +147,33 @@ touch "/home/$SLATEDESK_USER/slatedesk-update.log"
 chown "$SLATEDESK_USER:$SLATEDESK_USER" "/home/$SLATEDESK_USER/slatedesk-update.log"
 ok "Log-Datei vorbereitet."
 
+# ─── Schritt 7: SlateDesk Autostart einrichten ──────────────────────────────
+info "Schritt 7: Richte SlateDesk Autostart ein..."
+
+# Methode A: ~/.config/autostart (für grafische Sitzungen / GNOME)
+AUTOSTART_DIR="/home/$SLATEDESK_USER/.config/autostart"
+mkdir -p "$AUTOSTART_DIR"
+cp "$SCRIPTS_DIR/slatedesk-autostart.desktop" "$AUTOSTART_DIR/slatedesk.desktop"
+chown -R "$SLATEDESK_USER:$SLATEDESK_USER" "$AUTOSTART_DIR"
+ok "Autostart-Desktop-Eintrag installiert: $AUTOSTART_DIR/slatedesk.desktop"
+
+# Methode B: systemd user-service als Fallback
+SYSTEMD_USER_DIR="/home/$SLATEDESK_USER/.config/systemd/user"
+mkdir -p "$SYSTEMD_USER_DIR"
+cp "$SCRIPTS_DIR/slatedesk.service" "$SYSTEMD_USER_DIR/slatedesk.service"
+chown -R "$SLATEDESK_USER:$SLATEDESK_USER" "$SYSTEMD_USER_DIR"
+
+# User-Lingering aktivieren (damit User-Services auch ohne Login laufen)
+loginctl enable-linger "$SLATEDESK_USER" 2>/dev/null || true
+
+# Service als slatedesk-User aktivieren
+su -l "$SLATEDESK_USER" -c "
+    export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable slatedesk.service 2>/dev/null || true
+" 2>/dev/null || warn "systemd user-service konnte nicht aktiviert werden (Fallback: Desktop-Autostart übernimmt)."
+ok "systemd User-Service installiert."
+
 # ─── Zusammenfassung ─────────────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
@@ -157,6 +184,8 @@ echo "  ✅ Update-Script:    $SCRIPTS_DIR/auto-update.sh"
 echo "  ✅ Sudo-Config:      $SUDOERS_FILE"
 echo "  ✅ Cronjob:          Täglich um 01:00 Uhr"
 echo "  ✅ Boot-Service:     slatedesk-boot-update.service"
+echo "  ✅ Autostart:        $AUTOSTART_DIR/slatedesk.desktop"
+echo "  ✅ User-Service:     $SYSTEMD_USER_DIR/slatedesk.service"
 echo "  ✅ Backup-Ordner:    /home/$SLATEDESK_USER/.slatedesk-backups"
 echo "  ✅ Log-Datei:        /home/$SLATEDESK_USER/slatedesk-update.log"
 echo ""
