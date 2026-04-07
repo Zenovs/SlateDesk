@@ -188,6 +188,22 @@ start_slatedesk() {
     log_info "SlateDesk gestartet."
 }
 
+# ─── Stündlichen Neustart-Cron einrichten ────────────────────────────────────
+setup_hourly_restart() {
+    local script="$SLATEDESK_HOME/scripts/hourly-restart.sh"
+    chmod +x "$script" 2>/dev/null || true
+
+    local cron_marker="slatedesk-hourly-restart"
+    local cron_entry="0 * * * * DISPLAY=:0 $script >> /home/slatedesk/slatedesk-restart.log 2>&1 # $cron_marker"
+
+    if crontab -l 2>/dev/null | grep -q "$cron_marker"; then
+        log_info "Stündlicher Neustart-Cron bereits vorhanden."
+    else
+        ( crontab -l 2>/dev/null; echo "$cron_entry" ) | crontab -
+        log_info "Stündlicher Neustart-Cron eingerichtet (jede volle Stunde)."
+    fi
+}
+
 # ─── Hauptlogik ──────────────────────────────────────────────────────────────
 main() {
     log_info "========================================"
@@ -303,6 +319,9 @@ main() {
     rm -rf "/home/slatedesk/.local/share/com.slatedesk.app/EBWebView" 2>/dev/null || true
     rm -rf "/home/slatedesk/.local/share/com.slatedesk.app/storage" 2>/dev/null || true
     log_info "Cache geleert."
+
+    # Stündlichen Neustart-Cron sicherstellen
+    setup_hourly_restart
 
     # SlateDesk starten
     start_slatedesk
