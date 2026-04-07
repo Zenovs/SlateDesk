@@ -115,13 +115,16 @@ function Gauge({ mbps, maxMbps, label, size }: { mbps: number; maxMbps: number; 
   );
 }
 
-// Gefüllte Sparkline
+// Gefüllte Sparkline – X-Achse = echte Zeitachse über 12 Stunden
 function Sparkline({ history, width }: { history: SpeedResult[]; width: number }) {
   if (history.length < 2) return null;
   const h = 36, pad = 2;
   const maxDl = Math.max(...history.map(r => r.download_mbps), 1);
-  const pts = history.map((r, i) => ({
-    x: pad + (i / (history.length - 1)) * (width - pad * 2),
+  const now = Date.now() / 1000;
+  const windowSec = 12 * 60 * 60;
+  const earliest = now - windowSec;
+  const pts = history.map(r => ({
+    x: pad + (Math.max(r.timestamp - earliest, 0) / windowSec) * (width - pad * 2),
     y: h - pad - (r.download_mbps / maxDl) * (h - pad * 2 - 4),
   }));
   const line = pts.map(p => `${p.x},${p.y}`).join(' ');
@@ -141,14 +144,26 @@ function Sparkline({ history, width }: { history: SpeedResult[]; width: number }
   );
 }
 
-const STORAGE_KEY_SPEED = 'slatedesk:speedtest:last';
+const STORAGE_KEY_SPEED         = 'slatedesk:speedtest:last';
+const STORAGE_KEY_SPEED_HISTORY = 'slatedesk:speedtest:history';
+const HISTORY_WINDOW_MS         = 12 * 60 * 60 * 1000; // 12 Stunden
+
+function pruneHistory(history: SpeedResult[]): SpeedResult[] {
+  const cutoff = (Date.now() - HISTORY_WINDOW_MS) / 1000; // Unix-Sekunden
+  return history.filter(r => r.timestamp >= cutoff);
+}
 
 const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const [running, setRunning]           = useState(false);
   const [latest, setLatest]             = useState<SpeedResult | null>(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY_SPEED) || 'null'); } catch { return null; }
   });
-  const [history, setHistory]           = useState<SpeedResult[]>([]);
+  const [history, setHistory]           = useState<SpeedResult[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY_SPEED_HISTORY) || '[]');
+      return pruneHistory(stored);
+    } catch { return []; }
+  });
   const [error, setError]               = useState<string | null>(null);
   const [countdown, setCountdown]       = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -194,7 +209,11 @@ const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     try {
       const result = await invoke<SpeedResult>('run_speed_test');
       setLatest(result);
-      setHistory(prev => [...prev.slice(-11), result]);
+      setHistory(prev => {
+        const updated = pruneHistory([...prev, result]);
+        localStorage.setItem(STORAGE_KEY_SPEED_HISTORY, JSON.stringify(updated));
+        return updated;
+      });
       localStorage.setItem(STORAGE_KEY_SPEED, JSON.stringify(result));
     } catch (e) {
       setError(e as string);
