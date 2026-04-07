@@ -141,9 +141,13 @@ function Sparkline({ history, width }: { history: SpeedResult[]; width: number }
   );
 }
 
+const STORAGE_KEY_SPEED = 'slatedesk:speedtest:last';
+
 const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const [running, setRunning]           = useState(false);
-  const [latest, setLatest]             = useState<SpeedResult | null>(null);
+  const [latest, setLatest]             = useState<SpeedResult | null>(() => {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY_SPEED) || 'null'); } catch { return null; }
+  });
   const [history, setHistory]           = useState<SpeedResult[]>([]);
   const [error, setError]               = useState<string | null>(null);
   const [countdown, setCountdown]       = useState(0);
@@ -191,6 +195,7 @@ const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId }) => {
       const result = await invoke<SpeedResult>('run_speed_test');
       setLatest(result);
       setHistory(prev => [...prev.slice(-11), result]);
+      localStorage.setItem(STORAGE_KEY_SPEED, JSON.stringify(result));
     } catch (e) {
       setError(e as string);
     } finally {

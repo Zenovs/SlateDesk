@@ -24,6 +24,8 @@ interface NasSettings {
 
 const DEFAULT_SETTINGS: NasSettings = { ip: '', intervalMinutes: 60 };
 
+const STORAGE_KEY_NAS = 'slatedesk:nas:last';
+
 const MAX_RETRIES   = 10;
 const RETRY_DELAY_S = 15; // Sekunden zwischen Retry-Versuchen
 
@@ -123,7 +125,9 @@ function LatencySparkline({ history, width }: { history: NasResult[]; width: num
 
 const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const [running, setRunning]             = useState(false);
-  const [latest, setLatest]               = useState<NasResult | null>(null);
+  const [latest, setLatest]               = useState<NasResult | null>(() => {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY_NAS) || 'null'); } catch { return null; }
+  });
   const [history, setHistory]             = useState<NasResult[]>([]);
   const [error, setError]                 = useState<string | null>(null);
   const [countdown, setCountdown]         = useState(0);
@@ -163,6 +167,7 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
       const result = await invoke<NasResult>('test_nas_connection', { ip: settings.ip.trim() });
       setLatest(result);
       setHistory(prev => [...prev.slice(-19), result]);
+      localStorage.setItem(STORAGE_KEY_NAS, JSON.stringify(result));
 
       if (result.reachable) {
         // NAS wieder erreichbar – alles zurücksetzen
