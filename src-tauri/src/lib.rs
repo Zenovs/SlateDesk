@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::Manager;
 
 #[cfg(target_os = "linux")]
 use webkit2gtk::{WebViewExt, PermissionRequestExt};
@@ -332,10 +333,12 @@ pub fn run() {
                 let window = app.get_webview_window("main")
                     .expect("Kein Hauptfenster gefunden");
                 window.with_webview(|webview| {
-                    webview.inner().connect_permission_request(|_, request| {
-                        request.allow();
-                        true
-                    });
+                    webview.inner().connect_permission_request(
+                        |_view: &webkit2gtk::WebView, request: &webkit2gtk::PermissionRequest| {
+                            request.allow();
+                            true
+                        }
+                    );
                 }).ok();
             }
 
