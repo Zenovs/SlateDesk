@@ -553,6 +553,43 @@
   font-size: var(--font-size-xs);
 }
 
+/* Toolbar (Trash, Stop-Speaking) */
+.whisper-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-widget-header);
+  flex-shrink: 0;
+}
+
+.whisper-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.whisper-toolbar-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.whisper-toolbar-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: var(--error);
+}
+
 /* Nachrichten-Container */
 .whisper-messages {
   flex: 1;

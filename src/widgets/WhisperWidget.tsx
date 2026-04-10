@@ -5,7 +5,7 @@
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, Square, Send, Trash2, VolumeX } from 'lucide-react';
-import type { WidgetProps } from '../types/widget';
+import type { WidgetProps, WidgetDefinition } from '../types/widget';
 import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
 import { WidgetSettingsDialog } from '../components/WidgetSettingsDialog';
 import { eventBus } from '../utils/eventBus';
@@ -45,9 +45,9 @@ const DEFAULT: WhisperSettings = {
 };
 
 const MODEL_OPTIONS = [
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini (schnell, günstig)' },
-  { value: 'gpt-4o',      label: 'GPT-4o (leistungsstark)' },
-  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+  { value: 'gpt-4o-mini',   label: 'GPT-4o Mini (schnell, günstig)' },
+  { value: 'gpt-4o',        label: 'GPT-4o (leistungsstark)' },
+  { value: 'gpt-4-turbo',   label: 'GPT-4 Turbo' },
   { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo (günstigst)' },
 ];
 
@@ -65,10 +65,12 @@ const STATUS_LABEL: Record<Status, string> = {
   transcribing: '⏳ Transkribiere…',
   thinking:     '💭 KI denkt…',
   speaking:     '🔊 Spricht…',
-  error:        '⚠️ Fehler',
+  error:        '',
 };
 
-// ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
+const hasTTS = typeof window !== 'undefined' && 'speechSynthesis' in window;
+
+// ─── API-Hilfsfunktionen ──────────────────────────────────────────────────────
 
 async function transcribeAudio(blob: Blob, apiKey: string, language: string): Promise<string> {
   const formData = new FormData();
@@ -84,22 +86,20 @@ async function transcribeAudio(blob: Blob, apiKey: string, language: string): Pr
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    throw new Error((err as { error?: { message?: string } })?.error?.message || `HTTP ${res.status}`);
   }
 
-  const data = await res.json();
-  return (data.text as string).trim();
+  const data = await res.json() as { text: string };
+  return data.text.trim();
 }
 
 async function chatCompletion(
-  messages: Message[],
+  history: Message[],
   userText: string,
   apiKey: string,
   model: string,
   systemPrompt: string,
 ): Promise<string> {
-  const history = messages.slice(-20).map(m => ({ role: m.role, content: m.content }));
-
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -110,7 +110,7 @@ async function chatCompletion(
       model,
       messages: [
         { role: 'system', content: systemPrompt },
-        ...history,
+        ...history.slice(-18).map(m => ({ role: m.role, content: m.content })),
         { role: 'user', content: userText },
       ],
       max_tokens: 600,
@@ -120,27 +120,26 @@ async function chatCompletion(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    throw new Error((err as { error?: { message?: string } })?.error?.message || `HTTP ${res.status}`);
   }
 
-  const data = await res.json();
-  return (data.choices[0].message.content as string).trim();
+  const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+  return data.choices[0].message.content.trim();
 }
 
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
 
 const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
-  const [messages, setMessages]       = useState<Message[]>([]);
-  const [status, setStatus]           = useState<Status>('idle');
-  const [errorMsg, setErrorMsg]       = useState('');
-  const [textInput, setTextInput]     = useState('');
+  const [messages, setMessages]         = useState<Message[]>([]);
+  const [status, setStatus]             = useState<Status>('idle');
+  const [errorMsg, setErrorMsg]         = useState('');
+  const [textInput, setTextInput]       = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [voices, setVoices]           = useState<SpeechSynthesisVoice[]>([]);
+  const [voices, setVoices]             = useState<SpeechSynthesisVoice[]>([]);
 
-  const recorderRef   = useRef<MediaRecorder | null>(null);
-  const chunksRef     = useRef<Blob[]>([]);
+  const recorderRef    = useRef<MediaRecorder | null>(null);
+  const chunksRef      = useRef<Blob[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef      = useRef<HTMLInputElement>(null);
 
   const { getSettings, updateSettings } = useWidgetSettingsStore();
   const s = getSettings<WhisperSettings>(instanceId, DEFAULT);
@@ -154,6 +153,7 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   // ─── TTS-Stimmen laden ──────────────────────────────────────────────────────
   useEffect(() => {
+    if (!hasTTS) return;
     const load = () => setVoices(window.speechSynthesis.getVoices());
     load();
     window.speechSynthesis.addEventListener('voiceschanged', load);
@@ -167,7 +167,7 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   // ─── TTS sprechen ──────────────────────────────────────────────────────────
   const speak = useCallback((text: string) => {
-    if (!s.ttsEnabled) return;
+    if (!s.ttsEnabled || !hasTTS) { setStatus('idle'); return; }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     const langMap: Record<string, string> = { de: 'de-DE', en: 'en-US', fr: 'fr-FR', es: 'es-ES', it: 'it-IT' };
@@ -184,14 +184,9 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     window.speechSynthesis.speak(utterance);
   }, [s, voices]);
 
-  // ─── Nachricht senden (STT-Ergebnis oder Texteingabe) ──────────────────────
-  const sendMessage = useCallback(async (userText: string) => {
-    if (!userText.trim()) return;
-    if (!s.apiKey) {
-      setErrorMsg('Kein API-Key konfiguriert. Einstellungen öffnen.');
-      setStatus('error');
-      return;
-    }
+  // ─── Nachricht senden ──────────────────────────────────────────────────────
+  const sendMessage = useCallback(async (userText: string, currentMessages: Message[]) => {
+    if (!userText.trim() || !s.apiKey) return;
 
     const userMsg: Message = { role: 'user', content: userText, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
@@ -199,29 +194,26 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     setErrorMsg('');
 
     try {
-      const reply = await chatCompletion(
-        // aktuelle messages + neue user-message schon integriert für Context
-        [...messages, userMsg],
-        userText,
-        s.apiKey,
-        s.model,
-        s.systemPrompt,
-      );
-
+      // currentMessages = history BEFORE the new user message
+      const reply = await chatCompletion(currentMessages, userText, s.apiKey, s.model, s.systemPrompt);
       const aiMsg: Message = { role: 'assistant', content: reply, timestamp: Date.now() };
       setMessages(prev => [...prev, aiMsg]);
       speak(reply);
-      if (!s.ttsEnabled) setStatus('idle');
+      if (!s.ttsEnabled || !hasTTS) setStatus('idle');
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErrorMsg(msg);
+      setErrorMsg(e instanceof Error ? e.message : String(e));
       setStatus('error');
     }
-  }, [messages, s, speak]);
+  }, [s, speak]);
 
   // ─── Aufnahme starten ──────────────────────────────────────────────────────
   const startRecording = useCallback(async () => {
     if (status !== 'idle' && status !== 'error') return;
+    if (!s.apiKey) {
+      setErrorMsg('Kein API-Key – bitte in Einstellungen eintragen.');
+      setStatus('error');
+      return;
+    }
     setErrorMsg('');
 
     let stream: MediaStream;
@@ -234,35 +226,27 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     }
 
     chunksRef.current = [];
-
-    // Format-Fallback: webm > ogg > default
     const mimeTypes = ['audio/webm', 'audio/ogg', ''];
     const mime = mimeTypes.find(m => !m || MediaRecorder.isTypeSupported(m)) ?? '';
     const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
 
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
+    // Snapshot der aktuellen Messages für den API-Aufruf
+    const msgSnapshot = messages.slice();
+
     recorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       const blob = new Blob(chunksRef.current, { type: mime || 'audio/webm' });
-
-      if (blob.size < 1000) {
-        // Zu kurz – ignorieren
-        setStatus('idle');
-        return;
-      }
+      if (blob.size < 1000) { setStatus('idle'); return; }
 
       setStatus('transcribing');
       try {
         const text = await transcribeAudio(blob, s.apiKey, s.language);
-        if (text) {
-          await sendMessage(text);
-        } else {
-          setStatus('idle');
-        }
+        if (text) await sendMessage(text, msgSnapshot);
+        else setStatus('idle');
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setErrorMsg(msg);
+        setErrorMsg(e instanceof Error ? e.message : String(e));
         setStatus('error');
       }
     };
@@ -270,7 +254,7 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     recorder.start();
     recorderRef.current = recorder;
     setStatus('recording');
-  }, [status, s.apiKey, s.language, sendMessage]);
+  }, [status, s, messages, sendMessage]);
 
   // ─── Aufnahme stoppen ──────────────────────────────────────────────────────
   const stopRecording = useCallback(() => {
@@ -282,16 +266,13 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   // ─── Mic-Button Klick ──────────────────────────────────────────────────────
   const handleMicClick = useCallback(() => {
-    if (status === 'recording') {
-      stopRecording();
-    } else {
-      startRecording();
-    }
+    if (status === 'recording') stopRecording();
+    else startRecording();
   }, [status, startRecording, stopRecording]);
 
   // ─── TTS stoppen ───────────────────────────────────────────────────────────
   const stopSpeaking = useCallback(() => {
-    window.speechSynthesis.cancel();
+    if (hasTTS) window.speechSynthesis.cancel();
     setStatus('idle');
   }, []);
 
@@ -299,100 +280,85 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const handleSendText = useCallback(async () => {
     const text = textInput.trim();
     if (!text) return;
+    if (!s.apiKey) {
+      setErrorMsg('Kein API-Key – bitte in Einstellungen eintragen.');
+      setStatus('error');
+      return;
+    }
     setTextInput('');
-    await sendMessage(text);
-  }, [textInput, sendMessage]);
+    await sendMessage(text, messages);
+  }, [textInput, messages, s.apiKey, sendMessage]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendText();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); }
   }, [handleSendText]);
 
   // ─── Chat leeren ───────────────────────────────────────────────────────────
   const clearChat = useCallback(() => {
-    window.speechSynthesis.cancel();
+    if (hasTTS) window.speechSynthesis.cancel();
     setMessages([]);
     setStatus('idle');
     setErrorMsg('');
   }, []);
 
   // ─── Render ────────────────────────────────────────────────────────────────
-  const isRecording  = status === 'recording';
-  const isBusy       = status === 'transcribing' || status === 'thinking';
-  const isSpeaking   = status === 'speaking';
-  const noApiKey     = !s.apiKey;
+  const isRecording = status === 'recording';
+  const isBusy      = status === 'transcribing' || status === 'thinking';
+  const isSpeaking  = status === 'speaking';
+  const noApiKey    = !s.apiKey;
 
   return (
-    <div className="widget-container">
-      {/* Header */}
-      <div className="widget-header">
-        <div className="widget-header-title">
-          <span>🎙️ KI-Assistent</span>
-        </div>
-        <div className="widget-header-actions">
-          {messages.length > 0 && (
-            <button
-              className="widget-header-action"
-              onClick={clearChat}
-              title="Chat leeren"
-            >
-              <Trash2 size={14} />
-            </button>
-          )}
-          {isSpeaking && (
-            <button
-              className="widget-header-action"
-              onClick={stopSpeaking}
-              title="TTS stoppen"
-            >
-              <VolumeX size={14} />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="widget-body whisper-body">
+    <>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', gap: 0 }}>
 
         {/* Kein API-Key Banner */}
         {noApiKey && (
           <div className="whisper-no-key">
             <span>🔑</span>
-            <div>
+            <div style={{ flex: 1 }}>
               <div className="whisper-no-key-title">OpenAI API-Key fehlt</div>
-              <div className="whisper-no-key-sub">
-                Einstellungen öffnen und API-Key eingeben
-              </div>
+              <div className="whisper-no-key-sub">Einstellungen öffnen und Key eintragen</div>
             </div>
             <button
               className="settings-btn settings-btn-primary"
               onClick={() => setSettingsOpen(true)}
-              style={{ flexShrink: 0 }}
+              style={{ flexShrink: 0, fontSize: 11, padding: '4px 10px' }}
             >
-              Einstellungen
+              ⚙️ Setup
             </button>
           </div>
         )}
 
+        {/* Toolbar (Trash + Stop-Speaking) */}
+        {(messages.length > 0 || isSpeaking) && (
+          <div className="whisper-toolbar">
+            {isSpeaking && (
+              <button className="whisper-toolbar-btn" onClick={stopSpeaking} title="Sprachausgabe stoppen">
+                <VolumeX size={13} /> Stopp
+              </button>
+            )}
+            {messages.length > 0 && (
+              <button className="whisper-toolbar-btn whisper-toolbar-btn-danger" onClick={clearChat} title="Chat leeren">
+                <Trash2 size={13} /> Leeren
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Nachrichten */}
-        <div className="whisper-messages">
+        <div className="whisper-messages" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {messages.length === 0 && !noApiKey && (
             <div className="whisper-empty">
               <div className="whisper-empty-icon">🎙️</div>
               <div className="whisper-empty-text">
-                Mikrofon-Button drücken und sprechen,<br />
-                oder Text eingeben
+                Mikrofon-Button drücken und sprechen,<br />oder Text eingeben
               </div>
             </div>
           )}
 
           {messages.map((msg, i) => (
             <div key={i} className={`whisper-msg whisper-msg-${msg.role}`}>
-              <div className="whisper-msg-bubble">
-                {msg.content}
-              </div>
+              <div className="whisper-msg-bubble">{msg.content}</div>
               <div className="whisper-msg-time">
                 {new Date(msg.timestamp).toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })}
               </div>
@@ -423,7 +389,6 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
         {/* Eingabe-Zeile */}
         <div className="whisper-input-row">
           <input
-            ref={inputRef}
             type="text"
             className="whisper-text-input"
             placeholder={noApiKey ? 'API-Key fehlt…' : 'Nachricht eingeben…'}
@@ -444,30 +409,28 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
             className={`whisper-mic-btn ${isRecording ? 'recording' : ''}`}
             onClick={handleMicClick}
             disabled={isBusy || noApiKey}
-            title={isRecording ? 'Aufnahme stoppen' : 'Sprechen (Klick)'}
+            title={isRecording ? 'Aufnahme stoppen' : 'Sprechen'}
           >
             {isRecording ? <Square size={16} /> : <Mic size={16} />}
           </button>
         </div>
       </div>
 
-      {/* Settings Dialog */}
+      {/* Settings Dialog (Portal → immer zentriert) */}
       <SettingsDialog
-        instanceId={instanceId}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         settings={s}
         updateSettings={(patch) => updateSettings(instanceId, patch)}
         voices={voices}
       />
-    </div>
+    </>
   );
 };
 
 // ─── Settings Dialog ──────────────────────────────────────────────────────────
 
 interface SettingsDialogProps {
-  instanceId: string;
   open: boolean;
   onClose: () => void;
   settings: WhisperSettings;
@@ -484,18 +447,11 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
     if (open) setLocalKey(settings.apiKey);
   }, [open, settings.apiKey]);
 
-  const save = () => {
-    updateSettings({ apiKey: localKey.trim() });
-    onClose();
-  };
+  const save = () => { updateSettings({ apiKey: localKey.trim() }); onClose(); };
 
-  // Passende Stimmen für die gewählte Sprache (+ alle anzeigen)
-  const langCode: Record<string, string> = { de: 'de', en: 'en', fr: 'fr', es: 'es', it: 'it' };
-  const langFilter = langCode[settings.language] ?? '';
-  const filteredVoices = voices.filter(v =>
-    !langFilter || v.lang.toLowerCase().startsWith(langFilter),
-  );
-  const displayVoices = filteredVoices.length > 0 ? filteredVoices : voices;
+  const langFilter = ({ de: 'de', en: 'en', fr: 'fr', es: 'es', it: 'it' } as Record<string, string>)[settings.language] ?? '';
+  const filtered = voices.filter(v => !langFilter || v.lang.toLowerCase().startsWith(langFilter));
+  const displayVoices = filtered.length > 0 ? filtered : voices;
 
   return (
     <WidgetSettingsDialog
@@ -520,39 +476,25 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
             autoComplete="off"
             spellCheck={false}
           />
-          <div className="settings-description">
-            Erhältlich unter platform.openai.com → API keys
-          </div>
+          <div className="settings-description">Erhältlich unter platform.openai.com → API keys</div>
         </div>
       </div>
 
       <hr className="settings-divider" />
 
-      {/* KI-Modell & Sprache */}
+      {/* Modell & Sprache */}
       <div className="settings-section">
         <div className="settings-section-title">Sprachmodell</div>
         <div className="settings-field">
           <label className="settings-label">KI-Modell</label>
-          <select
-            className="settings-select"
-            value={settings.model}
-            onChange={e => updateSettings({ model: e.target.value })}
-          >
-            {MODEL_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
+          <select className="settings-select" value={settings.model} onChange={e => updateSettings({ model: e.target.value })}>
+            {MODEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
         <div className="settings-field">
           <label className="settings-label">Sprache (Whisper + TTS)</label>
-          <select
-            className="settings-select"
-            value={settings.language}
-            onChange={e => updateSettings({ language: e.target.value })}
-          >
-            {LANGUAGE_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
+          <select className="settings-select" value={settings.language} onChange={e => updateSettings({ language: e.target.value })}>
+            {LANGUAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
       </div>
@@ -570,9 +512,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
             onChange={e => updateSettings({ systemPrompt: e.target.value })}
             rows={4}
           />
-          <div className="settings-description">
-            Definiert Persönlichkeit und Verhalten des Assistenten
-          </div>
+          <div className="settings-description">Definiert Persönlichkeit und Verhalten des Assistenten</div>
         </div>
       </div>
 
@@ -581,66 +521,50 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
       {/* TTS */}
       <div className="settings-section">
         <div className="settings-section-title">Sprachausgabe (TTS)</div>
-
+        {!hasTTS && (
+          <div className="whisper-no-key" style={{ marginBottom: 'var(--spacing-sm)' }}>
+            <span>⚠️</span>
+            <div className="whisper-no-key-sub">SpeechSynthesis wird auf diesem Gerät nicht unterstützt.</div>
+          </div>
+        )}
         <div className="settings-toggle">
           <div>
             <div className="settings-toggle-label">Sprachausgabe aktivieren</div>
-            <div className="settings-toggle-sublabel">KI-Antworten werden laut vorgelesen</div>
+            <div className="settings-toggle-sublabel">KI-Antworten laut vorlesen</div>
           </div>
           <label className="toggle-switch">
             <input
               type="checkbox"
-              checked={settings.ttsEnabled}
+              checked={settings.ttsEnabled && hasTTS}
+              disabled={!hasTTS}
               onChange={e => updateSettings({ ttsEnabled: e.target.checked })}
             />
             <span className="toggle-switch-slider" />
           </label>
         </div>
 
-        {settings.ttsEnabled && (
+        {settings.ttsEnabled && hasTTS && (
           <>
             <div className="settings-field" style={{ marginTop: 'var(--spacing-md)' }}>
               <label className="settings-label">Stimme</label>
-              <select
-                className="settings-select"
-                value={settings.ttsVoice}
-                onChange={e => updateSettings({ ttsVoice: e.target.value })}
-              >
+              <select className="settings-select" value={settings.ttsVoice} onChange={e => updateSettings({ ttsVoice: e.target.value })}>
                 <option value="">Standard-Stimme</option>
-                {displayVoices.map(v => (
-                  <option key={v.name} value={v.name}>
-                    {v.name} ({v.lang})
-                  </option>
-                ))}
+                {displayVoices.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
               </select>
             </div>
-
             <div className="settings-field">
               <label className="settings-label">
-                Geschwindigkeit
-                <span className="settings-range-value">{settings.ttsRate.toFixed(1)}×</span>
+                Geschwindigkeit <span className="settings-range-value">{settings.ttsRate.toFixed(1)}×</span>
               </label>
-              <input
-                type="range"
-                className="settings-range"
-                min={0.5} max={2} step={0.1}
-                value={settings.ttsRate}
-                onChange={e => updateSettings({ ttsRate: parseFloat(e.target.value) })}
-              />
+              <input type="range" className="settings-range" min={0.5} max={2} step={0.1}
+                value={settings.ttsRate} onChange={e => updateSettings({ ttsRate: parseFloat(e.target.value) })} />
             </div>
-
             <div className="settings-field">
               <label className="settings-label">
-                Tonhöhe
-                <span className="settings-range-value">{settings.ttsPitch.toFixed(1)}</span>
+                Tonhöhe <span className="settings-range-value">{settings.ttsPitch.toFixed(1)}</span>
               </label>
-              <input
-                type="range"
-                className="settings-range"
-                min={0.5} max={2} step={0.1}
-                value={settings.ttsPitch}
-                onChange={e => updateSettings({ ttsPitch: parseFloat(e.target.value) })}
-              />
+              <input type="range" className="settings-range" min={0.5} max={2} step={0.1}
+                value={settings.ttsPitch} onChange={e => updateSettings({ ttsPitch: parseFloat(e.target.value) })} />
             </div>
           </>
         )}
@@ -651,7 +575,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
 // ─── Widget-Definition ────────────────────────────────────────────────────────
 
-export const whisperWidgetDef: import('../types/widget').WidgetDefinition = {
+export const whisperWidgetDef: WidgetDefinition = {
   manifest: {
     id: 'whisper',
     name: 'KI-Assistent',
