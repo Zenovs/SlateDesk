@@ -574,76 +574,10 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   );
 };
 
-// ─── Settings Dialog ──────────────────────────────────────────────────────────
+// ─── Ollama Types ─────────────────────────────────────────────────────────────
 
-// ─── Ollama-Status-Hook ───────────────────────────────────────────────────────
-
-interface OllamaStatus {
-  installed: boolean;
-  running: boolean;
-  version: string;
-}
-
+interface OllamaInfo { installed: boolean; running: boolean; version: string; }
 type OllamaState = 'checking' | 'not_installed' | 'installing' | 'not_running' | 'starting' | 'ready' | 'error';
-
-function useOllamaStatus(active: boolean) {
-  const [status, setStatus]   = useState<OllamaState>('checking');
-  const [log, setLog]         = useState('');
-  const [ollama, setOllama]   = useState<OllamaStatus | null>(null);
-  const pollRef               = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const check = useCallback(async () => {
-    try {
-      const s = await invoke<OllamaStatus>('check_ollama');
-      setOllama(s);
-      if (s.running) { setStatus('ready'); return true; }
-      if (s.installed) { setStatus('not_running'); return false; }
-      setStatus('not_installed');
-      return false;
-    } catch {
-      setStatus('error');
-      return false;
-    }
-  }, []);
-
-  // Polling während Install / Start
-  const startPolling = useCallback((targetState: 'installing' | 'starting') => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      if (targetState === 'installing') {
-        const logText = await invoke<string>('get_ollama_install_log').catch(() => '');
-        setLog(logText.split('\n').filter(Boolean).slice(-4).join('\n'));
-      }
-      const done = await check();
-      if (done || (targetState === 'installing' && ollama?.installed)) {
-        clearInterval(pollRef.current!);
-        pollRef.current = null;
-        check();
-      }
-    }, 3000);
-  }, [check, ollama]);
-
-  useEffect(() => {
-    if (!active) return;
-    check();
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [active, check]);
-
-  const install = useCallback(async () => {
-    setStatus('installing');
-    setLog('');
-    await invoke('install_ollama');
-    startPolling('installing');
-  }, [startPolling]);
-
-  const start = useCallback(async () => {
-    setStatus('starting');
-    await invoke('start_ollama').catch(() => {});
-    startPolling('starting');
-  }, [startPolling]);
-
-  return { status, log, ollama, install, start, recheck: check };
-}
 
 // ─── Settings Dialog ──────────────────────────────────────────────────────────
 
@@ -658,14 +592,97 @@ interface SettingsDialogProps {
 const SettingsDialog: React.FC<SettingsDialogProps> = ({
   open, onClose, settings, updateSettings, voices,
 }) => {
-  const [localKey, setLocalKey]             = useState(settings.apiKey);
-  const [localUrl, setLocalUrl]             = useState(settings.localBaseUrl);
-  const [fetchedModels, setFetchedModels]   = useState<string[]>([]);
-  const [fetchError, setFetchError]         = useState('');
-  const [fetching, setFetching]             = useState(false);
+  const [localKey, setLocalKey]           = useState(settings.apiKey);
+  const [localUrl, setLocalUrl]           = useState(settings.localBaseUrl);
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
+  const [fetchError, setFetchError]       = useState('');
+  const [fetching, setFetching]           = useState(false);
+
+  // Ollama-Status – direkt in dieser Komponente verwaltet (kein Hook-Closure-Problem)
+  const [ollamaState, setOllamaState]   = useState<OllamaState>('checking');
+  const [ollamaLog, setOllamaLog]       = useState('');
+  const [ollamaVer, setOllamaVer]       = useState('');
+  const [ollamaErr, setOllamaErr]       = useState('');
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isLocal = settings.provider === 'local';
-  const ollama  = useOllamaStatus(open && isLocal);
+
+  // ── Ollama-Status prüfen ───────────────────────────────────────────────────
+  const checkOllama = useCallback(async () => {
+    try {
+      const s = await invoke<OllamaInfo>('check_ollama');
+      setOllamaVer(s.version);
+      if (s.running)    { setOllamaState('ready');         return; }
+      if (s.installed)  { setOllamaState('not_running');   return; }
+      setOllamaState('not_installed');
+    } catch (e) {
+      setOllamaErr(e instanceof Error ? e.message : String(e));
+      setOllamaState('error');
+    }
+  }, []);
+
+  // Beim Öffnen des Lokal-Tabs Status prüfen
+  useEffect(() => {
+    if (!open || !isLocal) return;
+    setOllamaState('checking');
+    setOllamaErr('');
+    checkOllama();
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
+  }, [open, isLocal, checkOllama]);
+
+  // ── Polling (während Install / Start) ─────────────────────────────────────
+  const startPolling = useCallback((mode: 'install' | 'start') => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      if (mode === 'install') {
+        const log = await invoke<string>('get_ollama_install_log').catch(() => '');
+        const lines = log.split('\n').filter(Boolean);
+        setOllamaLog(lines.slice(-5).join('\n'));
+        // Installation fertig wenn "ollama" binary jetzt existiert
+        if (lines.some(l => l.includes('complete') || l.includes('success') || l.includes('Started'))) {
+          clearInterval(pollRef.current!); pollRef.current = null;
+          checkOllama();
+        }
+      }
+      // Bei beiden Modi: prüfen ob Ollama läuft
+      try {
+        const s = await invoke<OllamaInfo>('check_ollama');
+        setOllamaVer(s.version);
+        if (s.running) {
+          clearInterval(pollRef.current!); pollRef.current = null;
+          setOllamaState('ready');
+        } else if (mode === 'start' && s.installed) {
+          // Noch nicht gestartet, weiter warten
+        }
+      } catch { /* weiter polling */ }
+    }, 3000);
+  }, [checkOllama]);
+
+  // ── Installieren ──────────────────────────────────────────────────────────
+  const handleInstall = async () => {
+    setOllamaState('installing');
+    setOllamaLog('');
+    setOllamaErr('');
+    try {
+      await invoke('install_ollama');
+      startPolling('install');
+    } catch (e) {
+      setOllamaErr(e instanceof Error ? e.message : String(e));
+      setOllamaState('error');
+    }
+  };
+
+  // ── Starten ───────────────────────────────────────────────────────────────
+  const handleStart = async () => {
+    setOllamaState('starting');
+    setOllamaErr('');
+    try {
+      await invoke('start_ollama');
+    } catch { /* Fehler ignorieren, Polling entscheidet */ }
+    startPolling('start');
+  };
 
   useEffect(() => {
     if (open) {
@@ -758,7 +775,10 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
           <div className="settings-section-title">Lokaler Server (Ollama)</div>
 
           {/* Status-Karte */}
-          <OllamaSetupCard state={ollama} onInstall={ollama.install} onStart={ollama.start} onRecheck={ollama.recheck} />
+          <OllamaSetupCard
+            state={ollamaState} log={ollamaLog} version={ollamaVer} error={ollamaErr}
+            onInstall={handleInstall} onStart={handleStart} onRecheck={checkOllama}
+          />
 
           {/* Server-URL – immer sichtbar */}
           <div className="settings-field" style={{ marginTop: 'var(--spacing-md)' }}>
@@ -772,7 +792,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
           </div>
 
           {/* Modell-Auswahl (nur wenn Ollama läuft) */}
-          {ollama.status === 'ready' && (
+          {ollamaState === 'ready' && (
             <div className="settings-field">
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', marginBottom: 'var(--spacing-xs)' }}>
                 <label className="settings-label" style={{ margin: 0, flex: 1 }}>Modell</label>
@@ -926,71 +946,81 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 // ─── Ollama Setup Card ────────────────────────────────────────────────────────
 
 interface OllamaSetupCardProps {
-  state: ReturnType<typeof useOllamaStatus>;
+  state: OllamaState;
+  log: string;
+  version: string;
+  error: string;
   onInstall: () => void;
   onStart: () => void;
   onRecheck: () => void;
 }
 
-const OllamaSetupCard: React.FC<OllamaSetupCardProps> = ({ state, onInstall, onStart, onRecheck }) => {
-  const { status, log, ollama } = state;
-
+const OllamaSetupCard: React.FC<OllamaSetupCardProps> = ({
+  state, log, version, error, onInstall, onStart, onRecheck,
+}) => {
   const cfg: Record<OllamaState, { icon: string; color: string; bg: string; title: string; sub: string }> = {
-    checking:      { icon: '⏳', color: 'var(--text-tertiary)', bg: 'var(--bg-tertiary)', title: 'Prüfe Ollama…',          sub: '' },
+    checking:      { icon: '⏳', color: 'var(--text-tertiary)', bg: 'var(--bg-tertiary)',    title: 'Prüfe Ollama…',           sub: '' },
     not_installed: { icon: '📦', color: '#f59e0b',              bg: 'rgba(245,158,11,.08)', title: 'Ollama nicht installiert', sub: 'Einmalige Installation (~500 MB)' },
-    installing:    { icon: '⬇️', color: '#818cf8',              bg: 'rgba(129,140,248,.08)', title: 'Installiere Ollama…',   sub: 'Bitte warten, dauert 1–3 Minuten' },
-    not_running:   { icon: '⏸',  color: '#f59e0b',              bg: 'rgba(245,158,11,.08)', title: 'Ollama gestoppt',        sub: ollama?.version ?? '' },
-    starting:      { icon: '▶️', color: '#818cf8',              bg: 'rgba(129,140,248,.08)', title: 'Starte Ollama…',         sub: '' },
-    ready:         { icon: '✅', color: '#22c55e',              bg: 'rgba(34,197,94,.08)',  title: 'Ollama läuft',           sub: ollama?.version ?? '' },
-    error:         { icon: '⚠️', color: 'var(--error)',         bg: 'rgba(239,68,68,.08)',  title: 'Fehler',                 sub: 'Bitte Verbindung prüfen' },
+    installing:    { icon: '⬇️', color: '#818cf8',              bg: 'rgba(129,140,248,.08)',title: 'Installiere Ollama…',      sub: 'Bitte warten, dauert 1–3 Minuten' },
+    not_running:   { icon: '⏸',  color: '#f59e0b',              bg: 'rgba(245,158,11,.08)', title: 'Ollama gestoppt',          sub: version },
+    starting:      { icon: '▶️', color: '#818cf8',              bg: 'rgba(129,140,248,.08)',title: 'Starte Ollama…',           sub: '' },
+    ready:         { icon: '✅', color: '#22c55e',              bg: 'rgba(34,197,94,.08)',  title: 'Ollama läuft',             sub: version },
+    error:         { icon: '⚠️', color: 'var(--error)',         bg: 'rgba(239,68,68,.08)',  title: 'Fehler',                   sub: error || 'Verbindung prüfen' },
   };
 
-  const c = cfg[status];
+  const c = cfg[state];
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)',
+      display: 'flex', alignItems: 'flex-start', gap: 'var(--spacing-sm)',
       padding: 'var(--spacing-sm) var(--spacing-md)',
       background: c.bg, border: `1px solid ${c.color}40`,
       borderRadius: 'var(--radius-md)', marginBottom: 'var(--spacing-xs)',
     }}>
-      <span style={{ fontSize: 20, flexShrink: 0 }}>{c.icon}</span>
+      <span style={{ fontSize: 20, flexShrink: 0, marginTop: 1 }}>{c.icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: c.color }}>{c.title}</div>
         {c.sub && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 1 }}>{c.sub}</div>}
-        {/* Install-Log (letzte Zeilen) */}
-        {status === 'installing' && log && (
+        {state === 'installing' && log && (
           <pre style={{
             marginTop: 6, fontSize: 10, color: 'var(--text-tertiary)',
             whiteSpace: 'pre-wrap', wordBreak: 'break-all',
             background: 'var(--bg-secondary)', padding: '4px 6px', borderRadius: 4,
-            maxHeight: 60, overflowY: 'auto',
+            maxHeight: 70, overflowY: 'auto',
           }}>{log}</pre>
+        )}
+        {state === 'not_installed' && (
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+            Oder manuell via SSH: <code style={{ background: 'var(--bg-secondary)', padding: '1px 5px', borderRadius: 3 }}>
+              curl -fsSL https://ollama.com/install.sh | sh
+            </code>
+          </div>
         )}
       </div>
 
-      {/* Aktions-Button */}
-      {status === 'not_installed' && (
-        <button className="settings-btn settings-btn-primary"
-          onClick={onInstall} style={{ flexShrink: 0, gap: 4, fontSize: 12 }}>
-          <Download size={13} /> Installieren
-        </button>
-      )}
-      {status === 'not_running' && (
-        <button className="settings-btn settings-btn-primary"
-          onClick={onStart} style={{ flexShrink: 0, gap: 4, fontSize: 12 }}>
-          <Play size={13} /> Starten
-        </button>
-      )}
-      {(status === 'installing' || status === 'starting') && (
-        <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite', color: c.color, flexShrink: 0 }} />
-      )}
-      {(status === 'ready' || status === 'error') && (
-        <button className="settings-btn" onClick={onRecheck}
-          style={{ flexShrink: 0, fontSize: 11, padding: '3px 8px', gap: 4 }}>
-          <RefreshCw size={12} /> Check
-        </button>
-      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+        {state === 'not_installed' && (
+          <button className="settings-btn settings-btn-primary"
+            onClick={onInstall} style={{ gap: 4, fontSize: 12 }}>
+            <Download size={13} /> Installieren
+          </button>
+        )}
+        {state === 'not_running' && (
+          <button className="settings-btn settings-btn-primary"
+            onClick={onStart} style={{ gap: 4, fontSize: 12 }}>
+            <Play size={13} /> Starten
+          </button>
+        )}
+        {(state === 'installing' || state === 'starting' || state === 'checking') && (
+          <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite', color: c.color, margin: '4px 8px' }} />
+        )}
+        {(state === 'ready' || state === 'error' || state === 'not_running') && (
+          <button className="settings-btn" onClick={onRecheck}
+            style={{ fontSize: 11, padding: '3px 8px', gap: 4 }}>
+            <RefreshCw size={12} /> Prüfen
+          </button>
+        )}
+      </div>
     </div>
   );
 };
