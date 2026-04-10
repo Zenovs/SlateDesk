@@ -104,3 +104,53 @@ html, body, #root {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
+
+/* ── Globales Select/Input Styling ─────────────────────────────────────────
+   Stellt sicher dass alle Dropdowns in der App korrekte Farben haben,
+   unabhängig von OS-Defaults (wichtig für WebKitGTK auf Linux).          */
+select, input, textarea {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+}
+
+select option {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+select:focus, input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+/* Light Theme: dunkler Hintergrund für Dropdowns damit Text lesbar */
+[data-theme='light'] select,
+[data-theme='light'] select option {
+  background-color: #e8f5f4;
+  color: #1a2e2d;
+}
+
+[data-theme='light'] input,
+[data-theme='light'] textarea {
+  background-color: #f0faf9;
+  color: #1a2e2d;
+}
+
+/* Dark Theme: dunkler Hintergrund */
+[data-theme='dark'] select,
+[data-theme='dark'] select option {
+  background-color: #18181c;
+  color: #e8e8ec;
+}
+
+[data-theme='dark'] input,
+[data-theme='dark'] textarea {
+  background-color: #18181c;
+  color: #e8e8ec;
+}

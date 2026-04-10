@@ -191,7 +191,7 @@
 .settings-input {
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--bg-widget);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   color: var(--text-primary);
@@ -199,16 +199,40 @@
   font-family: var(--font-family);
   outline: none;
   transition: border-color var(--transition-fast);
+  /* Natives OS-Styling entfernen damit CSS-Farben greifen */
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.settings-select {
+  /* Pfeil-Icon rechts – dunkel für beide Themes */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%239a9aaa' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+  cursor: pointer;
+}
+
+[data-theme='light'] .settings-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%230a8a85' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
 }
 
 .settings-select:focus,
 .settings-input:focus {
   border-color: var(--accent-color);
+  background-color: var(--bg-tertiary);
 }
 
+.settings-select:hover,
+.settings-input:hover {
+  border-color: var(--border-color-hover);
+}
+
+/* Option-Elemente: explizite Farben damit kein OS-Default greift */
 .settings-select option {
-  background: var(--bg-widget);
+  background-color: var(--bg-secondary);
   color: var(--text-primary);
+  padding: 6px 12px;
 }
 
 .settings-toggle {
