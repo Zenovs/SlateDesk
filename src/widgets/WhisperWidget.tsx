@@ -1,10 +1,10 @@
 /**
  * Whisper Widget – KI-Sprachassistent.
- * Push-to-Talk → OpenAI Whisper (STT) → ChatGPT → Browser-TTS
- * Alternativ: Texteingabe ohne Mikrofon.
+ * Unterstützt OpenAI (Cloud) und lokale Modelle via Ollama / LM Studio / LocalAI.
+ * Push-to-Talk → Whisper (STT) → Chat-API → Browser-TTS
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Square, Send, Trash2, VolumeX } from 'lucide-react';
+import { Mic, Square, Send, Trash2, VolumeX, RefreshCw } from 'lucide-react';
 import type { WidgetProps, WidgetDefinition } from '../types/widget';
 import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
 import { WidgetSettingsDialog } from '../components/WidgetSettingsDialog';
@@ -13,6 +13,7 @@ import { eventBus } from '../utils/eventBus';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Status = 'idle' | 'recording' | 'transcribing' | 'thinking' | 'speaking' | 'error';
+type Provider = 'openai' | 'local';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -21,8 +22,14 @@ interface Message {
 }
 
 interface WhisperSettings {
+  // Cloud (OpenAI)
   apiKey: string;
   model: string;
+  // Local (Ollama / LM Studio / LocalAI)
+  provider: Provider;
+  localBaseUrl: string;
+  localModel: string;
+  // Gemeinsam
   language: string;
   systemPrompt: string;
   ttsEnabled: boolean;
@@ -34,6 +41,9 @@ interface WhisperSettings {
 const DEFAULT: WhisperSettings = {
   apiKey: '',
   model: 'gpt-4o-mini',
+  provider: 'openai',
+  localBaseUrl: 'http://localhost:11434/v1',
+  localModel: '',
   language: 'de',
   systemPrompt:
     'Du bist ein hilfreicher, freundlicher Assistent namens Slate. ' +
@@ -44,7 +54,7 @@ const DEFAULT: WhisperSettings = {
   ttsPitch: 1.0,
 };
 
-const MODEL_OPTIONS = [
+const OPENAI_MODELS = [
   { value: 'gpt-4o-mini',   label: 'GPT-4o Mini (schnell, günstig)' },
   { value: 'gpt-4o',        label: 'GPT-4o (leistungsstark)' },
   { value: 'gpt-4-turbo',   label: 'GPT-4 Turbo' },
@@ -88,7 +98,6 @@ async function transcribeAudio(blob: Blob, apiKey: string, language: string): Pr
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { error?: { message?: string } })?.error?.message || `HTTP ${res.status}`);
   }
-
   const data = await res.json() as { text: string };
   return data.text.trim();
 }
@@ -96,25 +105,30 @@ async function transcribeAudio(blob: Blob, apiKey: string, language: string): Pr
 async function chatCompletion(
   history: Message[],
   userText: string,
-  apiKey: string,
-  model: string,
-  systemPrompt: string,
+  settings: WhisperSettings,
 ): Promise<string> {
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const isLocal = settings.provider === 'local';
+  const baseUrl = isLocal ? settings.localBaseUrl.replace(/\/$/, '') : 'https://api.openai.com/v1';
+  const model   = isLocal ? settings.localModel : settings.model;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+  // Ollama benötigt keinen echten Key, aber den Header erwartet es trotzdem
+  if (!isLocal && settings.apiKey) headers['Authorization'] = `Bearer ${settings.apiKey}`;
+  if (isLocal) headers['Authorization'] = 'Bearer ollama';
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({
       model,
       messages: [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: settings.systemPrompt },
         ...history.slice(-18).map(m => ({ role: m.role, content: m.content })),
         { role: 'user', content: userText },
       ],
       max_tokens: 600,
       temperature: 0.7,
+      stream: false,
     }),
   });
 
@@ -122,9 +136,19 @@ async function chatCompletion(
     const err = await res.json().catch(() => ({}));
     throw new Error((err as { error?: { message?: string } })?.error?.message || `HTTP ${res.status}`);
   }
-
   const data = await res.json() as { choices: Array<{ message: { content: string } }> };
   return data.choices[0].message.content.trim();
+}
+
+/** Fragt laufende Modelle vom lokalen Server ab (OpenAI-kompatibel: GET /v1/models) */
+async function fetchLocalModels(baseUrl: string): Promise<string[]> {
+  const url = baseUrl.replace(/\/$/, '');
+  const res = await fetch(`${url}/models`, {
+    headers: { Authorization: 'Bearer ollama' },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as { data: Array<{ id: string }> };
+  return data.data.map(m => m.id).sort();
 }
 
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
@@ -143,6 +167,10 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   const { getSettings, updateSettings } = useWidgetSettingsStore();
   const s = getSettings<WhisperSettings>(instanceId, DEFAULT);
+
+  const isLocal  = s.provider === 'local';
+  const canChat  = isLocal ? !!s.localModel : !!s.apiKey;
+  const canSTT   = !!s.apiKey; // Whisper ist immer OpenAI
 
   // ─── Settings-Dialog via Event-Bus ─────────────────────────────────────────
   useEffect(() => {
@@ -186,7 +214,7 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   // ─── Nachricht senden ──────────────────────────────────────────────────────
   const sendMessage = useCallback(async (userText: string, currentMessages: Message[]) => {
-    if (!userText.trim() || !s.apiKey) return;
+    if (!userText.trim() || !canChat) return;
 
     const userMsg: Message = { role: 'user', content: userText, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
@@ -194,8 +222,7 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     setErrorMsg('');
 
     try {
-      // currentMessages = history BEFORE the new user message
-      const reply = await chatCompletion(currentMessages, userText, s.apiKey, s.model, s.systemPrompt);
+      const reply = await chatCompletion(currentMessages, userText, s);
       const aiMsg: Message = { role: 'assistant', content: reply, timestamp: Date.now() };
       setMessages(prev => [...prev, aiMsg]);
       speak(reply);
@@ -204,13 +231,18 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
       setErrorMsg(e instanceof Error ? e.message : String(e));
       setStatus('error');
     }
-  }, [s, speak]);
+  }, [canChat, s, speak]);
 
   // ─── Aufnahme starten ──────────────────────────────────────────────────────
   const startRecording = useCallback(async () => {
     if (status !== 'idle' && status !== 'error') return;
-    if (!s.apiKey) {
-      setErrorMsg('Kein API-Key – bitte in Einstellungen eintragen.');
+    if (!canSTT) {
+      setErrorMsg('Für Spracherkennung wird ein OpenAI API-Key benötigt.');
+      setStatus('error');
+      return;
+    }
+    if (!canChat) {
+      setErrorMsg(isLocal ? 'Kein lokales Modell gewählt.' : 'Kein API-Key konfiguriert.');
       setStatus('error');
       return;
     }
@@ -229,17 +261,14 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     const mimeTypes = ['audio/webm', 'audio/ogg', ''];
     const mime = mimeTypes.find(m => !m || MediaRecorder.isTypeSupported(m)) ?? '';
     const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
-    // Snapshot der aktuellen Messages für den API-Aufruf
     const msgSnapshot = messages.slice();
 
     recorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       const blob = new Blob(chunksRef.current, { type: mime || 'audio/webm' });
       if (blob.size < 1000) { setStatus('idle'); return; }
-
       setStatus('transcribing');
       try {
         const text = await transcribeAudio(blob, s.apiKey, s.language);
@@ -254,9 +283,8 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     recorder.start();
     recorderRef.current = recorder;
     setStatus('recording');
-  }, [status, s, messages, sendMessage]);
+  }, [status, canSTT, canChat, isLocal, messages, s, sendMessage]);
 
-  // ─── Aufnahme stoppen ──────────────────────────────────────────────────────
   const stopRecording = useCallback(() => {
     if (recorderRef.current?.state === 'recording') {
       recorderRef.current.stop();
@@ -264,36 +292,32 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     }
   }, []);
 
-  // ─── Mic-Button Klick ──────────────────────────────────────────────────────
   const handleMicClick = useCallback(() => {
     if (status === 'recording') stopRecording();
     else startRecording();
   }, [status, startRecording, stopRecording]);
 
-  // ─── TTS stoppen ───────────────────────────────────────────────────────────
   const stopSpeaking = useCallback(() => {
     if (hasTTS) window.speechSynthesis.cancel();
     setStatus('idle');
   }, []);
 
-  // ─── Text absenden ─────────────────────────────────────────────────────────
   const handleSendText = useCallback(async () => {
     const text = textInput.trim();
     if (!text) return;
-    if (!s.apiKey) {
-      setErrorMsg('Kein API-Key – bitte in Einstellungen eintragen.');
+    if (!canChat) {
+      setErrorMsg(isLocal ? 'Kein lokales Modell gewählt.' : 'Kein API-Key konfiguriert.');
       setStatus('error');
       return;
     }
     setTextInput('');
     await sendMessage(text, messages);
-  }, [textInput, messages, s.apiKey, sendMessage]);
+  }, [textInput, messages, canChat, isLocal, sendMessage]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); }
   }, [handleSendText]);
 
-  // ─── Chat leeren ───────────────────────────────────────────────────────────
   const clearChat = useCallback(() => {
     if (hasTTS) window.speechSynthesis.cancel();
     setMessages([]);
@@ -305,19 +329,29 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const isRecording = status === 'recording';
   const isBusy      = status === 'transcribing' || status === 'thinking';
   const isSpeaking  = status === 'speaking';
-  const noApiKey    = !s.apiKey;
+
+  // Provider-Badge
+  const providerBadge = isLocal
+    ? { label: '🖥 Lokal', color: '#22c55e', bg: 'rgba(34,197,94,0.1)' }
+    : { label: '☁ OpenAI', color: '#818cf8', bg: 'rgba(129,140,248,0.1)' };
 
   return (
     <>
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', gap: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
 
-        {/* Kein API-Key Banner */}
-        {noApiKey && (
+        {/* Setup-Banner wenn nicht konfiguriert */}
+        {!canChat && (
           <div className="whisper-no-key">
-            <span>🔑</span>
+            <span>{isLocal ? '🖥' : '🔑'}</span>
             <div style={{ flex: 1 }}>
-              <div className="whisper-no-key-title">OpenAI API-Key fehlt</div>
-              <div className="whisper-no-key-sub">Einstellungen öffnen und Key eintragen</div>
+              <div className="whisper-no-key-title">
+                {isLocal ? 'Kein Modell gewählt' : 'OpenAI API-Key fehlt'}
+              </div>
+              <div className="whisper-no-key-sub">
+                {isLocal
+                  ? 'Ollama starten und Modell in Einstellungen wählen'
+                  : 'API-Key bei platform.openai.com erstellen'}
+              </div>
             </div>
             <button
               className="settings-btn settings-btn-primary"
@@ -329,29 +363,46 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
           </div>
         )}
 
-        {/* Toolbar (Trash + Stop-Speaking) */}
-        {(messages.length > 0 || isSpeaking) && (
-          <div className="whisper-toolbar">
-            {isSpeaking && (
-              <button className="whisper-toolbar-btn" onClick={stopSpeaking} title="Sprachausgabe stoppen">
-                <VolumeX size={13} /> Stopp
-              </button>
+        {/* Toolbar */}
+        <div className="whisper-toolbar">
+          {/* Provider-Badge */}
+          <span style={{
+            fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+            background: providerBadge.bg, color: providerBadge.color,
+            border: `1px solid ${providerBadge.color}40`,
+            marginRight: 'auto',
+          }}>
+            {providerBadge.label}
+            {isLocal && s.localModel && (
+              <span style={{ opacity: 0.8, fontWeight: 400 }}> · {s.localModel.split(':')[0]}</span>
             )}
-            {messages.length > 0 && (
-              <button className="whisper-toolbar-btn whisper-toolbar-btn-danger" onClick={clearChat} title="Chat leeren">
-                <Trash2 size={13} /> Leeren
-              </button>
+            {!isLocal && s.model && (
+              <span style={{ opacity: 0.8, fontWeight: 400 }}> · {s.model}</span>
             )}
-          </div>
-        )}
+          </span>
+          {isSpeaking && (
+            <button className="whisper-toolbar-btn" onClick={stopSpeaking} title="TTS stoppen">
+              <VolumeX size={13} /> Stopp
+            </button>
+          )}
+          {messages.length > 0 && (
+            <button className="whisper-toolbar-btn whisper-toolbar-btn-danger" onClick={clearChat} title="Chat leeren">
+              <Trash2 size={13} /> Leeren
+            </button>
+          )}
+        </div>
 
         {/* Nachrichten */}
         <div className="whisper-messages" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-          {messages.length === 0 && !noApiKey && (
+          {messages.length === 0 && canChat && (
             <div className="whisper-empty">
-              <div className="whisper-empty-icon">🎙️</div>
+              <div className="whisper-empty-icon">{isLocal ? '🖥️' : '🎙️'}</div>
               <div className="whisper-empty-text">
-                Mikrofon-Button drücken und sprechen,<br />oder Text eingeben
+                {canSTT
+                  ? 'Mikrofon-Button drücken und sprechen,\noder Text eingeben'
+                  : isLocal
+                    ? 'Lokales Modell bereit – Text eingeben'
+                    : 'Text eingeben oder API-Key für Sprache setzen'}
               </div>
             </div>
           )}
@@ -372,16 +423,12 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
               </div>
             </div>
           )}
-
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Fehlermeldung */}
         {status === 'error' && errorMsg && (
           <div className="whisper-error">{errorMsg}</div>
         )}
-
-        {/* Status-Zeile */}
         {status !== 'idle' && status !== 'error' && (
           <div className="whisper-status">{STATUS_LABEL[status]}</div>
         )}
@@ -391,16 +438,16 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
           <input
             type="text"
             className="whisper-text-input"
-            placeholder={noApiKey ? 'API-Key fehlt…' : 'Nachricht eingeben…'}
+            placeholder={!canChat ? 'Nicht konfiguriert…' : 'Nachricht eingeben…'}
             value={textInput}
             onChange={e => setTextInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={isBusy || isRecording || noApiKey}
+            disabled={isBusy || isRecording || !canChat}
           />
           <button
             className="whisper-send-btn"
             onClick={handleSendText}
-            disabled={!textInput.trim() || isBusy || isRecording || noApiKey}
+            disabled={!textInput.trim() || isBusy || isRecording || !canChat}
             title="Senden"
           >
             <Send size={15} />
@@ -408,15 +455,14 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
           <button
             className={`whisper-mic-btn ${isRecording ? 'recording' : ''}`}
             onClick={handleMicClick}
-            disabled={isBusy || noApiKey}
-            title={isRecording ? 'Aufnahme stoppen' : 'Sprechen'}
+            disabled={isBusy || !canSTT || !canChat}
+            title={!canSTT ? 'OpenAI Key für Mikrofon nötig' : isRecording ? 'Aufnahme stoppen' : 'Sprechen'}
           >
             {isRecording ? <Square size={16} /> : <Mic size={16} />}
           </button>
         </div>
       </div>
 
-      {/* Settings Dialog (Portal → immer zentriert) */}
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -441,17 +487,48 @@ interface SettingsDialogProps {
 const SettingsDialog: React.FC<SettingsDialogProps> = ({
   open, onClose, settings, updateSettings, voices,
 }) => {
-  const [localKey, setLocalKey] = useState(settings.apiKey);
+  const [localKey, setLocalKey]         = useState(settings.apiKey);
+  const [localUrl, setLocalUrl]         = useState(settings.localBaseUrl);
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
+  const [fetchError, setFetchError]     = useState('');
+  const [fetching, setFetching]         = useState(false);
 
   useEffect(() => {
-    if (open) setLocalKey(settings.apiKey);
-  }, [open, settings.apiKey]);
+    if (open) {
+      setLocalKey(settings.apiKey);
+      setLocalUrl(settings.localBaseUrl);
+      setFetchedModels([]);
+      setFetchError('');
+    }
+  }, [open, settings.apiKey, settings.localBaseUrl]);
 
-  const save = () => { updateSettings({ apiKey: localKey.trim() }); onClose(); };
+  const save = () => {
+    updateSettings({ apiKey: localKey.trim(), localBaseUrl: localUrl.trim() });
+    onClose();
+  };
+
+  const handleFetchModels = async () => {
+    setFetching(true);
+    setFetchError('');
+    setFetchedModels([]);
+    try {
+      const models = await fetchLocalModels(localUrl);
+      setFetchedModels(models);
+      if (models.length > 0 && !settings.localModel) {
+        updateSettings({ localModel: models[0] });
+      }
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : 'Verbindung fehlgeschlagen');
+    } finally {
+      setFetching(false);
+    }
+  };
 
   const langFilter = ({ de: 'de', en: 'en', fr: 'fr', es: 'es', it: 'it' } as Record<string, string>)[settings.language] ?? '';
-  const filtered = voices.filter(v => !langFilter || v.lang.toLowerCase().startsWith(langFilter));
-  const displayVoices = filtered.length > 0 ? filtered : voices;
+  const filteredVoices = voices.filter(v => !langFilter || v.lang.toLowerCase().startsWith(langFilter));
+  const displayVoices  = filteredVoices.length > 0 ? filteredVoices : voices;
+
+  const modelList = fetchedModels.length > 0 ? fetchedModels : (settings.localModel ? [settings.localModel] : []);
 
   return (
     <WidgetSettingsDialog
@@ -462,48 +539,135 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
       showFooter
       saveLabel="Speichern"
     >
-      {/* API Key */}
+      {/* Provider wählen */}
       <div className="settings-section">
-        <div className="settings-section-title">OpenAI API-Key</div>
-        <div className="settings-field">
-          <label className="settings-label">API-Key</label>
-          <input
-            type="password"
-            className="settings-input"
-            placeholder="sk-..."
-            value={localKey}
-            onChange={e => setLocalKey(e.target.value)}
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <div className="settings-description">Erhältlich unter platform.openai.com → API keys</div>
+        <div className="settings-section-title">Provider</div>
+        <div className="settings-radio-group">
+          <label className={`settings-radio-option ${settings.provider === 'openai' ? 'active' : ''}`}>
+            <input type="radio" name="provider" value="openai"
+              checked={settings.provider === 'openai'}
+              onChange={() => updateSettings({ provider: 'openai' })} />
+            ☁ OpenAI (Cloud)
+          </label>
+          <label className={`settings-radio-option ${settings.provider === 'local' ? 'active' : ''}`}>
+            <input type="radio" name="provider" value="local"
+              checked={settings.provider === 'local'}
+              onChange={() => updateSettings({ provider: 'local' })} />
+            🖥 Lokal (Ollama / LM Studio)
+          </label>
         </div>
       </div>
 
       <hr className="settings-divider" />
 
-      {/* Modell & Sprache */}
-      <div className="settings-section">
-        <div className="settings-section-title">Sprachmodell</div>
-        <div className="settings-field">
-          <label className="settings-label">KI-Modell</label>
-          <select className="settings-select" value={settings.model} onChange={e => updateSettings({ model: e.target.value })}>
-            {MODEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+      {/* Cloud-Einstellungen */}
+      {settings.provider === 'openai' && (
+        <div className="settings-section">
+          <div className="settings-section-title">OpenAI Cloud</div>
+          <div className="settings-field">
+            <label className="settings-label">API-Key</label>
+            <input
+              type="password"
+              className="settings-input"
+              placeholder="sk-..."
+              value={localKey}
+              onChange={e => setLocalKey(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <div className="settings-description">Erhältlich unter platform.openai.com → API keys</div>
+          </div>
+          <div className="settings-field">
+            <label className="settings-label">Modell</label>
+            <select className="settings-select" value={settings.model}
+              onChange={e => updateSettings({ model: e.target.value })}>
+              {OPENAI_MODELS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
         </div>
+      )}
+
+      {/* Local-Einstellungen */}
+      {settings.provider === 'local' && (
+        <div className="settings-section">
+          <div className="settings-section-title">Lokaler Server</div>
+
+          <div className="settings-info-box" style={{ marginBottom: 'var(--spacing-md)' }}>
+            <span>💡</span>
+            <div>
+              Ollama installieren und starten: <strong>ollama serve</strong><br />
+              Modell laden: <strong>ollama pull llama3.2</strong>
+            </div>
+          </div>
+
+          <div className="settings-field">
+            <label className="settings-label">Server-URL</label>
+            <input
+              type="text"
+              className="settings-input"
+              placeholder="http://localhost:11434/v1"
+              value={localUrl}
+              onChange={e => setLocalUrl(e.target.value)}
+            />
+            <div className="settings-description">
+              Ollama: http://localhost:11434/v1 · LM Studio: http://localhost:1234/v1
+            </div>
+          </div>
+
+          {/* Modelle abrufen */}
+          <div className="settings-field">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', marginBottom: 'var(--spacing-xs)' }}>
+              <label className="settings-label" style={{ margin: 0, flex: 1 }}>Modell</label>
+              <button
+                className="settings-btn"
+                onClick={handleFetchModels}
+                disabled={fetching}
+                style={{ fontSize: 11, padding: '3px 10px', gap: 4 }}
+              >
+                <RefreshCw size={12} style={{ animation: fetching ? 'spin 1s linear infinite' : 'none' }} />
+                {fetching ? 'Lade…' : 'Modelle abrufen'}
+              </button>
+            </div>
+
+            {fetchError && (
+              <div className="settings-info-box error" style={{ marginBottom: 'var(--spacing-xs)' }}>
+                <span>⚠️</span>
+                <span>{fetchError} – Ist der Server gestartet?</span>
+              </div>
+            )}
+
+            {modelList.length > 0 ? (
+              <select className="settings-select" value={settings.localModel}
+                onChange={e => updateSettings({ localModel: e.target.value })}>
+                <option value="">– Modell wählen –</option>
+                {modelList.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '6px 0' }}>
+                Klicke „Modelle abrufen" um verfügbare Modelle zu laden.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <hr className="settings-divider" />
+
+      {/* Sprache & System-Prompt */}
+      <div className="settings-section">
+        <div className="settings-section-title">Allgemein</div>
         <div className="settings-field">
-          <label className="settings-label">Sprache (Whisper + TTS)</label>
-          <select className="settings-select" value={settings.language} onChange={e => updateSettings({ language: e.target.value })}>
+          <label className="settings-label">Sprache (Whisper-STT + TTS)</label>
+          <select className="settings-select" value={settings.language}
+            onChange={e => updateSettings({ language: e.target.value })}>
             {LANGUAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
+          {settings.provider === 'local' && (
+            <div className="settings-description">
+              ⚠ Spracherkennung (Mikrofon) benötigt immer einen OpenAI API-Key.
+            </div>
+          )}
         </div>
-      </div>
-
-      <hr className="settings-divider" />
-
-      {/* System-Prompt */}
-      <div className="settings-section">
-        <div className="settings-section-title">Persönlichkeit</div>
         <div className="settings-field">
           <label className="settings-label">System-Prompt</label>
           <textarea
@@ -512,7 +676,6 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
             onChange={e => updateSettings({ systemPrompt: e.target.value })}
             rows={4}
           />
-          <div className="settings-description">Definiert Persönlichkeit und Verhalten des Assistenten</div>
         </div>
       </div>
 
@@ -522,9 +685,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
       <div className="settings-section">
         <div className="settings-section-title">Sprachausgabe (TTS)</div>
         {!hasTTS && (
-          <div className="whisper-no-key" style={{ marginBottom: 'var(--spacing-sm)' }}>
-            <span>⚠️</span>
-            <div className="whisper-no-key-sub">SpeechSynthesis wird auf diesem Gerät nicht unterstützt.</div>
+          <div className="settings-description" style={{ marginBottom: 'var(--spacing-sm)' }}>
+            ⚠ SpeechSynthesis nicht verfügbar.
           </div>
         )}
         <div className="settings-toggle">
@@ -533,12 +695,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
             <div className="settings-toggle-sublabel">KI-Antworten laut vorlesen</div>
           </div>
           <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={settings.ttsEnabled && hasTTS}
-              disabled={!hasTTS}
-              onChange={e => updateSettings({ ttsEnabled: e.target.checked })}
-            />
+            <input type="checkbox" checked={settings.ttsEnabled && hasTTS} disabled={!hasTTS}
+              onChange={e => updateSettings({ ttsEnabled: e.target.checked })} />
             <span className="toggle-switch-slider" />
           </label>
         </div>
@@ -547,7 +705,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
           <>
             <div className="settings-field" style={{ marginTop: 'var(--spacing-md)' }}>
               <label className="settings-label">Stimme</label>
-              <select className="settings-select" value={settings.ttsVoice} onChange={e => updateSettings({ ttsVoice: e.target.value })}>
+              <select className="settings-select" value={settings.ttsVoice}
+                onChange={e => updateSettings({ ttsVoice: e.target.value })}>
                 <option value="">Standard-Stimme</option>
                 {displayVoices.map(v => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
               </select>
@@ -579,8 +738,8 @@ export const whisperWidgetDef: WidgetDefinition = {
   manifest: {
     id: 'whisper',
     name: 'KI-Assistent',
-    description: 'Sprachassistent mit OpenAI Whisper + ChatGPT und Sprachausgabe',
-    version: '1.0.0',
+    description: 'Sprachassistent: OpenAI oder lokale Modelle via Ollama / LM Studio',
+    version: '1.1.0',
     author: 'SlateDesk',
     minWidth: 3,
     minHeight: 4,
