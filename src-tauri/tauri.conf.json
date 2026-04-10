@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob: http:; media-src 'self' blob: mediastream:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://api.openweathermap.org https://newsapi.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://ipapi.co http://*"
+      "csp": "default-src 'self'; img-src 'self' data: blob: http:; media-src 'self' blob: mediastream:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://api.openweathermap.org https://newsapi.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://ipapi.co https://api.openai.com http://*"
     }
   },
   "bundle": {

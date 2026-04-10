@@ -17,6 +17,7 @@ import { cameraWidgetDef } from './CameraWidget';
 import { volumioWidgetDef } from './VolumioWidget';
 import { speedtestWidgetDef } from './SpeedtestWidget';
 import { nasWidgetDef } from './NasWidget';
+import { whisperWidgetDef } from './WhisperWidget';
 
 export const initializeWidgets = () => {
   registerWidget(clockWidgetDef);
@@ -29,4 +30,5 @@ export const initializeWidgets = () => {
   registerWidget(volumioWidgetDef);
   registerWidget(speedtestWidgetDef);
   registerWidget(nasWidgetDef);
+  registerWidget(whisperWidgetDef);
 };

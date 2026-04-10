@@ -519,6 +519,255 @@
   flex-shrink: 0;
 }
 
+/* ──────────────────────────────────────────
+   Whisper Widget (KI-Assistent)
+   ────────────────────────────────────────── */
+
+.whisper-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Kein-API-Key-Banner */
+.whisper-no-key {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: rgba(239, 68, 68, 0.08);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+  font-size: var(--font-size-xs);
+}
+
+.whisper-no-key-title {
+  font-weight: var(--font-weight-medium);
+  color: var(--error);
+  font-size: var(--font-size-sm);
+}
+
+.whisper-no-key-sub {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+/* Nachrichten-Container */
+.whisper-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-sm) var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  min-height: 0;
+}
+
+/* Leer-Zustand */
+.whisper-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: var(--spacing-lg);
+}
+
+.whisper-empty-icon {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.whisper-empty-text {
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+}
+
+/* Nachricht */
+.whisper-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 88%;
+}
+
+.whisper-msg-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.whisper-msg-assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.whisper-msg-bubble {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.whisper-msg-user .whisper-msg-bubble {
+  background: var(--accent-color);
+  color: white;
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+.whisper-msg-assistant .whisper-msg-bubble {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-bottom-left-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+}
+
+.whisper-msg-time {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+  padding: 0 2px;
+}
+
+/* Denk-Animation (drei Punkte) */
+.whisper-thinking {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  min-width: 52px;
+}
+
+.whisper-thinking span {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  animation: whisperDot 1.2s infinite ease-in-out;
+}
+
+.whisper-thinking span:nth-child(1) { animation-delay: 0s; }
+.whisper-thinking span:nth-child(2) { animation-delay: 0.2s; }
+.whisper-thinking span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes whisperDot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%            { transform: translateY(-6px); opacity: 1; }
+}
+
+/* Fehler */
+.whisper-error {
+  margin: 0 var(--spacing-md) var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  color: var(--error);
+}
+
+/* Status-Zeile */
+.whisper-status {
+  padding: 2px var(--spacing-md) var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* Eingabe-Zeile */
+.whisper-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-widget-header);
+}
+
+.whisper-text-input {
+  flex: 1;
+  padding: 6px var(--spacing-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  outline: none;
+  transition: border-color var(--transition-fast);
+  min-width: 0;
+}
+
+.whisper-text-input:focus {
+  border-color: var(--accent-color);
+}
+
+.whisper-text-input:disabled {
+  opacity: 0.5;
+}
+
+.whisper-send-btn,
+.whisper-mic-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-widget);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+
+.whisper-send-btn:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border-color-hover);
+}
+
+.whisper-send-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.whisper-mic-btn:hover:not(:disabled) {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: white;
+}
+
+.whisper-mic-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Aufnahme läuft: rot pulsierend */
+.whisper-mic-btn.recording {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: white;
+  animation: whisperPulse 1s ease-in-out infinite;
+}
+
+@keyframes whisperPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* Settings: Textarea für System-Prompt */
+.whisper-prompt-textarea {
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+}
+
 /* Animations */
 @keyframes fadeIn {
   from { opacity: 0; }
