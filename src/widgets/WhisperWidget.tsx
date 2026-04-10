@@ -4,7 +4,8 @@
  * Push-to-Talk → Whisper (STT) → Chat-API → Browser-TTS
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Mic, Square, Send, Trash2, VolumeX, RefreshCw } from 'lucide-react';
+import { Mic, Square, Send, Trash2, VolumeX, RefreshCw, Download, Play } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import type { WidgetProps, WidgetDefinition } from '../types/widget';
 import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
 import { WidgetSettingsDialog } from '../components/WidgetSettingsDialog';
@@ -476,6 +477,77 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
 // ─── Settings Dialog ──────────────────────────────────────────────────────────
 
+// ─── Ollama-Status-Hook ───────────────────────────────────────────────────────
+
+interface OllamaStatus {
+  installed: boolean;
+  running: boolean;
+  version: string;
+}
+
+type OllamaState = 'checking' | 'not_installed' | 'installing' | 'not_running' | 'starting' | 'ready' | 'error';
+
+function useOllamaStatus(active: boolean) {
+  const [status, setStatus]   = useState<OllamaState>('checking');
+  const [log, setLog]         = useState('');
+  const [ollama, setOllama]   = useState<OllamaStatus | null>(null);
+  const pollRef               = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const check = useCallback(async () => {
+    try {
+      const s = await invoke<OllamaStatus>('check_ollama');
+      setOllama(s);
+      if (s.running) { setStatus('ready'); return true; }
+      if (s.installed) { setStatus('not_running'); return false; }
+      setStatus('not_installed');
+      return false;
+    } catch {
+      setStatus('error');
+      return false;
+    }
+  }, []);
+
+  // Polling während Install / Start
+  const startPolling = useCallback((targetState: 'installing' | 'starting') => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      if (targetState === 'installing') {
+        const logText = await invoke<string>('get_ollama_install_log').catch(() => '');
+        setLog(logText.split('\n').filter(Boolean).slice(-4).join('\n'));
+      }
+      const done = await check();
+      if (done || (targetState === 'installing' && ollama?.installed)) {
+        clearInterval(pollRef.current!);
+        pollRef.current = null;
+        check();
+      }
+    }, 3000);
+  }, [check, ollama]);
+
+  useEffect(() => {
+    if (!active) return;
+    check();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [active, check]);
+
+  const install = useCallback(async () => {
+    setStatus('installing');
+    setLog('');
+    await invoke('install_ollama');
+    startPolling('installing');
+  }, [startPolling]);
+
+  const start = useCallback(async () => {
+    setStatus('starting');
+    await invoke('start_ollama').catch(() => {});
+    startPolling('starting');
+  }, [startPolling]);
+
+  return { status, log, ollama, install, start, recheck: check };
+}
+
+// ─── Settings Dialog ──────────────────────────────────────────────────────────
+
 interface SettingsDialogProps {
   open: boolean;
   onClose: () => void;
@@ -487,11 +559,14 @@ interface SettingsDialogProps {
 const SettingsDialog: React.FC<SettingsDialogProps> = ({
   open, onClose, settings, updateSettings, voices,
 }) => {
-  const [localKey, setLocalKey]         = useState(settings.apiKey);
-  const [localUrl, setLocalUrl]         = useState(settings.localBaseUrl);
-  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
-  const [fetchError, setFetchError]     = useState('');
-  const [fetching, setFetching]         = useState(false);
+  const [localKey, setLocalKey]             = useState(settings.apiKey);
+  const [localUrl, setLocalUrl]             = useState(settings.localBaseUrl);
+  const [fetchedModels, setFetchedModels]   = useState<string[]>([]);
+  const [fetchError, setFetchError]         = useState('');
+  const [fetching, setFetching]             = useState(false);
+
+  const isLocal = settings.provider === 'local';
+  const ollama  = useOllamaStatus(open && isLocal);
 
   useEffect(() => {
     if (open) {
@@ -514,9 +589,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
     try {
       const models = await fetchLocalModels(localUrl);
       setFetchedModels(models);
-      if (models.length > 0 && !settings.localModel) {
-        updateSettings({ localModel: models[0] });
-      }
+      if (models.length > 0 && !settings.localModel) updateSettings({ localModel: models[0] });
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : 'Verbindung fehlgeschlagen');
     } finally {
@@ -524,11 +597,10 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
     }
   };
 
-  const langFilter = ({ de: 'de', en: 'en', fr: 'fr', es: 'es', it: 'it' } as Record<string, string>)[settings.language] ?? '';
+  const langFilter    = ({ de: 'de', en: 'en', fr: 'fr', es: 'es', it: 'it' } as Record<string, string>)[settings.language] ?? '';
   const filteredVoices = voices.filter(v => !langFilter || v.lang.toLowerCase().startsWith(langFilter));
   const displayVoices  = filteredVoices.length > 0 ? filteredVoices : voices;
-
-  const modelList = fetchedModels.length > 0 ? fetchedModels : (settings.localModel ? [settings.localModel] : []);
+  const modelList      = fetchedModels.length > 0 ? fetchedModels : (settings.localModel ? [settings.localModel] : []);
 
   return (
     <WidgetSettingsDialog
@@ -539,7 +611,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
       showFooter
       saveLabel="Speichern"
     >
-      {/* Provider wählen */}
+      {/* ── Provider ─────────────────────────────────────── */}
       <div className="settings-section">
         <div className="settings-section-title">Provider</div>
         <div className="settings-radio-group">
@@ -560,21 +632,15 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
       <hr className="settings-divider" />
 
-      {/* Cloud-Einstellungen */}
+      {/* ── Cloud ────────────────────────────────────────── */}
       {settings.provider === 'openai' && (
         <div className="settings-section">
           <div className="settings-section-title">OpenAI Cloud</div>
           <div className="settings-field">
             <label className="settings-label">API-Key</label>
-            <input
-              type="password"
-              className="settings-input"
-              placeholder="sk-..."
-              value={localKey}
-              onChange={e => setLocalKey(e.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
+            <input type="password" className="settings-input" placeholder="sk-..."
+              value={localKey} onChange={e => setLocalKey(e.target.value)}
+              autoComplete="off" spellCheck={false} />
             <div className="settings-description">Erhältlich unter platform.openai.com → API keys</div>
           </div>
           <div className="settings-field">
@@ -587,73 +653,60 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
         </div>
       )}
 
-      {/* Local-Einstellungen */}
+      {/* ── Lokal / Ollama ───────────────────────────────── */}
       {settings.provider === 'local' && (
         <div className="settings-section">
-          <div className="settings-section-title">Lokaler Server</div>
+          <div className="settings-section-title">Lokaler Server (Ollama)</div>
 
-          <div className="settings-info-box" style={{ marginBottom: 'var(--spacing-md)' }}>
-            <span>💡</span>
-            <div>
-              Ollama installieren und starten: <strong>ollama serve</strong><br />
-              Modell laden: <strong>ollama pull llama3.2</strong>
-            </div>
-          </div>
+          {/* Status-Karte */}
+          <OllamaSetupCard state={ollama} onInstall={ollama.install} onStart={ollama.start} onRecheck={ollama.recheck} />
 
-          <div className="settings-field">
+          {/* Server-URL – immer sichtbar */}
+          <div className="settings-field" style={{ marginTop: 'var(--spacing-md)' }}>
             <label className="settings-label">Server-URL</label>
-            <input
-              type="text"
-              className="settings-input"
+            <input type="text" className="settings-input"
               placeholder="http://localhost:11434/v1"
-              value={localUrl}
-              onChange={e => setLocalUrl(e.target.value)}
-            />
+              value={localUrl} onChange={e => setLocalUrl(e.target.value)} />
             <div className="settings-description">
               Ollama: http://localhost:11434/v1 · LM Studio: http://localhost:1234/v1
             </div>
           </div>
 
-          {/* Modelle abrufen */}
-          <div className="settings-field">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', marginBottom: 'var(--spacing-xs)' }}>
-              <label className="settings-label" style={{ margin: 0, flex: 1 }}>Modell</label>
-              <button
-                className="settings-btn"
-                onClick={handleFetchModels}
-                disabled={fetching}
-                style={{ fontSize: 11, padding: '3px 10px', gap: 4 }}
-              >
-                <RefreshCw size={12} style={{ animation: fetching ? 'spin 1s linear infinite' : 'none' }} />
-                {fetching ? 'Lade…' : 'Modelle abrufen'}
-              </button>
+          {/* Modell-Auswahl (nur wenn Ollama läuft) */}
+          {ollama.status === 'ready' && (
+            <div className="settings-field">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', marginBottom: 'var(--spacing-xs)' }}>
+                <label className="settings-label" style={{ margin: 0, flex: 1 }}>Modell</label>
+                <button className="settings-btn" onClick={handleFetchModels} disabled={fetching}
+                  style={{ fontSize: 11, padding: '3px 10px', gap: 4 }}>
+                  <RefreshCw size={12} style={{ animation: fetching ? 'spin 1s linear infinite' : 'none' }} />
+                  {fetching ? 'Lade…' : 'Abrufen'}
+                </button>
+              </div>
+              {fetchError && (
+                <div className="settings-info-box error" style={{ marginBottom: 'var(--spacing-xs)' }}>
+                  <span>⚠️</span><span>{fetchError}</span>
+                </div>
+              )}
+              {modelList.length > 0 ? (
+                <select className="settings-select" value={settings.localModel}
+                  onChange={e => updateSettings({ localModel: e.target.value })}>
+                  <option value="">– Modell wählen –</option>
+                  {modelList.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '6px 0' }}>
+                  „Abrufen" klicken um installierte Modelle zu laden.
+                </div>
+              )}
             </div>
-
-            {fetchError && (
-              <div className="settings-info-box error" style={{ marginBottom: 'var(--spacing-xs)' }}>
-                <span>⚠️</span>
-                <span>{fetchError} – Ist der Server gestartet?</span>
-              </div>
-            )}
-
-            {modelList.length > 0 ? (
-              <select className="settings-select" value={settings.localModel}
-                onChange={e => updateSettings({ localModel: e.target.value })}>
-                <option value="">– Modell wählen –</option>
-                {modelList.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            ) : (
-              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', padding: '6px 0' }}>
-                Klicke „Modelle abrufen" um verfügbare Modelle zu laden.
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
 
       <hr className="settings-divider" />
 
-      {/* Sprache & System-Prompt */}
+      {/* ── Allgemein ────────────────────────────────────── */}
       <div className="settings-section">
         <div className="settings-section-title">Allgemein</div>
         <div className="settings-field">
@@ -664,24 +717,22 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
           </select>
           {settings.provider === 'local' && (
             <div className="settings-description">
-              ⚠ Spracherkennung (Mikrofon) benötigt immer einen OpenAI API-Key.
+              ⚠ Mikrofon-Erkennung (Whisper) benötigt immer einen OpenAI API-Key.
             </div>
           )}
         </div>
         <div className="settings-field">
           <label className="settings-label">System-Prompt</label>
-          <textarea
-            className="settings-input whisper-prompt-textarea"
+          <textarea className="settings-input whisper-prompt-textarea"
             value={settings.systemPrompt}
             onChange={e => updateSettings({ systemPrompt: e.target.value })}
-            rows={4}
-          />
+            rows={4} />
         </div>
       </div>
 
       <hr className="settings-divider" />
 
-      {/* TTS */}
+      {/* ── TTS ──────────────────────────────────────────── */}
       <div className="settings-section">
         <div className="settings-section-title">Sprachausgabe (TTS)</div>
         {!hasTTS && (
@@ -700,7 +751,6 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
             <span className="toggle-switch-slider" />
           </label>
         </div>
-
         {settings.ttsEnabled && hasTTS && (
           <>
             <div className="settings-field" style={{ marginTop: 'var(--spacing-md)' }}>
@@ -729,6 +779,78 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
         )}
       </div>
     </WidgetSettingsDialog>
+  );
+};
+
+// ─── Ollama Setup Card ────────────────────────────────────────────────────────
+
+interface OllamaSetupCardProps {
+  state: ReturnType<typeof useOllamaStatus>;
+  onInstall: () => void;
+  onStart: () => void;
+  onRecheck: () => void;
+}
+
+const OllamaSetupCard: React.FC<OllamaSetupCardProps> = ({ state, onInstall, onStart, onRecheck }) => {
+  const { status, log, ollama } = state;
+
+  const cfg: Record<OllamaState, { icon: string; color: string; bg: string; title: string; sub: string }> = {
+    checking:      { icon: '⏳', color: 'var(--text-tertiary)', bg: 'var(--bg-tertiary)', title: 'Prüfe Ollama…',          sub: '' },
+    not_installed: { icon: '📦', color: '#f59e0b',              bg: 'rgba(245,158,11,.08)', title: 'Ollama nicht installiert', sub: 'Einmalige Installation (~500 MB)' },
+    installing:    { icon: '⬇️', color: '#818cf8',              bg: 'rgba(129,140,248,.08)', title: 'Installiere Ollama…',   sub: 'Bitte warten, dauert 1–3 Minuten' },
+    not_running:   { icon: '⏸',  color: '#f59e0b',              bg: 'rgba(245,158,11,.08)', title: 'Ollama gestoppt',        sub: ollama?.version ?? '' },
+    starting:      { icon: '▶️', color: '#818cf8',              bg: 'rgba(129,140,248,.08)', title: 'Starte Ollama…',         sub: '' },
+    ready:         { icon: '✅', color: '#22c55e',              bg: 'rgba(34,197,94,.08)',  title: 'Ollama läuft',           sub: ollama?.version ?? '' },
+    error:         { icon: '⚠️', color: 'var(--error)',         bg: 'rgba(239,68,68,.08)',  title: 'Fehler',                 sub: 'Bitte Verbindung prüfen' },
+  };
+
+  const c = cfg[status];
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)',
+      padding: 'var(--spacing-sm) var(--spacing-md)',
+      background: c.bg, border: `1px solid ${c.color}40`,
+      borderRadius: 'var(--radius-md)', marginBottom: 'var(--spacing-xs)',
+    }}>
+      <span style={{ fontSize: 20, flexShrink: 0 }}>{c.icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: c.color }}>{c.title}</div>
+        {c.sub && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 1 }}>{c.sub}</div>}
+        {/* Install-Log (letzte Zeilen) */}
+        {status === 'installing' && log && (
+          <pre style={{
+            marginTop: 6, fontSize: 10, color: 'var(--text-tertiary)',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+            background: 'var(--bg-secondary)', padding: '4px 6px', borderRadius: 4,
+            maxHeight: 60, overflowY: 'auto',
+          }}>{log}</pre>
+        )}
+      </div>
+
+      {/* Aktions-Button */}
+      {status === 'not_installed' && (
+        <button className="settings-btn settings-btn-primary"
+          onClick={onInstall} style={{ flexShrink: 0, gap: 4, fontSize: 12 }}>
+          <Download size={13} /> Installieren
+        </button>
+      )}
+      {status === 'not_running' && (
+        <button className="settings-btn settings-btn-primary"
+          onClick={onStart} style={{ flexShrink: 0, gap: 4, fontSize: 12 }}>
+          <Play size={13} /> Starten
+        </button>
+      )}
+      {(status === 'installing' || status === 'starting') && (
+        <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite', color: c.color, flexShrink: 0 }} />
+      )}
+      {(status === 'ready' || status === 'error') && (
+        <button className="settings-btn" onClick={onRecheck}
+          style={{ flexShrink: 0, fontSize: 11, padding: '3px 8px', gap: 4 }}>
+          <RefreshCw size={12} /> Check
+        </button>
+      )}
+    </div>
   );
 };
 

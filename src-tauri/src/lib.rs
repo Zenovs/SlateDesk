@@ -301,6 +301,91 @@ fn test_nas_connection(ip: String) -> Result<NasResult, String> {
     Ok(NasResult { reachable, latency_ms, packet_loss_pct, timestamp })
 }
 
+#[derive(Serialize)]
+struct OllamaStatus {
+    installed: bool,
+    running: bool,
+    version: String,
+}
+
+/// Prüft ob Ollama installiert und ob der Server läuft.
+#[tauri::command]
+fn check_ollama() -> OllamaStatus {
+    // Installiert? – `which ollama` liefert Exit-0 wenn Binary gefunden
+    let installed = Command::new("which")
+        .arg("ollama")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    // Version
+    let version = if installed {
+        String::from_utf8_lossy(
+            &Command::new("ollama")
+                .arg("--version")
+                .output()
+                .unwrap_or_default()
+                .stdout,
+        )
+        .trim()
+        .to_string()
+    } else {
+        String::new()
+    };
+
+    // Läuft? – curl auf den Health-Endpunkt (Timeout 2s)
+    let running = Command::new("curl")
+        .args(["-sf", "--connect-timeout", "2", "http://localhost:11434"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    OllamaStatus { installed, running, version }
+}
+
+/// Startet die Ollama-Installation (nicht-blockierend, Ausgabe in /tmp/ollama-install.log).
+#[tauri::command]
+fn install_ollama() -> Result<(), String> {
+    // Ollamas offizielles Install-Script; benötigt root → sudo
+    Command::new("sh")
+        .args([
+            "-c",
+            "curl -fsSL https://ollama.com/install.sh | sudo sh > /tmp/ollama-install.log 2>&1",
+        ])
+        .spawn()
+        .map_err(|e| format!("Spawn fehlgeschlagen: {e}"))?;
+    Ok(())
+}
+
+/// Liest die aktuelle Ausgabe des Install-Logs (für Fortschrittsanzeige).
+#[tauri::command]
+fn get_ollama_install_log() -> String {
+    std::fs::read_to_string("/tmp/ollama-install.log").unwrap_or_default()
+}
+
+/// Startet den Ollama-Server (systemd → Fallback: direkt spawnen).
+#[tauri::command]
+fn start_ollama() -> Result<(), String> {
+    // Versuche systemd (Ollamas Installer legt ollama.service an)
+    let via_systemd = Command::new("sudo")
+        .args(["systemctl", "start", "ollama"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if via_systemd {
+        return Ok(());
+    }
+
+    // Fallback: ollama serve im Hintergrund
+    Command::new("ollama")
+        .arg("serve")
+        .spawn()
+        .map_err(|e| format!("Ollama serve fehlgeschlagen: {e}"))?;
+
+    Ok(())
+}
+
 #[tauri::command]
 fn trigger_update() -> Result<(), String> {
     let dir = project_dir();
@@ -344,7 +429,11 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![check_for_updates, trigger_update, run_speed_test, get_update_progress, test_nas_connection])
+        .invoke_handler(tauri::generate_handler![
+            check_for_updates, trigger_update, run_speed_test, get_update_progress,
+            test_nas_connection,
+            check_ollama, install_ollama, get_ollama_install_log, start_ollama,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
