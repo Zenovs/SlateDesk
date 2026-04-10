@@ -320,15 +320,11 @@ fn check_ollama() -> OllamaStatus {
 
     // Version
     let version = if installed {
-        String::from_utf8_lossy(
-            &Command::new("ollama")
-                .arg("--version")
-                .output()
-                .unwrap_or_default()
-                .stdout,
-        )
-        .trim()
-        .to_string()
+        Command::new("ollama")
+            .arg("--version")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
     } else {
         String::new()
     };
