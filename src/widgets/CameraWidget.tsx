@@ -106,50 +106,70 @@ const CameraComponent: React.FC<WidgetProps> = ({ instanceId }) => {
 
   // ─── Detektions-Loop (~5 fps) ─────────────────────────────────────────────
   const runDetection = useCallback(async () => {
-    const video  = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!detectingRef.current || !video || !canvas) return;
+    const video     = videoRef.current;
+    const canvas    = canvasRef.current;
+    const container = containerRef.current;
+    if (!detectingRef.current || !video || !canvas || !container) return;
     if (video.readyState < 2 || video.videoWidth === 0) {
       loopRef.current = setTimeout(runDetection, 200);
       return;
     }
 
-    // Canvas-Pixel-Dimensionen = intrinsische Video-Auflösung
     const vw = video.videoWidth;
     const vh = video.videoHeight;
-    if (canvas.width !== vw || canvas.height !== vh) {
-      canvas.width  = vw;
-      canvas.height = vh;
+
+    // Canvas-Pixel-Dimensionen = CSS-Anzeigegrösse des Containers
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width  = cw;
+      canvas.height = ch;
+    }
+
+    // object-fit:contain → Letterbox berechnen damit Boxes exakt auf Gesichter passen
+    const videoAspect     = vw / vh;
+    const containerAspect = cw / ch;
+    let scale: number, offsetX = 0, offsetY = 0;
+    if (containerAspect > videoAspect) {
+      // Container breiter → Letterbox links/rechts
+      scale   = ch / vh;
+      offsetX = (cw - vw * scale) / 2;
+    } else {
+      // Container höher → Letterbox oben/unten
+      scale   = cw / vw;
+      offsetY = (ch - vh * scale) / 2;
     }
 
     try {
       const detections = await faceapi.detectAllFaces(
         video,
         new faceapi.TinyFaceDetectorOptions({
-          inputSize:       s.inputSize as 128 | 160 | 224 | 320 | 416 | 608,
-          scoreThreshold:  s.scoreThreshold,
+          inputSize:      s.inputSize as 128 | 160 | 224 | 320 | 416 | 608,
+          scoreThreshold: s.scoreThreshold,
         })
       );
       setFaceCount(detections.length);
 
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.clearRect(0, 0, vw, vh);
+        ctx.clearRect(0, 0, cw, ch);
         detections.forEach(d => {
           const { x, y, width, height } = d.box;
-          // Box spiegeln wenn Mirror aktiv (damit Box zum gespiegelten Video passt)
-          const drawX = s.mirror ? vw - x - width : x;
-          ctx.strokeStyle = '#ff6b35';
-          ctx.lineWidth   = Math.max(2, vw / 200);
-          ctx.strokeRect(drawX, y, width, height);
+          // Spiegeln: X-Koordinate im Video-Koordinatenraum umkehren, dann in Display-Raum
+          const srcX  = s.mirror ? vw - x - width : x;
+          const dstX  = offsetX + srcX  * scale;
+          const dstY  = offsetY + y     * scale;
+          const dstW  = width  * scale;
+          const dstH  = height * scale;
 
-          // Score-Label
+          ctx.strokeStyle = '#ff6b35';
+          ctx.lineWidth   = Math.max(2, scale * 3);
+          ctx.strokeRect(dstX, dstY, dstW, dstH);
+
           ctx.fillStyle = '#ff6b35';
-          ctx.font      = `bold ${Math.max(12, vw / 40)}px Lato, sans-serif`;
+          ctx.font      = `bold ${Math.max(12, dstH * 0.18)}px Lato, sans-serif`;
           const label   = `${Math.round(d.score * 100)}%`;
-          const lx      = drawX;
-          const ly      = y > 20 ? y - 6 : y + height + 16;
-          ctx.fillText(label, lx, ly);
+          ctx.fillText(label, dstX, dstY > 18 ? dstY - 4 : dstY + dstH + 14);
         });
       }
     } catch { /* ignorieren */ }
@@ -309,7 +329,7 @@ const CameraComponent: React.FC<WidgetProps> = ({ instanceId }) => {
             muted playsInline
             style={{
               display: isActive ? 'block' : 'none',
-              width: '100%', height: '100%', objectFit: 'cover',
+              width: '100%', height: '100%', objectFit: 'contain',
               transform: mirrorStyle,
             }}
           />
