@@ -2,6 +2,9 @@ use serde::Serialize;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(target_os = "linux")]
+use webkit2gtk::{WebViewExt, PermissionRequestExt};
+
 #[derive(Serialize)]
 struct UpdateInfo {
     available: bool,
@@ -322,6 +325,20 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Kamera-Zugriff auf Linux/WebKitGTK automatisch erlauben
+            #[cfg(target_os = "linux")]
+            {
+                let window = app.get_webview_window("main")
+                    .expect("Kein Hauptfenster gefunden");
+                window.with_webview(|webview| {
+                    webview.inner().connect_permission_request(|_, request| {
+                        request.allow();
+                        true
+                    });
+                }).ok();
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![check_for_updates, trigger_update, run_speed_test, get_update_progress, test_nas_connection])
