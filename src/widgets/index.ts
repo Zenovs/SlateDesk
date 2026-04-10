@@ -18,6 +18,7 @@ import { volumioWidgetDef } from './VolumioWidget';
 import { speedtestWidgetDef } from './SpeedtestWidget';
 import { nasWidgetDef } from './NasWidget';
 import { whisperWidgetDef } from './WhisperWidget';
+import { sleeperWidgetDef } from './SleeperWidget';
 
 export const initializeWidgets = () => {
   registerWidget(clockWidgetDef);
@@ -31,4 +32,5 @@ export const initializeWidgets = () => {
   registerWidget(speedtestWidgetDef);
   registerWidget(nasWidgetDef);
   registerWidget(whisperWidgetDef);
+  registerWidget(sleeperWidgetDef);
 };

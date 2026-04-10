@@ -382,6 +382,44 @@ fn start_ollama() -> Result<(), String> {
     Ok(())
 }
 
+/// Schaltet den Display aus (Ruhemodus).
+#[tauri::command]
+fn sleep_display() -> Result<(), String> {
+    // Raspberry Pi
+    let rpi = Command::new("vcgencmd")
+        .args(["display_power", "0"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if rpi { return Ok(()); }
+
+    // X11-Fallback
+    Command::new("xset")
+        .args(["dpms", "force", "off"])
+        .spawn()
+        .map_err(|e| format!("xset dpms off fehlgeschlagen: {e}"))?;
+    Ok(())
+}
+
+/// Weckt den Display wieder auf.
+#[tauri::command]
+fn wake_display() -> Result<(), String> {
+    // Raspberry Pi
+    let rpi = Command::new("vcgencmd")
+        .args(["display_power", "1"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if rpi { return Ok(()); }
+
+    // X11-Fallback
+    Command::new("xset")
+        .args(["dpms", "force", "on"])
+        .spawn()
+        .map_err(|e| format!("xset dpms on fehlgeschlagen: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn trigger_update() -> Result<(), String> {
     let dir = project_dir();
@@ -429,6 +467,7 @@ pub fn run() {
             check_for_updates, trigger_update, run_speed_test, get_update_progress,
             test_nas_connection,
             check_ollama, install_ollama, get_ollama_install_log, start_ollama,
+            sleep_display, wake_display,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
