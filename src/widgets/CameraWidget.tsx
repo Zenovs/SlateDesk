@@ -1,16 +1,6 @@
 /**
- * Camera Widget – Gesichtserkennung mit Settings-System
- * 
- * Features:
- * - Live-Kamera-Feed via getUserMedia
- * - Gesichtserkennung mit face-api.js (TinyFaceDetector)
- * - Kamera-Auswahl (Dropdown aller verfügbaren Kameras)
- * - Start/Stop Kamera
- * - Gesichtserkennung aktivieren/deaktivieren
- * - Face Detection Threshold Slider
- * - Persistente Settings via widgetSettingsStore
- * - Klare Fehlermeldungen und Status-Anzeige
- * - Lokale Verarbeitung – keine Daten werden übertragen
+ * Camera Widget – Live-Kamerabild mit optionaler Gesichtserkennung.
+ * Nutzt face-api.js (TinyFaceDetector), lokal, keine externen Server.
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as faceapi from 'face-api.js';
@@ -19,779 +9,477 @@ import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
 import { WidgetSettingsDialog } from '../components/WidgetSettingsDialog';
 import { eventBus } from '../utils/eventBus';
 
-type CameraStatus = 'idle' | 'loading' | 'active' | 'error' | 'permission_needed';
+// ─── Typen ───────────────────────────────────────────────────────────────────
+
+type Status = 'idle' | 'loading' | 'active' | 'error' | 'no_permission';
 
 interface CameraSettings {
-  selectedDeviceId: string;
-  faceDetectionEnabled: boolean;
+  deviceId: string;
+  faceDetection: boolean;
   scoreThreshold: number;
-  autoStart: boolean;
   inputSize: number;
+  autoStart: boolean;
+  mirror: boolean;
 }
 
-const DEFAULT_SETTINGS: CameraSettings = {
-  selectedDeviceId: '',
-  faceDetectionEnabled: true,
+const DEFAULT: CameraSettings = {
+  deviceId: '',
+  faceDetection: true,
   scoreThreshold: 0.5,
-  autoStart: false,
   inputSize: 224,
+  autoStart: false,
+  mirror: true,
 };
 
-interface CameraDevice {
-  deviceId: string;
-  label: string;
+// ─── Hilfsfunktion: Kameraliste ───────────────────────────────────────────────
+
+async function listCameras() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices
+      .filter(d => d.kind === 'videoinput')
+      .map((d, i) => ({ id: d.deviceId, label: d.label || `Kamera ${i + 1}` }));
+  } catch {
+    return [];
+  }
 }
 
+// ─── Komponente ───────────────────────────────────────────────────────────────
+
 const CameraComponent: React.FC<WidgetProps> = ({ instanceId }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const animFrameRef = useRef<number>(0);
+  const videoRef     = useRef<HTMLVideoElement>(null);
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const streamRef    = useRef<MediaStream | null>(null);
+  const loopRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detectingRef = useRef(false); // Ref statt State – kein Closure-Bug
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle');
-  const [errorMsg, setErrorMsg] = useState('');
-  const [faceCount, setFaceCount] = useState(0);
-  const [modelsLoaded, setModelsLoaded] = useState(false);
-  const [detecting, setDetecting] = useState(false);
-  const [availableCameras, setAvailableCameras] = useState<CameraDevice[]>([]);
+  const [status, setStatus]           = useState<Status>('idle');
+  const [errorMsg, setErrorMsg]       = useState('');
+  const [faceCount, setFaceCount]     = useState(0);
+  const [modelsReady, setModelsReady] = useState(false);
+  const [cameras, setCameras]         = useState<{ id: string; label: string }[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [containerW, setContainerW]   = useState(320);
 
-  // Settings from store
   const { getSettings, updateSettings } = useWidgetSettingsStore();
-  const settings = getSettings<CameraSettings>(instanceId, DEFAULT_SETTINGS);
+  const s = getSettings<CameraSettings>(instanceId, DEFAULT);
 
-  // Enumerate cameras
-  const enumerateCameras = useCallback(async () => {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cameras = devices
-        .filter((d) => d.kind === 'videoinput')
-        .map((d, i) => ({
-          deviceId: d.deviceId,
-          label: d.label || `Kamera ${i + 1}`,
-        }));
-      setAvailableCameras(cameras);
-      return cameras;
-    } catch (err) {
-      console.error('Failed to enumerate devices:', err);
-      return [];
-    }
+  // ─── Container-Breite beobachten ───────────────────────────────────────────
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const obs = new ResizeObserver(([e]) => setContainerW(e.contentRect.width));
+    obs.observe(containerRef.current);
+    return () => obs.disconnect();
   }, []);
 
-  // Load face-api.js models
+  // ─── Settings-Dialog öffnen ────────────────────────────────────────────────
   useEffect(() => {
-    const loadModels = async () => {
-      try {
-        await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
-        setModelsLoaded(true);
-      } catch (err) {
-        console.error('Failed to load face detection models:', err);
-        setErrorMsg('Face-Detection-Modelle konnten nicht geladen werden. Bitte stelle sicher, dass die Modelle unter /public/models/ vorhanden sind.');
-      }
-    };
-    loadModels();
-  }, []);
-
-  // Enumerate cameras on mount
-  useEffect(() => {
-    enumerateCameras();
-  }, [enumerateCameras]);
-
-  // Listen for settings open event from WidgetWrapper
-  useEffect(() => {
-    const handler = () => setSettingsOpen(true);
-    eventBus.on(`widget:openSettings:${instanceId}`, handler);
-    return () => {
-      eventBus.off(`widget:openSettings:${instanceId}`, handler);
-    };
+    const h = () => setSettingsOpen(true);
+    eventBus.on(`widget:openSettings:${instanceId}`, h);
+    return () => eventBus.off(`widget:openSettings:${instanceId}`, h);
   }, [instanceId]);
 
-  // Auto-start if enabled
+  // ─── Modelle laden ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (settings.autoStart && modelsLoaded && cameraStatus === 'idle') {
-      startCamera();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelsLoaded, settings.autoStart]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopCamera();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    faceapi.nets.tinyFaceDetector.loadFromUri('/models')
+      .then(() => setModelsReady(true))
+      .catch(() => setErrorMsg('Face-Detection-Modelle konnten nicht geladen werden (/public/models/).'));
   }, []);
 
+  // ─── Kamera stoppen ────────────────────────────────────────────────────────
   const stopCamera = useCallback(() => {
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = 0;
-    }
+    detectingRef.current = false;
+    if (loopRef.current) { clearTimeout(loopRef.current); loopRef.current = null; }
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
     }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     }
-    setDetecting(false);
     setFaceCount(0);
-    setCameraStatus('idle');
+    setStatus('idle');
   }, []);
 
-  const startCamera = useCallback(async () => {
-    // Check if models are loaded (only needed if face detection is enabled)
-    if (settings.faceDetectionEnabled && !modelsLoaded) {
-      setErrorMsg('Modelle werden noch geladen...');
+  // ─── Detektions-Loop (~5 fps) ─────────────────────────────────────────────
+  const runDetection = useCallback(async () => {
+    const video  = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!detectingRef.current || !video || !canvas) return;
+    if (video.readyState < 2 || video.videoWidth === 0) {
+      loopRef.current = setTimeout(runDetection, 200);
       return;
     }
 
-    setCameraStatus('loading');
-    setErrorMsg('');
+    // Canvas-Pixel-Dimensionen = intrinsische Video-Auflösung
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (canvas.width !== vw || canvas.height !== vh) {
+      canvas.width  = vw;
+      canvas.height = vh;
+    }
 
     try {
-      // Build constraints
-      const videoConstraints: MediaTrackConstraints = {
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-      };
+      const detections = await faceapi.detectAllFaces(
+        video,
+        new faceapi.TinyFaceDetectorOptions({
+          inputSize:       s.inputSize as 128 | 160 | 224 | 320 | 416 | 608,
+          scoreThreshold:  s.scoreThreshold,
+        })
+      );
+      setFaceCount(detections.length);
 
-      // Use selected camera if available
-      if (settings.selectedDeviceId) {
-        videoConstraints.deviceId = { exact: settings.selectedDeviceId };
-      } else {
-        videoConstraints.facingMode = 'user';
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, vw, vh);
+        detections.forEach(d => {
+          const { x, y, width, height } = d.box;
+          // Box spiegeln wenn Mirror aktiv (damit Box zum gespiegelten Video passt)
+          const drawX = s.mirror ? vw - x - width : x;
+          ctx.strokeStyle = '#ff6b35';
+          ctx.lineWidth   = Math.max(2, vw / 200);
+          ctx.strokeRect(drawX, y, width, height);
+
+          // Score-Label
+          ctx.fillStyle = '#ff6b35';
+          ctx.font      = `bold ${Math.max(12, vw / 40)}px Lato, sans-serif`;
+          const label   = `${Math.round(d.score * 100)}%`;
+          const lx      = drawX;
+          const ly      = y > 20 ? y - 6 : y + height + 16;
+          ctx.fillText(label, lx, ly);
+        });
       }
+    } catch { /* ignorieren */ }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: videoConstraints,
-      });
+    if (detectingRef.current) loopRef.current = setTimeout(runDetection, 200);
+  }, [s.inputSize, s.scoreThreshold, s.mirror]);
 
+  // ─── Detection starten/stoppen je nach Settings ───────────────────────────
+  useEffect(() => {
+    if (status !== 'active') return;
+    if (s.faceDetection && modelsReady) {
+      detectingRef.current = true;
+      runDetection();
+    } else {
+      detectingRef.current = false;
+      if (loopRef.current) clearTimeout(loopRef.current);
+      setFaceCount(0);
+      const canvas = canvasRef.current;
+      if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    return () => {
+      if (loopRef.current) clearTimeout(loopRef.current);
+    };
+  }, [status, s.faceDetection, modelsReady, runDetection]);
+
+  // ─── Kamera starten ────────────────────────────────────────────────────────
+  const startCamera = useCallback(async () => {
+    if (status === 'active') return;
+    setStatus('loading');
+    setErrorMsg('');
+
+    const constraints: MediaStreamConstraints = {
+      video: {
+        width:  { ideal: 1280 },
+        height: { ideal: 720 },
+        ...(s.deviceId ? { deviceId: { exact: s.deviceId } } : { facingMode: 'user' }),
+      },
+    };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setCameraStatus('active');
+      const video = videoRef.current!;
+      video.srcObject = stream;
+      await video.play();
 
-        if (settings.faceDetectionEnabled) {
-          setDetecting(true);
-        }
-      }
+      setStatus('active');
 
-      // Re-enumerate cameras after getting permission (labels become available)
-      const cameras = await enumerateCameras();
+      // Kameraliste aktualisieren (Labels werden erst nach Permission sichtbar)
+      const updated = await listCameras();
+      setCameras(updated);
 
-      // Auto-select current camera if none selected
-      if (!settings.selectedDeviceId && cameras.length > 0) {
-        const currentTrack = stream.getVideoTracks()[0];
-        const currentSettings = currentTrack.getSettings();
-        if (currentSettings.deviceId) {
-          updateSettings(instanceId, { selectedDeviceId: currentSettings.deviceId });
-        }
+      // Aktive Kamera in Settings merken
+      if (!s.deviceId) {
+        const tid = stream.getVideoTracks()[0]?.getSettings().deviceId;
+        if (tid) updateSettings(instanceId, { deviceId: tid });
       }
     } catch (err: unknown) {
-      setCameraStatus('error');
-      if (err instanceof DOMException) {
-        switch (err.name) {
-          case 'NotAllowedError':
-            setCameraStatus('permission_needed');
-            setErrorMsg(
-              'Kamera-Zugriff verweigert. Bitte erteile die Berechtigung in den Browser-/System-Einstellungen.'
-            );
-            break;
-          case 'NotFoundError':
-            setErrorMsg(
-              'Keine Kamera gefunden. Bitte schliesse eine Kamera an oder wähle eine andere in den Einstellungen.'
-            );
-            break;
-          case 'NotReadableError':
-          case 'AbortError':
-            setErrorMsg(
-              'Kamera wird bereits von einer anderen Anwendung verwendet. Bitte schliesse andere Programme, die die Kamera nutzen.'
-            );
-            break;
-          case 'OverconstrainedError':
-            setErrorMsg(
-              'Die gewählte Kamera ist nicht verfügbar. Bitte wähle eine andere Kamera in den Einstellungen.'
-            );
-            break;
-          default:
-            setErrorMsg(`Kamera-Fehler: ${err.message}`);
-        }
-      } else {
-        setErrorMsg('Unbekannter Fehler beim Kamera-Zugriff.');
-      }
+      const e = err as DOMException;
+      setStatus(e?.name === 'NotAllowedError' ? 'no_permission' : 'error');
+      setErrorMsg(
+        e?.name === 'NotAllowedError'  ? 'Kamera-Zugriff verweigert. Bitte in den System-Einstellungen erlauben.' :
+        e?.name === 'NotFoundError'    ? 'Keine Kamera gefunden.' :
+        e?.name === 'NotReadableError' ? 'Kamera wird von einer anderen App verwendet.' :
+        e?.name === 'OverconstrainedError' ? 'Gewählte Kamera nicht verfügbar. Andere Kamera wählen.' :
+        `Kamera-Fehler: ${e?.message ?? 'Unbekannt'}`
+      );
     }
-  }, [modelsLoaded, settings.selectedDeviceId, settings.faceDetectionEnabled, enumerateCameras, updateSettings, instanceId]);
+  }, [status, s.deviceId, instanceId, updateSettings]);
 
-  // Face detection loop
+  // ─── Auto-Start ────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!detecting || !videoRef.current || !canvasRef.current) return;
+    if (s.autoStart && status === 'idle') startCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.autoStart]);
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-
-    const detect = async () => {
-      if (!detecting || video.paused || video.ended) return;
-
-      const displaySize = { width: video.videoWidth, height: video.videoHeight };
-      if (displaySize.width === 0 || displaySize.height === 0) {
-        animFrameRef.current = requestAnimationFrame(detect);
-        return;
-      }
-
-      faceapi.matchDimensions(canvas, displaySize);
-
-      try {
-        const detections = await faceapi.detectAllFaces(
-          video,
-          new faceapi.TinyFaceDetectorOptions({
-            inputSize: settings.inputSize,
-            scoreThreshold: settings.scoreThreshold,
-          })
-        );
-
-        setFaceCount(detections.length);
-
-        // Draw bounding boxes
-        const resized = faceapi.resizeResults(detections, displaySize);
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          resized.forEach((det) => {
-            const { x, y, width, height } = det.box;
-            ctx.strokeStyle = '#ff6b35';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x, y, width, height);
-            ctx.fillStyle = '#ff6b35';
-            ctx.font = '12px Lato, sans-serif';
-            ctx.fillText(
-              `${Math.round(det.score * 100)}%`,
-              x,
-              y > 14 ? y - 4 : y + height + 14
-            );
-          });
-        }
-      } catch (err) {
-        console.error('Detection error:', err);
-      }
-
-      animFrameRef.current = requestAnimationFrame(detect);
-    };
-
-    animFrameRef.current = requestAnimationFrame(detect);
-
-    return () => {
-      if (animFrameRef.current) {
-        cancelAnimationFrame(animFrameRef.current);
-      }
-    };
-  }, [detecting, settings.scoreThreshold, settings.inputSize]);
-
-  // Toggle face detection on/off while camera is active
+  // ─── Kamera-Enumeration beim Mount ────────────────────────────────────────
   useEffect(() => {
-    if (cameraStatus === 'active') {
-      if (settings.faceDetectionEnabled && modelsLoaded) {
-        setDetecting(true);
-      } else {
-        setDetecting(false);
-        setFaceCount(0);
-        // Clear canvas
-        if (canvasRef.current) {
-          const ctx = canvasRef.current.getContext('2d');
-          if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        }
-      }
-    }
-  }, [settings.faceDetectionEnabled, cameraStatus, modelsLoaded]);
+    listCameras().then(setCameras);
+    return () => stopCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const faceDetected = faceCount > 0;
+  // ─── UI Helpers ───────────────────────────────────────────────────────────
+  const mirrorStyle = s.mirror ? 'scaleX(-1)' : 'none';
+  const isActive    = status === 'active';
+  const dotColor    =
+    status === 'active'       ? (faceCount > 0 ? '#22c55e' : '#f59e0b') :
+    status === 'error' || status === 'no_permission' ? '#ef4444' : 'var(--text-tertiary)';
 
-  // Request camera permission with better UX
-  const requestPermission = useCallback(async () => {
-    setCameraStatus('loading');
-    setErrorMsg('');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      stream.getTracks().forEach(t => t.stop());
-      await enumerateCameras();
-      setCameraStatus('idle');
-      // Auto-start after permission granted
-      setTimeout(() => startCamera(), 300);
-    } catch {
-      setCameraStatus('permission_needed');
-      setErrorMsg('Kamera-Zugriff wurde verweigert. Bitte erlaube den Zugriff in den Browser-Einstellungen.');
-    }
-  }, [enumerateCameras, startCamera]);
+  const statusText =
+    status === 'idle'         ? 'Kamera aus' :
+    status === 'loading'      ? 'Wird gestartet…' :
+    status === 'no_permission'? 'Zugriff verweigert' :
+    status === 'error'        ? 'Fehler' :
+    s.faceDetection           ? (faceCount > 0 ? `${faceCount} Gesicht${faceCount > 1 ? 'er' : ''} erkannt ✓` : 'Kein Gesicht') :
+                                'Kamera aktiv';
 
-  // Settings panel content
-  const renderSettingsPanel = () => (
-    <div>
-      {/* Camera Status */}
-      <div className="settings-section">
-        <div className="settings-section-title">Kamera-Status</div>
-        <div className="settings-field">
-          <div className="settings-status">
-            <div
-              className="settings-status-dot"
-              style={{
-                backgroundColor:
-                  cameraStatus === 'active'
-                    ? '#4ade80'
-                    : cameraStatus === 'error' || cameraStatus === 'permission_needed'
-                    ? '#ef4444'
-                    : 'var(--text-tertiary)',
-              }}
-            />
-            <span>
-              {cameraStatus === 'idle' && 'Kamera aus'}
-              {cameraStatus === 'loading' && 'Kamera wird gestartet...'}
-              {cameraStatus === 'error' && 'Fehler'}
-              {cameraStatus === 'permission_needed' && 'Berechtigung erforderlich'}
-              {cameraStatus === 'active' && 'Kamera aktiv'}
-            </span>
-          </div>
-        </div>
+  // ─── Render ───────────────────────────────────────────────────────────────
+  return (
+    <>
+      <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
 
-        {/* Permission needed - Step by step guide */}
-        {cameraStatus === 'permission_needed' && (
-          <div className="settings-field">
-            <div className="settings-info-box warning" style={{ flexDirection: 'column' }}>
-              <strong>🔐 Kamera-Zugriff erforderlich</strong>
-              <p style={{ margin: '8px 0 4px' }}>Um die Kamera zu nutzen, folge diesen Schritten:</p>
-              <ol className="settings-steps">
-                <li>Klicke auf „Kamera-Zugriff anfordern" unten</li>
-                <li>Der Browser zeigt einen Berechtigungs-Dialog</li>
-                <li>Klicke auf „Erlauben" / „Allow"</li>
-                <li>Die Kamera startet automatisch</li>
-              </ol>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <button className="settings-btn settings-btn-primary" onClick={requestPermission}>
-                🔐 Kamera-Zugriff anfordern
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Error with helpful tips */}
-        {cameraStatus === 'error' && (
-          <div className="settings-field">
-            <div className="settings-info-box error" style={{ flexDirection: 'column' }}>
-              <strong>⚠️ Kamera-Fehler</strong>
-              <p style={{ margin: '4px 0' }}>{errorMsg}</p>
-              <p style={{ margin: '4px 0', fontSize: 'var(--font-size-xs)', opacity: 0.8 }}>
-                <strong>Tipps:</strong> Prüfe ob eine andere App die Kamera nutzt. 
-                Versuche eine andere Kamera auszuwählen oder starte den Browser neu.
-              </p>
-            </div>
-            <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-              <button className="settings-btn settings-btn-primary" onClick={startCamera}>
-                🔄 Erneut versuchen
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Start/Stop Button */}
-        <div className="settings-field">
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {cameraStatus === 'active' ? (
-              <button className="settings-btn settings-btn-danger" onClick={stopCamera}>
-                ⏹ Kamera stoppen
-              </button>
-            ) : cameraStatus !== 'permission_needed' && cameraStatus !== 'error' ? (
-              <button className="settings-btn settings-btn-primary" onClick={startCamera}>
-                ▶ Kamera starten
-              </button>
-            ) : null}
-            <button
-              className="settings-btn"
-              onClick={async () => { await enumerateCameras(); }}
-            >
-              🔄 Kameras aktualisieren
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Camera Selection */}
-      <div className="settings-section">
-        <div className="settings-section-title">Kamera-Auswahl</div>
-        <div className="settings-field">
-          <label className="settings-label">Kamera</label>
-          <p className="settings-description">
-            Wähle die Kamera, die verwendet werden soll.
-            {availableCameras.length === 0 && ' Starte zuerst die Kamera, um verfügbare Geräte zu sehen.'}
-          </p>
-          <select
-            className="settings-select"
-            value={settings.selectedDeviceId}
-            onChange={(e) => {
-              updateSettings(instanceId, { selectedDeviceId: e.target.value });
-              if (cameraStatus === 'active') {
-                stopCamera();
-                setTimeout(() => startCamera(), 300);
-              }
+        {/* Status-Bar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)' }}>{statusText}</span>
+          <button
+            onClick={isActive ? stopCamera : startCamera}
+            style={{
+              background: isActive ? 'rgba(239,68,68,0.12)' : 'var(--accent-color)',
+              border: isActive ? '1px solid rgba(239,68,68,0.4)' : 'none',
+              color: isActive ? '#ef4444' : '#fff',
+              borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 600,
             }}
           >
-            <option value="">Standard-Kamera</option>
-            {availableCameras.map((cam) => (
-              <option key={cam.deviceId} value={cam.deviceId}>
-                {cam.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Face Detection */}
-      <div className="settings-section">
-        <div className="settings-section-title">Gesichtserkennung</div>
-        
-        <div className="settings-field">
-          <div className="settings-toggle">
-            <div>
-              <div className="settings-toggle-label">Gesichtserkennung aktivieren</div>
-              <div className="settings-toggle-sublabel">
-                Erkennt Gesichter im Kamerabild und zeigt Markierungen
-              </div>
-            </div>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={settings.faceDetectionEnabled}
-                onChange={(e) =>
-                  updateSettings(instanceId, { faceDetectionEnabled: e.target.checked })
-                }
-              />
-              <span className="toggle-switch-slider" />
-            </label>
-          </div>
+            {isActive ? '⏹ Stop' : '▶ Start'}
+          </button>
         </div>
 
-        {settings.faceDetectionEnabled && (
-          <>
-            <div className="settings-field">
-              <label className="settings-label">
-                Erkennungs-Schwellenwert
-                <span className="settings-range-value">
-                  {Math.round(settings.scoreThreshold * 100)}%
-                </span>
-              </label>
-              <p className="settings-description">
-                Höhere Werte = weniger Fehlerkennungen, niedrigere Werte = mehr Erkennung
-              </p>
-              <input
-                type="range"
-                className="settings-range"
-                min="0.1"
-                max="0.9"
-                step="0.05"
-                value={settings.scoreThreshold}
-                onChange={(e) =>
-                  updateSettings(instanceId, { scoreThreshold: parseFloat(e.target.value) })
-                }
-              />
-            </div>
-
-            <div className="settings-field">
-              <label className="settings-label">Eingabegrösse (Input Size)</label>
-              <p className="settings-description">
-                Höhere Werte = genauer aber langsamer
-              </p>
-              <select
-                className="settings-select"
-                value={settings.inputSize}
-                onChange={(e) =>
-                  updateSettings(instanceId, { inputSize: parseInt(e.target.value) })
-                }
-              >
-                <option value="128">128 (Schnell)</option>
-                <option value="160">160</option>
-                <option value="224">224 (Standard)</option>
-                <option value="320">320</option>
-                <option value="416">416 (Genau)</option>
-              </select>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Auto-Start */}
-      <div className="settings-section">
-        <div className="settings-section-title">Verhalten</div>
-        <div className="settings-field">
-          <div className="settings-toggle">
-            <div>
-              <div className="settings-toggle-label">Auto-Start</div>
-              <div className="settings-toggle-sublabel">
-                Kamera automatisch starten, wenn das Widget geladen wird
-              </div>
-            </div>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={settings.autoStart}
-                onChange={(e) =>
-                  updateSettings(instanceId, { autoStart: e.target.checked })
-                }
-              />
-              <span className="toggle-switch-slider" />
-            </label>
-          </div>
-        </div>
-      </div>
-
-      {/* Privacy Info */}
-      <div className="settings-info-box success">
-        🔒 Alle Daten werden lokal verarbeitet. Es werden keine Kamera-Daten an externe Server übertragen.
-      </div>
-    </div>
-  );
-
-  return (
-    <div style={styles.container}>
-      {/* Status Bar */}
-      <div style={styles.statusBar}>
-        <div
-          style={{
-            ...styles.statusDot,
-            backgroundColor:
-              cameraStatus === 'active'
-                ? faceDetected
-                  ? '#4ade80'
-                  : '#facc15'
-                : cameraStatus === 'error' || cameraStatus === 'permission_needed'
-                ? '#ef4444'
-                : 'var(--text-secondary)',
-          }}
-        />
-        <span style={styles.statusText}>
-          {cameraStatus === 'idle' && 'Kamera aus'}
-          {cameraStatus === 'loading' && 'Kamera wird gestartet...'}
-          {cameraStatus === 'error' && 'Fehler'}
-          {cameraStatus === 'permission_needed' && 'Berechtigung erforderlich'}
-          {cameraStatus === 'active' &&
-            (settings.faceDetectionEnabled
-              ? faceDetected
-                ? `Gesicht erkannt ✅ (${faceCount})`
-                : 'Kein Gesicht ❌'
-              : 'Kamera aktiv (ohne Erkennung)')}
-        </span>
-        <button
-          onClick={cameraStatus === 'active' ? stopCamera : startCamera}
-          style={styles.toggleBtn}
-          title={cameraStatus === 'active' ? 'Kamera stoppen' : 'Kamera starten'}
-        >
-          {cameraStatus === 'active' ? '⏹' : '▶'}
-        </button>
-      </div>
-
-      {/* Video Container */}
-      <div style={styles.videoContainer}>
-        {(cameraStatus === 'idle' || cameraStatus === 'permission_needed') && (
-          <div style={styles.placeholder}>
-            <span style={{ fontSize: '2rem' }}>
-              {cameraStatus === 'permission_needed' ? '🔐' : '📷'}
-            </span>
-            <span
-              style={{
-                fontSize: 'var(--font-sm)',
-                color:
-                  cameraStatus === 'permission_needed'
-                    ? '#facc15'
-                    : 'var(--text-secondary)',
-                marginTop: '8px',
-                textAlign: 'center',
-                padding: '0 8px',
-              }}
-            >
-              {cameraStatus === 'permission_needed'
-                ? 'Kamera-Zugriff erforderlich'
-                : 'Kamera starten um Gesichtserkennung zu aktivieren'}
-            </span>
-            {cameraStatus === 'permission_needed' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, marginTop: 12 }}>
-                <button onClick={requestPermission} style={{ ...styles.toggleBtn, padding: '8px 16px', background: 'var(--accent-color)', color: 'white', borderColor: 'var(--accent-color)' }}>
-                  🔐 Kamera-Zugriff erlauben
+        {/* Video-Container */}
+        <div style={{ flex: 1, position: 'relative', borderRadius: 8, overflow: 'hidden', background: '#000', minHeight: 100 }}>
+          {/* Placeholder */}
+          {!isActive && status !== 'loading' && (
+            <div style={{
+              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16,
+            }}>
+              <span style={{ fontSize: 36 }}>
+                {status === 'no_permission' ? '🔐' : status === 'error' ? '⚠️' : '📷'}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center' }}>
+                {status === 'no_permission' || status === 'error' ? errorMsg : 'Kamera starten'}
+              </span>
+              {(status === 'error' || status === 'no_permission') && (
+                <button onClick={startCamera} style={{
+                  marginTop: 4, background: 'var(--accent-color)', color: '#fff',
+                  border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 11, cursor: 'pointer',
+                }}>
+                  🔄 Erneut versuchen
                 </button>
-                <span style={{ fontSize: 'var(--font-size-xs, 11px)', color: 'var(--text-tertiary)', textAlign: 'center' }}>
-                  Der Browser wird dich fragen – klicke auf „Erlauben"
-                </span>
-              </div>
-            ) : (
-              <button onClick={startCamera} style={{ ...styles.toggleBtn, marginTop: '12px', padding: '8px 16px' }}>
-                ▶ Kamera starten
-              </button>
-            )}
-          </div>
-        )}
-        {cameraStatus === 'error' && (
-          <div style={styles.placeholder}>
-            <span style={{ fontSize: '2rem' }}>⚠️</span>
-            <span
-              style={{
-                fontSize: 'var(--font-sm)',
-                color: '#ef4444',
-                marginTop: '8px',
-                textAlign: 'center',
-                padding: '0 8px',
-              }}
-            >
-              {errorMsg}
-            </span>
-            <button onClick={startCamera} style={{ ...styles.toggleBtn, marginTop: '12px', padding: '8px 16px' }}>
-              🔄 Erneut versuchen
-            </button>
-          </div>
-        )}
-        {cameraStatus === 'loading' && (
-          <div style={styles.placeholder}>
-            <span style={{ fontSize: '2rem' }}>⏳</span>
-            <span
-              style={{
-                fontSize: 'var(--font-sm)',
-                color: 'var(--text-secondary)',
-                marginTop: '8px',
-              }}
-            >
-              Lade...
-            </span>
-          </div>
-        )}
-        <video
-          ref={videoRef}
-          style={{
-            ...styles.video,
-            display: cameraStatus === 'active' ? 'block' : 'none',
-          }}
-          muted
-          playsInline
-        />
-        <canvas
-          ref={canvasRef}
-          style={{
-            ...styles.canvas,
-            display: cameraStatus === 'active' && settings.faceDetectionEnabled ? 'block' : 'none',
-          }}
-        />
-      </div>
+              )}
+            </div>
+          )}
 
-      {/* Info Footer */}
-      {cameraStatus === 'active' && (
-        <div style={styles.footer}>
-          <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-secondary)' }}>
-            🔒 Lokale Verarbeitung – keine Daten werden übertragen
-          </span>
+          {/* Loading */}
+          {status === 'loading' && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ fontSize: 28, color: 'var(--text-tertiary)' }}>⏳</span>
+            </div>
+          )}
+
+          {/* Video */}
+          <video
+            ref={videoRef}
+            muted playsInline
+            style={{
+              display: isActive ? 'block' : 'none',
+              width: '100%', height: '100%', objectFit: 'cover',
+              transform: mirrorStyle,
+            }}
+          />
+
+          {/* Canvas Overlay – NICHT CSS-gespiegelt, Box-Koordinaten werden im Code gespiegelt */}
+          <canvas
+            ref={canvasRef}
+            style={{
+              display: isActive && s.faceDetection ? 'block' : 'none',
+              position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+              pointerEvents: 'none',
+            }}
+          />
+
+          {/* Gesichts-Badge */}
+          {isActive && s.faceDetection && faceCount > 0 && (
+            <div style={{
+              position: 'absolute', top: 8, right: 8,
+              background: 'rgba(34,197,94,0.85)', borderRadius: 12,
+              padding: '2px 10px', fontSize: 11, color: '#fff', fontWeight: 700,
+            }}>
+              {faceCount} Gesicht{faceCount > 1 ? 'er' : ''}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Footer */}
+        {isActive && (
+          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textAlign: 'center' }}>
+            🔒 Lokale Verarbeitung · {Math.round(containerW)}px
+            {s.faceDetection && ` · TinyFaceDetector ${s.inputSize}px`}
+          </div>
+        )}
+      </div>
 
       {/* Settings Dialog */}
-      <WidgetSettingsDialog
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        title="Kamera – Einstellungen"
-      >
-        {renderSettingsPanel()}
+      <WidgetSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Einstellungen: Kamera">
+        {/* Status */}
+        <div className="settings-section">
+          <div className="settings-section-title">Status</div>
+          <div className="settings-field" style={{ display: 'flex', gap: 8 }}>
+            {isActive ? (
+              <button className="settings-btn settings-btn-danger" onClick={stopCamera}>⏹ Kamera stoppen</button>
+            ) : (
+              <button className="settings-btn settings-btn-primary" onClick={startCamera}>▶ Kamera starten</button>
+            )}
+            <button className="settings-btn" onClick={() => listCameras().then(setCameras)}>🔄 Aktualisieren</button>
+          </div>
+        </div>
+
+        {/* Kamera-Auswahl */}
+        <div className="settings-section">
+          <div className="settings-section-title">Kamera</div>
+          <div className="settings-field">
+            <label className="settings-label">Gerät</label>
+            <select
+              className="settings-select"
+              value={s.deviceId}
+              onChange={e => {
+                updateSettings(instanceId, { deviceId: e.target.value });
+                if (isActive) { stopCamera(); setTimeout(startCamera, 300); }
+              }}
+            >
+              <option value="">Standard</option>
+              {cameras.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            {cameras.length === 0 && (
+              <p className="settings-description">Starte die Kamera einmal, damit Geräte-Labels erscheinen.</p>
+            )}
+          </div>
+          <div className="settings-field">
+            <div className="settings-toggle">
+              <div>
+                <div className="settings-toggle-label">Spiegeln</div>
+                <div className="settings-toggle-sublabel">Bild horizontal spiegeln (für Selfie-Kameras)</div>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={s.mirror}
+                  onChange={e => updateSettings(instanceId, { mirror: e.target.checked })} />
+                <span className="toggle-switch-slider" />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Gesichtserkennung */}
+        <div className="settings-section">
+          <div className="settings-section-title">Gesichtserkennung</div>
+          <div className="settings-field">
+            <div className="settings-toggle">
+              <div>
+                <div className="settings-toggle-label">Gesichtserkennung</div>
+                <div className="settings-toggle-sublabel">
+                  {modelsReady ? 'Modelle geladen ✓' : 'Modelle werden geladen…'}
+                </div>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={s.faceDetection}
+                  onChange={e => updateSettings(instanceId, { faceDetection: e.target.checked })} />
+                <span className="toggle-switch-slider" />
+              </label>
+            </div>
+          </div>
+
+          {s.faceDetection && (
+            <>
+              <div className="settings-field">
+                <label className="settings-label">
+                  Erkennungsschwelle
+                  <span className="settings-range-value">{Math.round(s.scoreThreshold * 100)}%</span>
+                </label>
+                <p className="settings-description">Höher = weniger Fehlerkennungen</p>
+                <input type="range" className="settings-range"
+                  min="0.1" max="0.9" step="0.05" value={s.scoreThreshold}
+                  onChange={e => updateSettings(instanceId, { scoreThreshold: parseFloat(e.target.value) })} />
+              </div>
+              <div className="settings-field">
+                <label className="settings-label">Modell-Auflösung</label>
+                <select className="settings-select" value={s.inputSize}
+                  onChange={e => updateSettings(instanceId, { inputSize: parseInt(e.target.value) })}>
+                  <option value="128">128px – Schnellst</option>
+                  <option value="160">160px – Schnell</option>
+                  <option value="224">224px – Standard</option>
+                  <option value="320">320px – Genau</option>
+                  <option value="416">416px – Sehr genau</option>
+                </select>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Verhalten */}
+        <div className="settings-section">
+          <div className="settings-section-title">Verhalten</div>
+          <div className="settings-field">
+            <div className="settings-toggle">
+              <div>
+                <div className="settings-toggle-label">Auto-Start</div>
+                <div className="settings-toggle-sublabel">Kamera beim App-Start automatisch aktivieren</div>
+              </div>
+              <label className="toggle-switch">
+                <input type="checkbox" checked={s.autoStart}
+                  onChange={e => updateSettings(instanceId, { autoStart: e.target.checked })} />
+                <span className="toggle-switch-slider" />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div className="settings-info-box">
+          🔒 Alle Daten werden lokal verarbeitet – keine Übertragung an externe Server.
+        </div>
       </WidgetSettingsDialog>
-    </div>
+    </>
   );
-};
-
-// Wrap CameraComponent to expose settings opener
-const CameraWidgetWithSettings: React.FC<WidgetProps> = (props) => {
-  return <CameraComponent {...props} />;
-};
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-    gap: '8px',
-    padding: '8px',
-  },
-  statusBar: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '4px 0',
-  },
-  statusDot: {
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    flexShrink: 0,
-  },
-  statusText: {
-    fontSize: 'var(--font-sm)',
-    color: 'var(--text-primary)',
-    flex: 1,
-  },
-  toggleBtn: {
-    background: 'var(--card-bg)',
-    border: '1px solid var(--border-color)',
-    borderRadius: 'var(--radius-sm)',
-    color: 'var(--text-primary)',
-    cursor: 'pointer',
-    padding: '4px 10px',
-    fontSize: 'var(--font-sm)',
-    flexShrink: 0,
-  },
-  videoContainer: {
-    position: 'relative',
-    flex: 1,
-    borderRadius: 'var(--radius-md)',
-    overflow: 'hidden',
-    backgroundColor: '#000',
-    minHeight: '120px',
-  },
-  video: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    transform: 'scaleX(-1)',
-  },
-  canvas: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    transform: 'scaleX(-1)',
-    pointerEvents: 'none',
-  },
-  placeholder: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100%',
-    padding: '16px',
-    color: 'var(--text-secondary)',
-  },
-  footer: {
-    textAlign: 'center',
-    padding: '2px 0',
-  },
 };
 
 export const cameraWidgetDef: WidgetDefinition = {
   manifest: {
     id: 'camera',
     name: 'Gesichtserkennung',
-    description: 'Live-Kamera mit Gesichtserkennung und Einstellungen',
-    version: '2.0.0',
+    description: 'Live-Kamerabild mit lokaler Gesichtserkennung',
+    version: '3.0.0',
     author: 'SlateDesk',
     minWidth: 2,
     minHeight: 3,
     defaultWidth: 3,
     defaultHeight: 4,
     permissions: ['camera'],
-    refreshInterval: 0,
     hasSettings: true,
   },
-  component: CameraWidgetWithSettings,
+  component: CameraComponent,
 };
