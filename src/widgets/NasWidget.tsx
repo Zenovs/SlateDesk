@@ -335,7 +335,7 @@ const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
             {running ? 'Messe…' : `Nächster Test: ${formatCountdown(countdown)}`}
           </span>
           {!running && settings.ip && (
-            <button onClick={runTest} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--accent-color)', padding: 0 }}>
+            <button onClick={() => runTest()} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--accent-color)', padding: 0 }}>
               Jetzt messen
             </button>
           )}
