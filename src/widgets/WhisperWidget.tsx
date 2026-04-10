@@ -37,6 +37,9 @@ interface WhisperSettings {
   ttsVoice: string;
   ttsRate: number;
   ttsPitch: number;
+  // Wake Word
+  wakeWordEnabled: boolean;
+  wakeWord: string;
 }
 
 const DEFAULT: WhisperSettings = {
@@ -53,6 +56,8 @@ const DEFAULT: WhisperSettings = {
   ttsVoice: '',
   ttsRate: 1.0,
   ttsPitch: 1.0,
+  wakeWordEnabled: false,
+  wakeWord: 'hey slate',
 };
 
 const OPENAI_MODELS = [
@@ -79,7 +84,10 @@ const STATUS_LABEL: Record<Status, string> = {
   error:        '',
 };
 
-const hasTTS = typeof window !== 'undefined' && 'speechSynthesis' in window;
+const hasTTS      = typeof window !== 'undefined' && 'speechSynthesis' in window;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const SpeechRec   = typeof window !== 'undefined' ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+const hasWakeWord = !!SpeechRec;
 
 // ─── API-Hilfsfunktionen ──────────────────────────────────────────────────────
 
@@ -165,6 +173,9 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   const recorderRef    = useRef<MediaRecorder | null>(null);
   const chunksRef      = useRef<Blob[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const wakeRecRef     = useRef<any>(null);
+  const [wakeListening, setWakeListening] = useState(false);
 
   const { getSettings, updateSettings } = useWidgetSettingsStore();
   const s = getSettings<WhisperSettings>(instanceId, DEFAULT);
@@ -193,6 +204,85 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // ─── Wake-Word-Erkennung ────────────────────────────────────────────────────
+  // Startet Browser-SpeechRecognition im Hintergrund; bei Treffer → startRecording().
+  // startRecording() ist zum Zeitpunkt dieses Hooks noch nicht definiert,
+  // daher nutzen wir eine Ref als stabilen Zeiger darauf.
+  const startRecordingRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    const shouldListen = s.wakeWordEnabled && hasWakeWord && canChat && status === 'idle' && !settingsOpen;
+
+    if (!shouldListen) {
+      // Listener stoppen
+      if (wakeRecRef.current) {
+        try { wakeRecRef.current.stop(); } catch { /* ignore */ }
+        wakeRecRef.current = null;
+      }
+      setWakeListening(false);
+      return;
+    }
+
+    // Nicht neu starten wenn bereits aktiv
+    if (wakeRecRef.current) return;
+
+    const langMap: Record<string, string> = { de: 'de-DE', en: 'en-US', fr: 'fr-FR', es: 'es-ES', it: 'it-IT' };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rec = new SpeechRec() as any;
+    rec.continuous      = true;
+    rec.interimResults  = true;
+    rec.lang            = langMap[s.language] ?? s.language;
+    rec.maxAlternatives = 1;
+
+    rec.onresult = (e: any) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const transcript = e.results[i][0].transcript.toLowerCase().trim();
+        const wake       = s.wakeWord.toLowerCase().trim();
+        if (wake && transcript.includes(wake)) {
+          try { rec.stop(); } catch { /* ignore */ }
+          wakeRecRef.current = null;
+          setWakeListening(false);
+          startRecordingRef.current();
+          break;
+        }
+      }
+    };
+
+    rec.onerror = (e: any) => {
+      // 'no-speech' ist normal, nicht als Fehler behandeln
+      if (e.error !== 'no-speech') {
+        wakeRecRef.current = null;
+        setWakeListening(false);
+      }
+    };
+
+    rec.onend = () => {
+      // Auto-Restart wenn Wake-Word noch aktiv sein soll
+      wakeRecRef.current = null;
+      // Kleines Delay damit kein busy-loop entsteht
+      setTimeout(() => setWakeListening(prev => !prev ? prev : prev), 100);
+    };
+
+    try {
+      rec.start();
+      wakeRecRef.current = rec;
+      setWakeListening(true);
+    } catch {
+      wakeRecRef.current = null;
+      setWakeListening(false);
+    }
+
+    return () => {
+      if (wakeRecRef.current) {
+        try { wakeRecRef.current.stop(); } catch { /* ignore */ }
+        wakeRecRef.current = null;
+      }
+      setWakeListening(false);
+    };
+  // Re-run wenn status, wakeWordEnabled, wakeWord oder settingsOpen sich ändern
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.wakeWordEnabled, s.wakeWord, s.language, canChat, status, settingsOpen]);
 
   // ─── TTS sprechen ──────────────────────────────────────────────────────────
   const speak = useCallback((text: string) => {
@@ -285,6 +375,9 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
     recorderRef.current = recorder;
     setStatus('recording');
   }, [status, canSTT, canChat, isLocal, messages, s, sendMessage]);
+
+  // Ref aktuell halten damit der Wake-Word-Hook immer die aktuelle Funktion hat
+  useEffect(() => { startRecordingRef.current = startRecording; }, [startRecording]);
 
   const stopRecording = useCallback(() => {
     if (recorderRef.current?.state === 'recording') {
@@ -432,6 +525,12 @@ const WhisperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
         )}
         {status !== 'idle' && status !== 'error' && (
           <div className="whisper-status">{STATUS_LABEL[status]}</div>
+        )}
+        {wakeListening && status === 'idle' && (
+          <div className="whisper-wake-indicator">
+            <span className="whisper-wake-dot" />
+            Wartet auf „{s.wakeWord}"…
+          </div>
         )}
 
         {/* Eingabe-Zeile */}
@@ -776,6 +875,48 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                 value={settings.ttsPitch} onChange={e => updateSettings({ ttsPitch: parseFloat(e.target.value) })} />
             </div>
           </>
+        )}
+      </div>
+
+      <hr className="settings-divider" />
+
+      {/* ── Wake Word ─────────────────────────────────────── */}
+      <div className="settings-section">
+        <div className="settings-section-title">Wake Word</div>
+        {!hasWakeWord && (
+          <div className="settings-description" style={{ marginBottom: 'var(--spacing-sm)' }}>
+            ⚠ SpeechRecognition wird auf diesem Gerät nicht unterstützt.
+          </div>
+        )}
+        <div className="settings-toggle">
+          <div>
+            <div className="settings-toggle-label">Wake Word aktivieren</div>
+            <div className="settings-toggle-sublabel">Hands-free – Aufnahme startet automatisch</div>
+          </div>
+          <label className="toggle-switch">
+            <input type="checkbox"
+              checked={settings.wakeWordEnabled && hasWakeWord}
+              disabled={!hasWakeWord}
+              onChange={e => updateSettings({ wakeWordEnabled: e.target.checked })} />
+            <span className="toggle-switch-slider" />
+          </label>
+        </div>
+
+        {settings.wakeWordEnabled && hasWakeWord && (
+          <div className="settings-field" style={{ marginTop: 'var(--spacing-md)' }}>
+            <label className="settings-label">Wake Word</label>
+            <input
+              type="text"
+              className="settings-input"
+              placeholder="hey slate"
+              value={settings.wakeWord}
+              onChange={e => updateSettings({ wakeWord: e.target.value.toLowerCase() })}
+            />
+            <div className="settings-description">
+              Das Widget hört permanent zu und startet die Aufnahme sobald dieses Wort erkannt wird.
+              Empfehlung: 2–3 Silben, z. B. „hey slate" oder „computer".
+            </div>
+          </div>
         )}
       </div>
     </WidgetSettingsDialog>
