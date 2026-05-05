@@ -12,7 +12,7 @@ import './styles/global.css';
 // Register all widgets on app start
 initializeWidgets();
 
-const CURSOR_HIDE_DELAY = 50_000; // 50 Sekunden
+const CURSOR_HIDE_DELAY = 5 * 60 * 1000; // 5 Minuten
 
 const App: React.FC = () => {
   const { theme, accentColor } = useThemeStore();
@@ -25,7 +25,7 @@ const App: React.FC = () => {
     document.documentElement.style.setProperty('--accent-color', accentColor);
   }, [accentColor]);
 
-  // Mauszeiger nach 50s Stillstand ausblenden
+  // Mauszeiger nach 5 Minuten Inaktivität ausblenden
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     const hideCursor = () => { document.documentElement.classList.add('cursor-hidden'); };

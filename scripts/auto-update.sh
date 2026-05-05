@@ -11,6 +11,11 @@
 #
 set -euo pipefail
 
+# ─── PATH sicherstellen (für Cron/systemd ohne Login-Shell) ─────────────────
+export PATH="/usr/local/bin:/usr/bin:/bin:/home/slatedesk/.cargo/bin"
+[ -s "/home/slatedesk/.nvm/nvm.sh" ] && source "/home/slatedesk/.nvm/nvm.sh"
+[ -f "/home/slatedesk/.cargo/env" ] && source "/home/slatedesk/.cargo/env"
+
 # ─── Konfiguration ───────────────────────────────────────────────────────────
 SLATEDESK_HOME="${SLATEDESK_HOME:-/home/slatedesk/SlateDesk}"
 LOG_FILE="${SLATEDESK_LOG:-/home/slatedesk/slatedesk-update.log}"
@@ -145,9 +150,20 @@ rollback() {
     fi
 }
 
+# ─── DBUS für systemctl --user in System-Service-Kontext ────────────────────
+setup_dbus() {
+    local uid
+    uid=$(id -u)
+    export XDG_RUNTIME_DIR="/run/user/${uid}"
+    if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+    fi
+}
+
 # ─── SlateDesk stoppen ───────────────────────────────────────────────────────
 stop_slatedesk() {
     log_info "Stoppe SlateDesk..."
+    setup_dbus
     if systemctl --user is-active slatedesk.service &>/dev/null; then
         systemctl --user stop slatedesk.service 2>/dev/null || true
     fi
@@ -164,6 +180,7 @@ stop_slatedesk() {
 # ─── SlateDesk starten ───────────────────────────────────────────────────────
 start_slatedesk() {
     log_info "Starte SlateDesk..."
+    setup_dbus
     if systemctl is-enabled slatedesk.service &>/dev/null; then
         systemctl start slatedesk.service 2>/dev/null || true
     elif systemctl --user is-enabled slatedesk.service &>/dev/null; then

@@ -125,7 +125,7 @@ Environment=SLATEDESK_HOME=$SLATEDESK_HOME
 Environment=SLATEDESK_LOG=/home/$SLATEDESK_USER/slatedesk-update.log
 StandardOutput=journal
 StandardError=journal
-TimeoutStartSec=600
+TimeoutStartSec=3600
 
 [Install]
 WantedBy=multi-user.target

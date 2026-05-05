@@ -84,6 +84,12 @@ html, body, #root {
   border: 2px dashed var(--accent-color) !important;
 }
 
+/* Cursor auto-hide after inactivity */
+body.cursor-hidden,
+body.cursor-hidden * {
+  cursor: none !important;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
