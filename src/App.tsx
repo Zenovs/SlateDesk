@@ -3,6 +3,7 @@
  * Phase 1 MVP: Dashboard with widget grid, theme system, and mock widgets.
  */
 import React, { useEffect } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TopBar } from './components/TopBar';
 import { Dashboard } from './components/Dashboard';
 import { useThemeStore } from './store/themeStore';
@@ -25,15 +26,22 @@ const App: React.FC = () => {
     document.documentElement.style.setProperty('--accent-color', accentColor);
   }, [accentColor]);
 
-  // Mauszeiger nach 5 Minuten Inaktivität ausblenden
+  // Mauszeiger nach 5 Minuten Inaktivität ausblenden (Tauri API + CSS-Fallback)
   useEffect(() => {
+    const win = getCurrentWindow();
     let timer: ReturnType<typeof setTimeout>;
-    const hideCursor = () => { document.documentElement.classList.add('cursor-hidden'); };
+
+    const hideCursor = () => {
+      document.documentElement.classList.add('cursor-hidden');
+      win.setCursorVisible(false).catch(() => {});
+    };
     const showCursor = () => {
       document.documentElement.classList.remove('cursor-hidden');
+      win.setCursorVisible(true).catch(() => {});
       clearTimeout(timer);
       timer = setTimeout(hideCursor, CURSOR_HIDE_DELAY);
     };
+
     document.addEventListener('mousemove', showCursor);
     document.addEventListener('mousedown', showCursor);
     timer = setTimeout(hideCursor, CURSOR_HIDE_DELAY);
@@ -42,6 +50,7 @@ const App: React.FC = () => {
       document.removeEventListener('mousedown', showCursor);
       clearTimeout(timer);
       document.documentElement.classList.remove('cursor-hidden');
+      win.setCursorVisible(true).catch(() => {});
     };
   }, []);
 
