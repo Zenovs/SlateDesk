@@ -99,7 +99,7 @@ crontab -u "$SLATEDESK_USER" -l 2>/dev/null | grep -v 'auto-update.sh' > /tmp/sl
 
 # Füge neuen Cronjob hinzu
 echo "# SlateDesk Auto-Update: Täglich um 01:00 Uhr" >> /tmp/slatedesk_cron_tmp
-echo "0 1 * * * /home/slatedesk/SlateDesk/scripts/auto-update.sh >> /home/slatedesk/slatedesk-update.log 2>&1" >> /tmp/slatedesk_cron_tmp
+echo "0 1 * * * /bin/bash -l -c '/home/slatedesk/SlateDesk/scripts/auto-update.sh' >> /home/slatedesk/slatedesk-update.log 2>&1" >> /tmp/slatedesk_cron_tmp
 
 crontab -u "$SLATEDESK_USER" /tmp/slatedesk_cron_tmp
 rm -f /tmp/slatedesk_cron_tmp
@@ -120,7 +120,7 @@ Wants=network-online.target
 Type=oneshot
 User=$SLATEDESK_USER
 Group=$SLATEDESK_USER
-ExecStart=$SCRIPTS_DIR/auto-update.sh
+ExecStart=/bin/bash -l -c '$SCRIPTS_DIR/auto-update.sh'
 Environment=SLATEDESK_HOME=$SLATEDESK_HOME
 Environment=SLATEDESK_LOG=/home/$SLATEDESK_USER/slatedesk-update.log
 StandardOutput=journal

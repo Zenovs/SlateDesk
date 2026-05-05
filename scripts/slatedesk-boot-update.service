@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=oneshot
 User=slatedesk
 Group=slatedesk
-ExecStart=/home/slatedesk/SlateDesk/scripts/auto-update.sh
+ExecStart=/bin/bash -l -c '/home/slatedesk/SlateDesk/scripts/auto-update.sh'
 Environment=SLATEDESK_HOME=/home/slatedesk/SlateDesk
 Environment=SLATEDESK_LOG=/home/slatedesk/slatedesk-update.log
 StandardOutput=journal
