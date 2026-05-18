@@ -161,8 +161,8 @@ const VolumioComponent: React.FC<WidgetProps> = ({ instanceId }) => {
         {/* Track Info */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
           <div style={{
-            fontSize: 'var(--font-size-3xl)',
-            fontWeight: 'var(--font-weight-bold)',
+            fontSize: 'calc(var(--font-size-xl) * 1.2)',
+            fontWeight: 'bold',
             color: 'var(--text-primary)',
             overflow: 'hidden',
             display: '-webkit-box',
