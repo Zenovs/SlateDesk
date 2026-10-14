@@ -1,0 +1,12 @@
+# Nächtlicher Neustart um 04:00 (ausserhalb des Update-Fensters).
+# Kein Persistent=: ein verpasster Neustart wird nicht nachgeholt.
+
+[Unit]
+Description=SlateDesk nächtlicher Neustart um 04:00
+Documentation=https://github.com/Zenovs/SlateDesk/blob/main/docs/BETRIEB.md
+
+[Timer]
+OnCalendar=*-*-* 04:00
+
+[Install]
+WantedBy=timers.target

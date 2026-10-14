@@ -1,0 +1,220 @@
+/* Shared widget building blocks (src/widgets/shared/WidgetParts.tsx). */
+
+.wp-tone-neutral {
+  --wp-tone: var(--text-tertiary);
+  --wp-tone-rgb: 128, 128, 140;
+}
+
+.wp-tone-ok {
+  --wp-tone: var(--success-color);
+  --wp-tone-rgb: var(--success-rgb);
+}
+
+.wp-tone-warn {
+  --wp-tone: var(--warning-color);
+  --wp-tone-rgb: var(--warning-rgb);
+}
+
+.wp-tone-error {
+  --wp-tone: var(--error-color);
+  --wp-tone-rgb: var(--error-rgb);
+}
+
+.wp-tone-accent {
+  --wp-tone: var(--accent-color);
+  --wp-tone-rgb: var(--accent-color-rgb);
+}
+
+/* ── Message (empty / loading / setup / error) ─────────────────────────── */
+
+.wp-message {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--spacing-sm);
+  text-align: center;
+  color: var(--text-secondary);
+  overflow: hidden;
+}
+
+.wp-message-icon {
+  width: clamp(20px, 12cqmin, 40px);
+  height: clamp(20px, 12cqmin, 40px);
+  flex-shrink: 0;
+  color: var(--wp-tone);
+}
+
+.wp-message-title {
+  font-size: clamp(13px, 5cqmin, 18px);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+
+.wp-message.wp-tone-error .wp-message-title {
+  color: var(--error-color);
+}
+
+.wp-message-detail {
+  max-width: 34em;
+  font-size: clamp(11px, 3.6cqmin, 14px);
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+@container widget (max-height: 110px) {
+  .wp-message-icon,
+  .wp-message-detail {
+    display: none;
+  }
+}
+
+/* ── Banner ────────────────────────────────────────────────────────────── */
+
+.wp-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(var(--wp-tone-rgb), 0.35);
+  background: rgba(var(--wp-tone-rgb), 0.12);
+  color: var(--wp-tone);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.3;
+}
+
+.wp-banner.wp-tone-neutral {
+  border-color: var(--border-color);
+  background: var(--bg-widget-hover);
+  color: var(--text-secondary);
+}
+
+.wp-banner-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.wp-banner-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Status dot ────────────────────────────────────────────────────────── */
+
+.wp-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--wp-tone);
+}
+
+.wp-dot-sm {
+  width: 8px;
+  height: 8px;
+}
+
+.wp-dot-lg {
+  width: 14px;
+  height: 14px;
+  box-shadow: 0 0 0 4px rgba(var(--wp-tone-rgb), 0.18);
+}
+
+.wp-dot-pulse {
+  animation: wpDotPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes wpDotPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--wp-tone-rgb), 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(var(--wp-tone-rgb), 0);
+  }
+}
+
+/* ── Meter ─────────────────────────────────────────────────────────────── */
+
+.wp-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.wp-meter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  line-height: 1.25;
+}
+
+.wp-meter-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.wp-meter-value {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-weight: var(--font-weight-bold);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.wp-meter-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+
+.wp-meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--wp-tone);
+  transition: width var(--transition-slow);
+}
+
+/* ── Spinner ───────────────────────────────────────────────────────────── */
+
+.wp-spin {
+  animation: wpSpin 1.2s linear infinite;
+}
+
+.wp-spinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--accent-color);
+}
+
+@keyframes wpSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-spin,
+  .wp-dot-pulse {
+    animation: none;
+  }
+}

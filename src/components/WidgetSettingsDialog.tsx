@@ -4,9 +4,10 @@
  * position:fixed korrekt funktioniert – unabhängig von CSS-Transforms
  * der übergeordneten Widget-Container (react-grid-layout).
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import './settings/settings.css';
 
 interface Props {
   open: boolean;
@@ -27,6 +28,8 @@ export const WidgetSettingsDialog: React.FC<Props> = ({
   showFooter = false,
   saveLabel = 'Speichern',
 }) => {
+  const titleId = useId();
+
   // Escape-Taste schliesst Dialog
   useEffect(() => {
     if (!open) return;
@@ -42,10 +45,10 @@ export const WidgetSettingsDialog: React.FC<Props> = ({
       className="settings-dialog-backdrop"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="settings-dialog">
+      <div className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="settings-dialog-header">
-          <h3 className="settings-dialog-title">{title}</h3>
-          <button className="settings-dialog-close" onClick={onClose} title="Schliessen">
+          <h3 className="settings-dialog-title" id={titleId}>{title}</h3>
+          <button className="settings-dialog-close" onClick={onClose} title="Schliessen" aria-label="Schliessen">
             <X size={18} />
           </button>
         </div>

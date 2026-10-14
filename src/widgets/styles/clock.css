@@ -1,0 +1,222 @@
+/**
+ * Clock widget. Every size derives from the widget body (size container
+ * "widget"): the component passes the text lengths as variables, so the
+ * time always fills the width without overflowing.
+ *   --clock-time-units   width of the time in digit widths
+ *   --clock-time-share   height share of the time (cqh)
+ *   --clock-date-chars   characters of the date line
+ *   --clock-world-count  number of world clocks
+ */
+
+.clock {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2cqh;
+  overflow: hidden;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.clock-date {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.6em;
+  max-width: 100%;
+  font-size: max(11px, min(calc(94cqw / (var(--clock-date-chars) * 0.5)), 8.5cqh, 44px));
+  line-height: 1.2;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.clock-date-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clock-week {
+  flex-shrink: 0;
+  color: var(--text-accent);
+  font-weight: var(--font-weight-bold);
+}
+
+.clock-time {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  font-size: min(calc(94cqw / (var(--clock-time-units) * 0.6)), var(--clock-time-share));
+  line-height: 1;
+  font-weight: var(--font-weight-light);
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.clock-period {
+  margin-left: 0.15em;
+  margin-top: 0.12em;
+  font-size: 0.32em;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.clock-zone {
+  max-width: 100%;
+  font-size: max(11px, min(4.6cqw, 6cqh, 26px));
+  line-height: 1.2;
+  color: var(--text-accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clock-zone.invalid {
+  color: var(--warning-color);
+}
+
+/* ── World clocks ─────────────────────────────────────────────────────────── */
+
+.clock-world {
+  display: grid;
+  grid-template-columns: repeat(var(--clock-world-count), minmax(0, 1fr));
+  gap: 2cqw;
+  width: 100%;
+  font-size: max(11px, min(calc(90cqw / var(--clock-world-count) / 5.4), 6.5cqh, 30px));
+}
+
+.clock-world-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1em;
+  min-width: 0;
+  padding: 0.3em 0.4em;
+  border-radius: var(--radius-md);
+  background: rgba(var(--accent-color-rgb), 0.06);
+}
+
+.clock-world-label {
+  max-width: 100%;
+  font-size: 0.62em;
+  line-height: 1.2;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clock-world-time {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25em;
+  max-width: 100%;
+  line-height: 1.1;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.clock-world-period {
+  font-size: 0.55em;
+  color: var(--text-secondary);
+}
+
+.clock-world-offset {
+  font-size: 0.55em;
+  font-weight: var(--font-weight-bold);
+  color: var(--text-accent);
+}
+
+/* ── Analog ───────────────────────────────────────────────────────────────── */
+
+.clock-analog-wrap {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+}
+
+.clock-analog {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.clock-analog-face {
+  fill: rgba(var(--accent-color-rgb), 0.05);
+  stroke: var(--border-color);
+  stroke-width: 2;
+}
+
+.clock-analog-tick {
+  stroke-linecap: round;
+}
+
+.clock-analog-tick.minute {
+  stroke: var(--text-tertiary);
+  stroke-width: 1.4;
+}
+
+.clock-analog-tick.hour {
+  stroke: var(--text-secondary);
+  stroke-width: 3.2;
+}
+
+.clock-analog-tick.quarter {
+  stroke: var(--text-primary);
+  stroke-width: 4.4;
+}
+
+.clock-analog-hand {
+  stroke: var(--text-primary);
+  stroke-linecap: round;
+}
+
+.clock-analog-hand.hour {
+  stroke-width: 7;
+}
+
+.clock-analog-hand.minute {
+  stroke-width: 4.5;
+}
+
+.clock-analog-hand.second {
+  stroke: var(--accent-color);
+  stroke-width: 1.8;
+}
+
+.clock-analog-second-tip,
+.clock-analog-center {
+  fill: var(--accent-color);
+}
+
+/* Small widgets: the time (or the dial) has priority and takes the freed space. */
+@container widget (max-height: 150px) {
+  .clock-zone,
+  .clock-world {
+    display: none;
+  }
+
+  .clock-time {
+    font-size: min(calc(94cqw / (var(--clock-time-units) * 0.6)), 58cqh);
+  }
+}
+
+@container widget (max-height: 90px) {
+  .clock-date {
+    display: none;
+  }
+
+  .clock-time {
+    font-size: min(calc(94cqw / (var(--clock-time-units) * 0.6)), 85cqh);
+  }
+}

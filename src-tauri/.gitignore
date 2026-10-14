@@ -2,3 +2,7 @@
 # will have compiled files and executables
 /target/
 /gen/schemas
+
+# Cargo.lock wird versioniert (reproduzierbarer Build auf dem Kiosk, `--locked`);
+# explizit erlaubt, falls eine globale gitignore Lockfiles ausschliesst.
+!Cargo.lock

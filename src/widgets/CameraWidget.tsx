@@ -1,505 +1,637 @@
 /**
- * Camera Widget – Live-Kamerabild mit optionaler Gesichtserkennung.
- * Nutzt face-api.js (TinyFaceDetector), lokal, keine externen Server.
+ * Camera widget ("Gesichtserkennung") – live image of the kiosk camera with
+ * local face detection (face-api.js TinyFaceDetector).
+ *
+ * - the stream is shared with the Ruhemodus widget (services/cameraService)
+ * - privacy modes: live image, blurred image, or only the number of people
+ * - exactly one detection loop at `fps`, restarted (never duplicated) when a
+ *   detection setting changes, stopped on stop/unmount
+ * - publishes eventBus 'presence:changed' { present, count } (debounced)
+ * - a detection that keeps failing or gets no frames resets the presence and
+ *   says so, instead of holding the last count
+ * - face boxes are drawn on a canvas covering the video element, mapped
+ *   through the same object-fit geometry as the video
  */
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import * as faceapi from 'face-api.js';
-import type { WidgetProps, WidgetDefinition } from '../types/widget';
-import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
-import { WidgetSettingsDialog } from '../components/WidgetSettingsDialog';
-import { eventBus } from '../utils/eventBus';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { AlertTriangle, CameraOff, Play, Power, RotateCcw, ScanFace } from 'lucide-react';
+import type { WidgetProps } from '../types/widget';
+import { useWidgetSettings } from '../hooks/useWidgetSettings';
+import { useLayoutStore } from '../store/layoutStore';
+import { CameraSession, type CameraSessionState } from '../services/cameraService';
+import {
+  detectFaces,
+  FACE_INPUT_SIZES,
+  getFaceDetectorStatus,
+  loadFaceDetector,
+  publishPresence,
+  subscribeFaceDetector,
+  type FaceDetectionResult,
+  type PresenceEvent,
+} from '../services/faceDetector';
+import { useLegacyDefaults } from '../services/legacyDefaults';
+import { CameraDeviceSelect } from './shared/CameraDeviceSelect';
+import {
+  CAMERA_DEFAULT_SETTINGS,
+  CAMERA_FPS_LIMITS,
+  CAMERA_LEGACY_DEFAULTS,
+  type CameraPrivacy,
+  type CameraSettings,
+} from './manifests/camera';
+import './styles/camera.css';
 
-// ─── Typen ───────────────────────────────────────────────────────────────────
+type CameraConfig = Omit<CameraSettings, 'autoStart'>;
 
-type Status = 'idle' | 'loading' | 'active' | 'error' | 'no_permission';
+/** Why the detection has not worked for DETECTION_STALL_MS: no video frame, or detection errors. */
+type DetectionStall = 'kein-bild' | 'gestoert';
 
-interface CameraSettings {
-  deviceId: string;
-  faceDetection: boolean;
-  scoreThreshold: number;
-  inputSize: number;
-  autoStart: boolean;
-  mirror: boolean;
+interface CameraSnapshot {
+  running: boolean;
+  camera: CameraSessionState;
+  /** Number of people, held briefly when a single frame misses a face. */
+  faces: number;
+  /** Set while the detection does not work – `faces` is 0 then, not the last count. */
+  stall: DetectionStall | null;
 }
 
-const DEFAULT: CameraSettings = {
-  deviceId: '',
-  faceDetection: true,
-  scoreThreshold: 0.5,
-  inputSize: 224,
-  autoStart: false,
-  mirror: true,
+/** Used for the <video> style and the box mapping – both must agree. */
+const VIDEO_FIT = 'cover';
+/** A frame without a face (turned head, motion blur) does not end the presence. */
+const ABSENCE_GRACE_MS = 3000;
+/** Count changes are published at most this often; presence changes at once. */
+const PRESENCE_THROTTLE_MS = 1000;
+/** Without a successful detection for this long, the presence is reset and a hint shown. */
+const DETECTION_STALL_MS = 10_000;
+const MIN_LOOP_GAP_MS = 40;
+const PRIVACY_MODES: readonly CameraPrivacy[] = ['vorschau', 'unscharf', 'nur-zahl'];
+
+const bool = (value: unknown, fallback: boolean): boolean => (typeof value === 'boolean' ? value : fallback);
+
+const clampNumber = (value: unknown, min: number, max: number, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+
+function toConfig(settings: CameraSettings): CameraConfig {
+  const defaults = CAMERA_DEFAULT_SETTINGS;
+  return {
+    deviceId: typeof settings.deviceId === 'string' ? settings.deviceId : '',
+    privacy: PRIVACY_MODES.includes(settings.privacy) ? settings.privacy : defaults.privacy,
+    mirror: bool(settings.mirror, defaults.mirror),
+    faceDetection: bool(settings.faceDetection, defaults.faceDetection),
+    showBoxes: bool(settings.showBoxes, defaults.showBoxes),
+    fps: clampNumber(settings.fps, CAMERA_FPS_LIMITS.min, CAMERA_FPS_LIMITS.max, defaults.fps),
+    scoreThreshold: clampNumber(settings.scoreThreshold, 0.1, 0.9, defaults.scoreThreshold),
+    inputSize: FACE_INPUT_SIZES.includes(settings.inputSize) ? settings.inputSize : defaults.inputSize,
+  };
+}
+
+/** Where object-fit (centred) puts a video frame inside its element box. */
+function videoFrameRect(
+  fit: 'cover' | 'contain',
+  boxWidth: number,
+  boxHeight: number,
+  videoWidth: number,
+  videoHeight: number,
+): { x: number; y: number; scale: number } {
+  const scaleX = boxWidth / videoWidth;
+  const scaleY = boxHeight / videoHeight;
+  const scale = fit === 'cover' ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+  return { scale, x: (boxWidth - videoWidth * scale) / 2, y: (boxHeight - videoHeight * scale) / 2 };
+}
+
+const peopleText = (count: number): string => (count === 1 ? '1 Person' : `${count} Personen`);
+
+const STALL_BADGE: Record<DetectionStall, string> = { 'kein-bild': 'Kein Kamerabild', gestoert: 'Erkennung gestört' };
+const STALL_NOTICE: Record<DetectionStall, string> = {
+  'kein-bild': 'Die Kamera liefert kein Bild – niemand wird erkannt.',
+  gestoert: 'Die Gesichtserkennung ist gestört – niemand wird erkannt.',
 };
 
-// ─── Hilfsfunktion: Kameraliste ───────────────────────────────────────────────
+// ── Controller ───────────────────────────────────────────────────────────────
 
-async function listCameras() {
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    return devices
-      .filter(d => d.kind === 'videoinput')
-      .map((d, i) => ({ id: d.deviceId, label: d.label || `Kamera ${i + 1}` }));
-  } catch {
-    return [];
+/** Camera, detection loop, presence and overlay of one widget instance – outside React. */
+class CameraController {
+  private readonly listeners = new Set<() => void>();
+  private readonly session = new CameraSession(() => this.sync());
+  private snapshot: CameraSnapshot;
+  private config: CameraConfig;
+  private mounted = false;
+  private running = false;
+  private video: HTMLVideoElement | null = null;
+  private canvas: HTMLCanvasElement | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private stopDetectorWatch: (() => void) | null = null;
+  private loopActive = false;
+  private loopGeneration = 0;
+  private loopTimer: ReturnType<typeof setTimeout> | null = null;
+  private failureLogged = false;
+  /** Last successful detection, or the loop start before the first one. */
+  private detectedAt = 0;
+  private lastProblem: DetectionStall = 'kein-bild';
+  private stall: DetectionStall | null = null;
+  private detection: FaceDetectionResult | null = null;
+  private faces = 0;
+  private lastFaceAt = 0;
+  private lastCount = 0;
+  private published: PresenceEvent = { present: false, count: 0 };
+  private publishedAt = 0;
+
+  constructor(config: CameraConfig) {
+    this.config = config;
+    this.snapshot = { running: false, camera: this.session.current, faces: 0, stall: null };
+  }
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  getSnapshot = (): CameraSnapshot => this.snapshot;
+
+  setVideo = (video: HTMLVideoElement | null): void => {
+    this.video = video;
+    this.session.attach(video);
+    this.sync();
+  };
+
+  setCanvas = (canvas: HTMLCanvasElement | null): void => {
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.canvas = canvas;
+    if (canvas && typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.draw());
+      this.resizeObserver.observe(canvas);
+    }
+    this.draw();
+  };
+
+  mount(): void {
+    if (this.mounted) return;
+    this.mounted = true;
+    this.stopDetectorWatch = subscribeFaceDetector(() => this.sync());
+    this.sync();
+  }
+
+  unmount(): void {
+    if (!this.mounted) return;
+    this.mounted = false;
+    this.stopDetectorWatch?.();
+    this.stopDetectorWatch = null;
+    this.sync();
+  }
+
+  configure(config: CameraConfig): void {
+    const prev = this.config;
+    this.config = config;
+    // Detect with the new values right away instead of after the current wait.
+    const detectionChanged =
+      prev.fps !== config.fps || prev.scoreThreshold !== config.scoreThreshold || prev.inputSize !== config.inputSize;
+    if (detectionChanged && this.loopActive) this.restartLoop();
+    this.sync();
+    this.draw();
+  }
+
+  start = (): void => {
+    if (this.running) return;
+    this.running = true;
+    this.sync();
+  };
+
+  stop = (): void => {
+    if (!this.running) return;
+    this.running = false;
+    this.sync();
+  };
+
+  retry = (): void => {
+    this.session.retry();
+    if (getFaceDetectorStatus().state === 'error') void loadFaceDetector();
+    if (this.stall && this.loopActive) this.restartLoop();
+    this.sync();
+  };
+
+  private sync(): void {
+    const wantCamera = this.mounted && this.running;
+    this.session.update(wantCamera, this.config.deviceId);
+    const wantDetection = wantCamera && this.config.faceDetection;
+    if (wantDetection && getFaceDetectorStatus().state === 'idle') void loadFaceDetector();
+    const detectorReady = getFaceDetectorStatus().state === 'ready';
+    this.setLoop(wantDetection && detectorReady && this.session.current.status === 'on' && this.video !== null);
+    this.publish();
+  }
+
+  private setLoop(active: boolean): void {
+    if (active === this.loopActive) return;
+    this.loopActive = active;
+    this.restartLoop();
+  }
+
+  private restartLoop(): void {
+    this.loopGeneration += 1;
+    if (this.loopTimer !== null) clearTimeout(this.loopTimer);
+    this.loopTimer = null;
+    this.detectedAt = Date.now();
+    this.lastProblem = 'kein-bild';
+    this.stall = null;
+    if (this.loopActive) void this.detect(this.loopGeneration);
+    else this.resetPresence();
+  }
+
+  private async detect(generation: number): Promise<void> {
+    const video = this.video;
+    if (!video || generation !== this.loopGeneration) return;
+    const started = performance.now();
+    try {
+      const result = await detectFaces(video, {
+        inputSize: this.config.inputSize,
+        scoreThreshold: this.config.scoreThreshold,
+      });
+      if (generation !== this.loopGeneration) return;
+      this.failureLogged = false;
+      if (result) {
+        this.detectedAt = Date.now();
+        this.stall = null;
+        this.detection = result;
+        this.notePresence(result.faces.length);
+        this.draw();
+      } else {
+        // The video has no frame (yet).
+        this.lastProblem = 'kein-bild';
+      }
+    } catch (err) {
+      if (generation !== this.loopGeneration) return;
+      if (!this.failureLogged) console.warn('Gesichtserkennung fehlgeschlagen:', err);
+      this.failureLogged = true;
+      this.lastProblem = 'gestoert';
+    }
+    this.checkStall();
+    const wait = 1000 / this.config.fps - (performance.now() - started);
+    this.loopTimer = setTimeout(() => void this.detect(generation), Math.max(MIN_LOOP_GAP_MS, wait));
+  }
+
+  /** A detection that keeps failing must not hold the last count (and presence) for hours. */
+  private checkStall(): void {
+    if (this.stall === this.lastProblem || Date.now() - this.detectedAt < DETECTION_STALL_MS) return;
+    this.stall = this.lastProblem;
+    this.resetPresence();
+    this.publish();
+  }
+
+  private notePresence(count: number): void {
+    const now = Date.now();
+    if (count > 0) {
+      this.lastFaceAt = now;
+      this.lastCount = count;
+    }
+    const present = count > 0 || now - this.lastFaceAt < ABSENCE_GRACE_MS;
+    this.faces = count > 0 ? count : present ? this.lastCount : 0;
+    const countDue = this.faces !== this.published.count && now - this.publishedAt >= PRESENCE_THROTTLE_MS;
+    if (present !== this.published.present || countDue) {
+      this.published = { present, count: this.faces };
+      this.publishedAt = now;
+      publishPresence(this.published);
+    }
+    this.publish();
+  }
+
+  private resetPresence(): void {
+    this.detection = null;
+    this.faces = 0;
+    this.lastFaceAt = 0;
+    this.lastCount = 0;
+    if (this.published.present || this.published.count !== 0) {
+      this.published = { present: false, count: 0 };
+      this.publishedAt = Date.now();
+      publishPresence(this.published);
+    }
+    this.draw();
+  }
+
+  private draw(): void {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    const ratio = window.devicePixelRatio || 1;
+    const pixelWidth = Math.max(1, Math.round(width * ratio));
+    const pixelHeight = Math.max(1, Math.round(height * ratio));
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const detection = this.detection;
+    const { faceDetection, showBoxes, privacy, mirror } = this.config;
+    if (!detection || !faceDetection || !showBoxes || privacy === 'nur-zahl' || width === 0 || height === 0) return;
+
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    const frame = videoFrameRect(VIDEO_FIT, width, height, detection.width, detection.height);
+    ctx.strokeStyle = getComputedStyle(canvas).getPropertyValue('--accent-color').trim() || '#e8642b';
+    ctx.lineWidth = Math.max(2, Math.min(width, height) / 160);
+    ctx.lineJoin = 'round';
+    for (const face of detection.faces) {
+      const boxWidth = face.width * frame.scale;
+      const boxHeight = face.height * frame.scale;
+      const x = frame.x + face.x * frame.scale;
+      // CSS mirrors the video around its centre – mirror the box the same way.
+      const left = mirror ? width - x - boxWidth : x;
+      const top = frame.y + face.y * frame.scale;
+      ctx.beginPath();
+      ctx.roundRect(left, top, boxWidth, boxHeight, Math.min(boxWidth, boxHeight) * 0.12);
+      ctx.stroke();
+    }
+  }
+
+  private publish(): void {
+    const camera = this.session.current;
+    const prev = this.snapshot;
+    if (
+      prev.running === this.running &&
+      prev.camera === camera &&
+      prev.faces === this.faces &&
+      prev.stall === this.stall
+    ) {
+      return;
+    }
+    this.snapshot = { running: this.running, camera, faces: this.faces, stall: this.stall };
+    for (const listener of [...this.listeners]) listener();
   }
 }
 
-// ─── Komponente ───────────────────────────────────────────────────────────────
+// ── Registry (widget ↔ its settings extra) ───────────────────────────────────
 
-const CameraComponent: React.FC<WidgetProps> = ({ instanceId }) => {
-  const videoRef     = useRef<HTMLVideoElement>(null);
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const streamRef    = useRef<MediaStream | null>(null);
-  const loopRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const detectingRef = useRef(false); // Ref statt State – kein Closure-Bug
-  const containerRef = useRef<HTMLDivElement>(null);
+const controllers = new Map<string, CameraController>();
+const registryListeners = new Set<() => void>();
 
-  const [status, setStatus]           = useState<Status>('idle');
-  const [errorMsg, setErrorMsg]       = useState('');
-  const [faceCount, setFaceCount]     = useState(0);
-  const [modelsReady, setModelsReady] = useState(false);
-  const [cameras, setCameras]         = useState<{ id: string; label: string }[]>([]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [containerW, setContainerW]   = useState(320);
+function setRegistered(instanceId: string, controller: CameraController, registered: boolean): void {
+  if (registered) controllers.set(instanceId, controller);
+  else if (controllers.get(instanceId) === controller) controllers.delete(instanceId);
+  else return;
+  for (const listener of [...registryListeners]) listener();
+}
 
-  const { getSettings, updateSettings } = useWidgetSettingsStore();
-  const s = getSettings<CameraSettings>(instanceId, DEFAULT);
+function subscribeRegistry(listener: () => void): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
 
-  // ─── Container-Breite beobachten ───────────────────────────────────────────
+function useRegisteredController(instanceId: string): CameraController | null {
+  return useSyncExternalStore(subscribeRegistry, () => controllers.get(instanceId) ?? null);
+}
+
+const OFF_SNAPSHOT: CameraSnapshot = {
+  running: false,
+  camera: { status: 'off', error: null, notice: null, label: '' },
+  faces: 0,
+  stall: null,
+};
+const subscribeNothing = (): (() => void) => () => {};
+const getOffSnapshot = (): CameraSnapshot => OFF_SNAPSHOT;
+
+// ── Widget ───────────────────────────────────────────────────────────────────
+
+function CameraComponent({ instanceId }: WidgetProps) {
+  const [merged] = useWidgetSettings(instanceId, CAMERA_DEFAULT_SETTINGS);
+  // An instance from the old kiosk keeps its old default: no auto-start.
+  const settings = useLegacyDefaults('camera', instanceId, merged, CAMERA_LEGACY_DEFAULTS);
+  const config = useMemo(() => toConfig(settings), [settings]);
+  const autoStart = bool(settings.autoStart, CAMERA_DEFAULT_SETTINGS.autoStart);
+  const [controller] = useState(() => new CameraController(config));
+  const { running, camera, faces, stall } = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const detector = useSyncExternalStore(subscribeFaceDetector, getFaceDetectorStatus);
+  const editMode = useLayoutStore((s) => s.editMode);
+  const videoRef = useCallback((video: HTMLVideoElement | null) => controller.setVideo(video), [controller]);
+  const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => controller.setCanvas(canvas), [controller]);
+
   useEffect(() => {
-    if (!containerRef.current) return;
-    const obs = new ResizeObserver(([e]) => setContainerW(e.contentRect.width));
-    obs.observe(containerRef.current);
-    return () => obs.disconnect();
-  }, []);
-
-  // ─── Settings-Dialog öffnen ────────────────────────────────────────────────
-  useEffect(() => {
-    const h = () => setSettingsOpen(true);
-    eventBus.on(`widget:openSettings:${instanceId}`, h);
-    return () => eventBus.off(`widget:openSettings:${instanceId}`, h);
-  }, [instanceId]);
-
-  // ─── Modelle laden ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    faceapi.nets.tinyFaceDetector.loadFromUri('/models')
-      .then(() => setModelsReady(true))
-      .catch(() => setErrorMsg('Face-Detection-Modelle konnten nicht geladen werden (/public/models/).'));
-  }, []);
-
-  // ─── Kamera stoppen ────────────────────────────────────────────────────────
-  const stopCamera = useCallback(() => {
-    detectingRef.current = false;
-    if (loopRef.current) { clearTimeout(loopRef.current); loopRef.current = null; }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) videoRef.current.srcObject = null;
-    if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d');
-      ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    }
-    setFaceCount(0);
-    setStatus('idle');
-  }, []);
-
-  // ─── Detektions-Loop (~5 fps) ─────────────────────────────────────────────
-  const runDetection = useCallback(async () => {
-    const video     = videoRef.current;
-    const canvas    = canvasRef.current;
-    const container = containerRef.current;
-    if (!detectingRef.current || !video || !canvas || !container) return;
-    if (video.readyState < 2 || video.videoWidth === 0) {
-      loopRef.current = setTimeout(runDetection, 200);
-      return;
-    }
-
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-
-    // Canvas-Pixel-Dimensionen = CSS-Anzeigegrösse des Containers
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
-    if (canvas.width !== cw || canvas.height !== ch) {
-      canvas.width  = cw;
-      canvas.height = ch;
-    }
-
-    // object-fit:contain → Letterbox berechnen damit Boxes exakt auf Gesichter passen
-    const videoAspect     = vw / vh;
-    const containerAspect = cw / ch;
-    let scale: number, offsetX = 0, offsetY = 0;
-    if (containerAspect > videoAspect) {
-      // Container breiter → Letterbox links/rechts
-      scale   = ch / vh;
-      offsetX = (cw - vw * scale) / 2;
-    } else {
-      // Container höher → Letterbox oben/unten
-      scale   = cw / vw;
-      offsetY = (ch - vh * scale) / 2;
-    }
-
-    try {
-      const detections = await faceapi.detectAllFaces(
-        video,
-        new faceapi.TinyFaceDetectorOptions({
-          inputSize:      s.inputSize as 128 | 160 | 224 | 320 | 416 | 608,
-          scoreThreshold: s.scoreThreshold,
-        })
-      );
-      setFaceCount(detections.length);
-
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, cw, ch);
-        detections.forEach(d => {
-          const { x, y, width, height } = d.box;
-          // Spiegeln: X-Koordinate im Video-Koordinatenraum umkehren, dann in Display-Raum
-          const srcX  = s.mirror ? vw - x - width : x;
-          const dstX  = offsetX + srcX  * scale;
-          const dstY  = offsetY + y     * scale;
-          const dstW  = width  * scale;
-          const dstH  = height * scale;
-
-          ctx.strokeStyle = '#ff6b35';
-          ctx.lineWidth   = Math.max(2, scale * 3);
-          ctx.strokeRect(dstX, dstY, dstW, dstH);
-
-          ctx.fillStyle = '#ff6b35';
-          ctx.font      = `bold ${Math.max(12, dstH * 0.18)}px Lato, sans-serif`;
-          const label   = `${Math.round(d.score * 100)}%`;
-          ctx.fillText(label, dstX, dstY > 18 ? dstY - 4 : dstY + dstH + 14);
-        });
-      }
-    } catch { /* ignorieren */ }
-
-    if (detectingRef.current) loopRef.current = setTimeout(runDetection, 200);
-  }, [s.inputSize, s.scoreThreshold, s.mirror]);
-
-  // ─── Detection starten/stoppen je nach Settings ───────────────────────────
-  useEffect(() => {
-    if (status !== 'active') return;
-    if (s.faceDetection && modelsReady) {
-      detectingRef.current = true;
-      runDetection();
-    } else {
-      detectingRef.current = false;
-      if (loopRef.current) clearTimeout(loopRef.current);
-      setFaceCount(0);
-      const canvas = canvasRef.current;
-      if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
-    }
+    controller.mount();
+    setRegistered(instanceId, controller, true);
     return () => {
-      if (loopRef.current) clearTimeout(loopRef.current);
+      setRegistered(instanceId, controller, false);
+      controller.unmount();
     };
-  }, [status, s.faceDetection, modelsReady, runDetection]);
+  }, [controller, instanceId]);
 
-  // ─── Kamera starten ────────────────────────────────────────────────────────
-  const startCamera = useCallback(async () => {
-    if (status === 'active') return;
-    setStatus('loading');
-    setErrorMsg('');
+  useEffect(() => controller.configure(config), [controller, config]);
 
-    const constraints: MediaStreamConstraints = {
-      video: {
-        width:  { ideal: 1280 },
-        height: { ideal: 720 },
-        ...(s.deviceId ? { deviceId: { exact: s.deviceId } } : { facingMode: 'user' }),
-      },
-    };
+  // Switching auto-start on starts the camera; switching it off leaves a running camera alone.
+  useEffect(() => {
+    if (autoStart) controller.start();
+  }, [controller, autoStart]);
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
+  const live = camera.status === 'on';
+  const countOnly = config.privacy === 'nur-zahl';
+  const showImage = live && !countOnly;
+  const detectorError = config.faceDetection && detector.state === 'error';
+  const detecting = config.faceDetection && detector.state === 'ready';
+  const stalled = detecting && live ? stall : null;
 
-      const video = videoRef.current!;
-      video.srcObject = stream;
-      await video.play();
-
-      setStatus('active');
-
-      // Kameraliste aktualisieren (Labels werden erst nach Permission sichtbar)
-      const updated = await listCameras();
-      setCameras(updated);
-
-      // Aktive Kamera in Settings merken
-      if (!s.deviceId) {
-        const tid = stream.getVideoTracks()[0]?.getSettings().deviceId;
-        if (tid) updateSettings(instanceId, { deviceId: tid });
-      }
-    } catch (err: unknown) {
-      const e = err as DOMException;
-      setStatus(e?.name === 'NotAllowedError' ? 'no_permission' : 'error');
-      setErrorMsg(
-        e?.name === 'NotAllowedError'  ? 'Kamera-Zugriff verweigert. Bitte in den System-Einstellungen erlauben.' :
-        e?.name === 'NotFoundError'    ? 'Keine Kamera gefunden.' :
-        e?.name === 'NotReadableError' ? 'Kamera wird von einer anderen App verwendet.' :
-        e?.name === 'OverconstrainedError' ? 'Gewählte Kamera nicht verfügbar. Andere Kamera wählen.' :
-        `Kamera-Fehler: ${e?.message ?? 'Unbekannt'}`
-      );
+  let badge = 'Live';
+  let badgeTone = 'neutral';
+  if (config.faceDetection) {
+    if (detectorError) {
+      badge = 'Erkennung nicht verfügbar';
+      badgeTone = 'error';
+    } else if (!detecting) {
+      badge = 'Erkennung startet …';
+    } else if (stalled) {
+      badge = STALL_BADGE[stalled];
+      badgeTone = 'error';
+    } else if (faces > 0) {
+      badge = peopleText(faces);
+      badgeTone = 'present';
+    } else {
+      badge = 'Niemand erkannt';
     }
-  }, [status, s.deviceId, instanceId, updateSettings]);
+  }
 
-  // ─── Auto-Start ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (s.autoStart && status === 'idle') startCamera();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.autoStart]);
+  const notice =
+    camera.notice ?? (live && detectorError ? detector.error : stalled ? STALL_NOTICE[stalled] : null);
 
-  // ─── Kamera-Enumeration beim Mount ────────────────────────────────────────
-  useEffect(() => {
-    listCameras().then(setCameras);
-    return () => stopCamera();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const videoClass = [
+    'camera-video',
+    showImage && 'visible',
+    config.mirror && 'mirrored',
+    config.privacy === 'unscharf' && 'blurred',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
-  // ─── UI Helpers ───────────────────────────────────────────────────────────
-  const mirrorStyle = s.mirror ? 'scaleX(-1)' : 'none';
-  const isActive    = status === 'active';
-  const dotColor    =
-    status === 'active'       ? (faceCount > 0 ? '#22c55e' : '#f59e0b') :
-    status === 'error' || status === 'no_permission' ? '#ef4444' : 'var(--text-tertiary)';
-
-  const statusText =
-    status === 'idle'         ? 'Kamera aus' :
-    status === 'loading'      ? 'Wird gestartet…' :
-    status === 'no_permission'? 'Zugriff verweigert' :
-    status === 'error'        ? 'Fehler' :
-    s.faceDetection           ? (faceCount > 0 ? `${faceCount} Gesicht${faceCount > 1 ? 'er' : ''} erkannt ✓` : 'Kein Gesicht') :
-                                'Kamera aktiv';
-
-  // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <>
-      <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
+    <div className="camera">
+      <div className={`camera-stage${showImage ? ' dark' : ''}`}>
+        <video
+          ref={videoRef}
+          className={videoClass}
+          style={{ objectFit: VIDEO_FIT }}
+          muted
+          playsInline
+          autoPlay
+          aria-hidden="true"
+        />
+        {showImage && config.faceDetection && config.showBoxes && (
+          <canvas ref={canvasRef} className="camera-overlay" aria-hidden="true" />
+        )}
 
-        {/* Status-Bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
-          <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)' }}>{statusText}</span>
-          <button
-            onClick={isActive ? stopCamera : startCamera}
-            style={{
-              background: isActive ? 'rgba(239,68,68,0.12)' : 'var(--accent-color)',
-              border: isActive ? '1px solid rgba(239,68,68,0.4)' : 'none',
-              color: isActive ? '#ef4444' : '#fff',
-              borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', fontWeight: 600,
-            }}
-          >
-            {isActive ? '⏹ Stop' : '▶ Start'}
-          </button>
-        </div>
+        {showImage && (
+          <div className="camera-badge" role="status">
+            <span className={`camera-dot ${badgeTone}`} />
+            <span className="camera-badge-text">{badge}</span>
+          </div>
+        )}
 
-        {/* Video-Container */}
-        <div style={{ flex: 1, position: 'relative', borderRadius: 8, overflow: 'hidden', background: '#000', minHeight: 100 }}>
-          {/* Placeholder */}
-          {!isActive && status !== 'loading' && (
-            <div style={{
-              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16,
-            }}>
-              <span style={{ fontSize: 36 }}>
-                {status === 'no_permission' ? '🔐' : status === 'error' ? '⚠️' : '📷'}
+        {live && countOnly && (
+          <div className="camera-count" role="status">
+            {detecting && !stalled ? (
+              <>
+                <span className="camera-count-value">{faces}</span>
+                <span className="camera-count-label">{faces === 1 ? 'Person' : 'Personen'}</span>
+              </>
+            ) : (
+              <span className="camera-message">
+                {!config.faceDetection
+                  ? 'Gesichtserkennung ist ausgeschaltet.'
+                  : detectorError
+                    ? detector.error
+                    : stalled
+                      ? STALL_BADGE[stalled]
+                      : 'Erkennung startet …'}
               </span>
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center' }}>
-                {status === 'no_permission' || status === 'error' ? errorMsg : 'Kamera starten'}
+            )}
+          </div>
+        )}
+
+        {!live && (
+          <div className="camera-placeholder" role="status">
+            {camera.status === 'error' ? (
+              <AlertTriangle className="camera-placeholder-icon error" aria-hidden="true" />
+            ) : camera.status === 'starting' ? (
+              <ScanFace className="camera-placeholder-icon pulse" aria-hidden="true" />
+            ) : (
+              <CameraOff className="camera-placeholder-icon" aria-hidden="true" />
+            )}
+            <span className="camera-message">
+              {camera.status === 'error'
+                ? camera.error
+                : camera.status === 'starting'
+                  ? 'Kamera startet …'
+                  : 'Kamera aus'}
+            </span>
+            {camera.status === 'error' && (
+              <button type="button" className="camera-button" onClick={controller.retry}>
+                <RotateCcw size={16} aria-hidden="true" />
+                Erneut versuchen
+              </button>
+            )}
+            {!running && (
+              <button type="button" className="camera-button" onClick={controller.start}>
+                <Play size={16} aria-hidden="true" />
+                Kamera starten
+              </button>
+            )}
+          </div>
+        )}
+
+        {(notice || (running && editMode)) && (
+          <div className="camera-footer">
+            {notice && (
+              <span className="camera-notice">
+                {notice}
+                {(detectorError || stalled) && live && !camera.notice && (
+                  <button type="button" className="camera-notice-action" onClick={controller.retry}>
+                    Erneut versuchen
+                  </button>
+                )}
               </span>
-              {(status === 'error' || status === 'no_permission') && (
-                <button onClick={startCamera} style={{
-                  marginTop: 4, background: 'var(--accent-color)', color: '#fff',
-                  border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 11, cursor: 'pointer',
-                }}>
-                  🔄 Erneut versuchen
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Loading */}
-          {status === 'loading' && (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: 28, color: 'var(--text-tertiary)' }}>⏳</span>
-            </div>
-          )}
-
-          {/* Video */}
-          <video
-            ref={videoRef}
-            muted playsInline
-            style={{
-              display: isActive ? 'block' : 'none',
-              width: '100%', height: '100%', objectFit: 'contain',
-              transform: mirrorStyle,
-            }}
-          />
-
-          {/* Canvas Overlay – NICHT CSS-gespiegelt, Box-Koordinaten werden im Code gespiegelt */}
-          <canvas
-            ref={canvasRef}
-            style={{
-              display: isActive && s.faceDetection ? 'block' : 'none',
-              position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-              pointerEvents: 'none',
-            }}
-          />
-
-          {/* Gesichts-Badge */}
-          {isActive && s.faceDetection && faceCount > 0 && (
-            <div style={{
-              position: 'absolute', top: 8, right: 8,
-              background: 'rgba(34,197,94,0.85)', borderRadius: 12,
-              padding: '2px 10px', fontSize: 11, color: '#fff', fontWeight: 700,
-            }}>
-              {faceCount} Gesicht{faceCount > 1 ? 'er' : ''}
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        {isActive && (
-          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textAlign: 'center' }}>
-            🔒 Lokale Verarbeitung · {Math.round(containerW)}px
-            {s.faceDetection && ` · TinyFaceDetector ${s.inputSize}px`}
+            )}
+            {running && editMode && (
+              <button
+                type="button"
+                className="camera-power"
+                onClick={controller.stop}
+                title="Kamera ausschalten"
+                aria-label="Kamera ausschalten"
+              >
+                <Power size={18} aria-hidden="true" />
+              </button>
+            )}
           </div>
         )}
       </div>
+    </div>
+  );
+}
 
-      {/* Settings Dialog */}
-      <WidgetSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Einstellungen: Kamera">
-        {/* Status */}
-        <div className="settings-section">
-          <div className="settings-section-title">Status</div>
-          <div className="settings-field" style={{ display: 'flex', gap: 8 }}>
-            {isActive ? (
-              <button className="settings-btn settings-btn-danger" onClick={stopCamera}>⏹ Kamera stoppen</button>
-            ) : (
-              <button className="settings-btn settings-btn-primary" onClick={startCamera}>▶ Kamera starten</button>
-            )}
-            <button className="settings-btn" onClick={() => listCameras().then(setCameras)}>🔄 Aktualisieren</button>
-          </div>
+// ── Settings extra (kiosk only) ──────────────────────────────────────────────
+
+export function CameraSettingsExtra({ instanceId }: { instanceId: string }) {
+  const [settings, update] = useWidgetSettings(instanceId, CAMERA_DEFAULT_SETTINGS);
+  const controller = useRegisteredController(instanceId);
+  const { running, camera, faces, stall } = useSyncExternalStore(
+    controller?.subscribe ?? subscribeNothing,
+    controller?.getSnapshot ?? getOffSnapshot,
+  );
+  const detector = useSyncExternalStore(subscribeFaceDetector, getFaceDetectorStatus);
+
+  let status: string;
+  if (!controller) {
+    status = 'Das Widget ist nicht aktiv.';
+  } else if (camera.status === 'on') {
+    const parts = ['Läuft', camera.label || 'Kamera'];
+    if (bool(settings.faceDetection, CAMERA_DEFAULT_SETTINGS.faceDetection)) {
+      if (detector.state === 'ready') parts.push(stall ? STALL_BADGE[stall] : `${peopleText(faces)} erkannt`);
+      else parts.push(detector.state === 'error' ? 'Erkennung nicht verfügbar' : 'Erkennung startet …');
+    }
+    status = parts.join(' · ');
+  } else if (camera.status === 'error') {
+    status = camera.error ?? 'Kamerafehler';
+  } else {
+    status = camera.status === 'starting' ? 'Kamera startet …' : 'Kamera aus';
+  }
+
+  return (
+    <section className="settings-section">
+      <div className="settings-section-title">Kamera am Kiosk</div>
+      <CameraDeviceSelect
+        value={typeof settings.deviceId === 'string' ? settings.deviceId : ''}
+        onChange={(deviceId) => update({ deviceId })}
+      />
+      <div className="settings-field">
+        <div className="settings-status" role="status">
+          <span className={`settings-status-dot camera-status-${controller ? camera.status : 'off'}`} />
+          <span>{status}</span>
         </div>
-
-        {/* Kamera-Auswahl */}
-        <div className="settings-section">
-          <div className="settings-section-title">Kamera</div>
-          <div className="settings-field">
-            <label className="settings-label">Gerät</label>
-            <select
-              className="settings-select"
-              value={s.deviceId}
-              onChange={e => {
-                updateSettings(instanceId, { deviceId: e.target.value });
-                if (isActive) { stopCamera(); setTimeout(startCamera, 300); }
-              }}
-            >
-              <option value="">Standard</option>
-              {cameras.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
-            {cameras.length === 0 && (
-              <p className="settings-description">Starte die Kamera einmal, damit Geräte-Labels erscheinen.</p>
-            )}
-          </div>
-          <div className="settings-field">
-            <div className="settings-toggle">
-              <div>
-                <div className="settings-toggle-label">Spiegeln</div>
-                <div className="settings-toggle-sublabel">Bild horizontal spiegeln (für Selfie-Kameras)</div>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={s.mirror}
-                  onChange={e => updateSettings(instanceId, { mirror: e.target.checked })} />
-                <span className="toggle-switch-slider" />
-              </label>
-            </div>
-          </div>
-        </div>
-
-        {/* Gesichtserkennung */}
-        <div className="settings-section">
-          <div className="settings-section-title">Gesichtserkennung</div>
-          <div className="settings-field">
-            <div className="settings-toggle">
-              <div>
-                <div className="settings-toggle-label">Gesichtserkennung</div>
-                <div className="settings-toggle-sublabel">
-                  {modelsReady ? 'Modelle geladen ✓' : 'Modelle werden geladen…'}
-                </div>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={s.faceDetection}
-                  onChange={e => updateSettings(instanceId, { faceDetection: e.target.checked })} />
-                <span className="toggle-switch-slider" />
-              </label>
-            </div>
-          </div>
-
-          {s.faceDetection && (
-            <>
-              <div className="settings-field">
-                <label className="settings-label">
-                  Erkennungsschwelle
-                  <span className="settings-range-value">{Math.round(s.scoreThreshold * 100)}%</span>
-                </label>
-                <p className="settings-description">Höher = weniger Fehlerkennungen</p>
-                <input type="range" className="settings-range"
-                  min="0.1" max="0.9" step="0.05" value={s.scoreThreshold}
-                  onChange={e => updateSettings(instanceId, { scoreThreshold: parseFloat(e.target.value) })} />
-              </div>
-              <div className="settings-field">
-                <label className="settings-label">Modell-Auflösung</label>
-                <select className="settings-select" value={s.inputSize}
-                  onChange={e => updateSettings(instanceId, { inputSize: parseInt(e.target.value) })}>
-                  <option value="128">128px – Schnellst</option>
-                  <option value="160">160px – Schnell</option>
-                  <option value="224">224px – Standard</option>
-                  <option value="320">320px – Genau</option>
-                  <option value="416">416px – Sehr genau</option>
-                </select>
-              </div>
-            </>
+        {camera.notice && <p className="settings-description">{camera.notice}</p>}
+      </div>
+      {controller && (
+        <div className="camera-extra-actions">
+          {running ? (
+            <button type="button" className="settings-btn settings-btn-danger" onClick={controller.stop}>
+              <Power size={16} aria-hidden="true" />
+              Kamera ausschalten
+            </button>
+          ) : (
+            <button type="button" className="settings-btn settings-btn-primary" onClick={controller.start}>
+              <Play size={16} aria-hidden="true" />
+              Kamera starten
+            </button>
+          )}
+          {(camera.status === 'error' || camera.notice || detector.state === 'error' || stall) && running && (
+            <button type="button" className="settings-btn" onClick={controller.retry}>
+              <RotateCcw size={16} aria-hidden="true" />
+              Erneut versuchen
+            </button>
           )}
         </div>
-
-        {/* Verhalten */}
-        <div className="settings-section">
-          <div className="settings-section-title">Verhalten</div>
-          <div className="settings-field">
-            <div className="settings-toggle">
-              <div>
-                <div className="settings-toggle-label">Auto-Start</div>
-                <div className="settings-toggle-sublabel">Kamera beim App-Start automatisch aktivieren</div>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={s.autoStart}
-                  onChange={e => updateSettings(instanceId, { autoStart: e.target.checked })} />
-                <span className="toggle-switch-slider" />
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div className="settings-info-box">
-          🔒 Alle Daten werden lokal verarbeitet – keine Übertragung an externe Server.
-        </div>
-      </WidgetSettingsDialog>
-    </>
+      )}
+    </section>
   );
-};
+}
 
-export const cameraWidgetDef: WidgetDefinition = {
-  manifest: {
-    id: 'camera',
-    name: 'Gesichtserkennung',
-    description: 'Live-Kamerabild mit lokaler Gesichtserkennung',
-    version: '3.0.0',
-    author: 'SlateDesk',
-    minWidth: 2,
-    minHeight: 3,
-    defaultWidth: 3,
-    defaultHeight: 4,
-    permissions: ['camera'],
-    hasSettings: true,
-  },
-  component: CameraComponent,
-};
+export const CameraWidget = CameraComponent;

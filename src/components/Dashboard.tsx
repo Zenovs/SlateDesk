@@ -1,96 +1,121 @@
 /**
- * Dashboard – Main grid layout that renders all widget instances.
- * Uses react-grid-layout v2 hooks API for responsive layout.
+ * Dashboard – the widget grid.
+ *
+ * One fixed (non-responsive) react-grid-layout v2 grid: the kiosk has a
+ * single screen, and per-breakpoint layouts silently dropped edits. The
+ * layout is persisted only when the user finishes a drag or resize – never
+ * from onLayoutChange, which also fires for render echoes and compaction
+ * (that would write every remote change straight back).
  */
-import React, { useMemo, useCallback } from 'react';
-import { Responsive, useContainerWidth, verticalCompactor } from 'react-grid-layout';
-import type { GridLayoutItem, GridLayout, GridLayouts } from '../types/grid';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { GridLayout, useContainerWidth, verticalCompactor, type EventCallback, type Layout } from 'react-grid-layout';
+import type { DragConfig, GridConfig, ResizeConfig } from 'react-grid-layout/core';
 import { useLayoutStore } from '../store/layoutStore';
-import { getWidget } from '../utils/widgetRegistry';
+import { useElementSize } from '../hooks/useElementSize';
+import { GRID_CONTAINER_PADDING, GRID_MARGIN, fitRowHeight } from '../types/grid';
+import { isTauri, reportViewport } from '../utils/backend';
+import { getManifest } from '../widgets/catalog';
 import { WidgetWrapper } from './WidgetWrapper';
 import 'react-grid-layout/css/styles.css';
-import 'react-resizable/css/styles.css';
+
+const RESIZE_HANDLES: ResizeConfig['handles'] = ['se'];
+const VIEWPORT_REPORT_DELAY_MS = 1000;
+
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 export const Dashboard: React.FC = () => {
-  const { widgets, cols, rowHeight, editMode, updateLayout } = useLayoutStore();
-  const { containerRef, width } = useContainerWidth();
+  const widgets = useLayoutStore((s) => s.widgets);
+  const cols = useLayoutStore((s) => s.cols);
+  const storedRowHeight = useLayoutStore((s) => s.rowHeight);
+  const fitRows = useLayoutStore((s) => s.fitRows);
+  const editMode = useLayoutStore((s) => s.editMode);
+  const updateLayout = useLayoutStore((s) => s.updateLayout);
 
-  const layout: GridLayoutItem[] = useMemo(
+  // Outer element: visible area (height for fitRows, viewport report).
+  // Inner element: grid width without padding or scrollbar.
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const viewport = useElementSize(viewportRef);
+  const { width, mounted, containerRef } = useContainerWidth({ measureBeforeMount: true });
+
+  const rowHeight = fitRows > 0 && viewport.height > 0 ? fitRowHeight(viewport.height, fitRows) : storedRowHeight;
+
+  const layout = useMemo<Layout>(
     () =>
-      widgets.map((w) => ({
-        i: w.instanceId,
-        x: w.x,
-        y: w.y,
-        w: w.w,
-        h: w.h,
-        minW: 2,
-        minH: 2,
-        static: !editMode,
-      })),
-    [widgets, editMode]
+      widgets.map((w) => {
+        const manifest = getManifest(w.widgetId);
+        return {
+          i: w.instanceId,
+          x: w.x,
+          y: w.y,
+          w: w.w,
+          h: w.h,
+          minW: clamp(manifest?.minWidth ?? 1, 1, cols),
+          minH: Math.max(1, manifest?.minHeight ?? 1),
+          maxW: cols,
+        };
+      }),
+    [widgets, cols],
   );
 
-  const handleLayoutChange = useCallback(
-    (current: GridLayout, allLayouts: GridLayouts) => {
-      const lgLayout = allLayouts.lg || current;
-      updateLayout(lgLayout);
-    },
-    [updateLayout]
+  const gridConfig = useMemo<Partial<GridConfig>>(
+    () => ({ cols, rowHeight, margin: GRID_MARGIN, containerPadding: GRID_CONTAINER_PADDING }),
+    [cols, rowHeight],
   );
+
+  const dragConfig = useMemo<Partial<DragConfig>>(
+    () => ({ enabled: editMode, handle: '.widget-header', cancel: '.no-drag', bounded: false, threshold: 3 }),
+    [editMode],
+  );
+
+  const resizeConfig = useMemo<Partial<ResizeConfig>>(
+    () => ({ enabled: editMode, handles: RESIZE_HANDLES }),
+    [editMode],
+  );
+
+  const persistLayout = useCallback<EventCallback>((finalLayout) => updateLayout(finalLayout), [updateLayout]);
+
+  const children = useMemo(
+    () =>
+      widgets.map((w) => (
+        <div key={w.instanceId}>
+          <WidgetWrapper instanceId={w.instanceId} widgetId={w.widgetId} w={w.w} h={w.h} />
+        </div>
+      )),
+    [widgets],
+  );
+
+  // The web UI previews the layout with the kiosk's real grid area.
+  useEffect(() => {
+    if (!isTauri() || viewport.width === 0 || viewport.height === 0) return;
+    const timer = setTimeout(() => {
+      reportViewport(viewport.width, viewport.height).catch((err: unknown) => {
+        console.warn('Bildschirmgrösse konnte nicht gemeldet werden:', err);
+      });
+    }, VIEWPORT_REPORT_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [viewport.width, viewport.height]);
+
+  const canRender = mounted && width > 0 && (fitRows === 0 || viewport.height > 0);
 
   return (
-    <div ref={containerRef} style={{ flex: 1, overflow: 'auto', overflowX: 'hidden', padding: '8px', maxWidth: '100vw', width: '100%' }}>
-      {width > 0 && (
-        <Responsive
-          className="layout"
-          width={width}
-          layouts={{ lg: layout, md: layout, sm: layout }}
-          breakpoints={{ lg: 1200, md: 900, sm: 600 }}
-          cols={{ lg: cols, md: 8, sm: 4 }}
-          rowHeight={rowHeight}
-          margin={[12, 12]}
-          containerPadding={[8, 8]}
-          compactor={verticalCompactor}
-          dragConfig={{
-            enabled: editMode,
-            handle: '.widget-header',
-            bounded: false,
-            threshold: 3,
-          }}
-          resizeConfig={{
-            enabled: editMode,
-            handles: ['se'],
-          }}
-          onLayoutChange={handleLayoutChange}
-        >
-          {widgets.map((w) => {
-            const def = getWidget(w.widgetId);
-            if (!def) {
-              return (
-                <div key={w.instanceId}>
-                  <WidgetWrapper instanceId={w.instanceId} title="Unbekannt">
-                    <div className="widget-error">
-                      Widget &quot;{w.widgetId}&quot; nicht gefunden.
-                    </div>
-                  </WidgetWrapper>
-                </div>
-              );
-            }
-            const Comp = def.component;
-            return (
-              <div key={w.instanceId}>
-                <WidgetWrapper
-                  instanceId={w.instanceId}
-                  title={def.manifest.name}
-                  hasSettings={def.manifest.hasSettings}
-                >
-                  <Comp instanceId={w.instanceId} width={w.w} height={w.h} />
-                </WidgetWrapper>
-              </div>
-            );
-          })}
-        </Responsive>
-      )}
+    <div ref={viewportRef} className={`dashboard${editMode ? ' is-editing' : ''}`}>
+      <div ref={containerRef} className="dashboard-measure">
+        {canRender && (
+          <GridLayout
+            className="layout"
+            width={width}
+            layout={layout}
+            gridConfig={gridConfig}
+            dragConfig={dragConfig}
+            resizeConfig={resizeConfig}
+            compactor={verticalCompactor}
+            onDragStop={persistLayout}
+            onResizeStop={persistLayout}
+          >
+            {children}
+          </GridLayout>
+        )}
+      </div>
     </div>
   );
 };

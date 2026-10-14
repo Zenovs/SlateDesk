@@ -1,429 +1,295 @@
 /**
- * Sleeper Widget – Presence detection via camera.
- * Runs face detection silently in the background.
- * After a configurable timeout of no presence, the display sleeps.
- * Any face detection or user interaction wakes it back up.
+ * Ruhemodus widget (id 'sleeper') – switches the display off when the camera
+ * has not seen anyone for `timeoutMinutes`, and on again as soon as a face is
+ * detected or the screen is used.
+ *
+ * - shares the camera with the camera widget (services/cameraService) and also
+ *   counts its 'presence:changed' events as presence
+ * - detection keeps running while the display is off, so a face wakes it every time
+ * - optional dark overlay for SLEEPER_DIM_SECONDS before switching off
+ * - respectSchedule: never wakes a display the display schedule has switched off
+ * - a display this widget switched off is switched on again on stop, unmount
+ *   and the next app start (flag in localStorage, cleared only once the display
+ *   is on); a failed switch-on is retried, and by the next touch or face
+ * - «Bildschirm an/aus» from the Fernsteuerung is followed: on lifts the veil
+ *   and restarts the countdown, off is taken over like an own switch-off
+ * - the display is only switched off while the camera really delivers frames
+ * - without a working display backend a black overlay stands in
+ *
+ * The controller behind it lives in services/sleeperController.
  */
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import * as faceapi from 'face-api.js';
-import { invoke } from '@tauri-apps/api/core';
-import type { WidgetProps, WidgetDefinition } from '../types/widget';
-import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
-import { WidgetSettingsDialog } from '../components/WidgetSettingsDialog';
-import { eventBus } from '../utils/eventBus';
+import {
+  AlertTriangle,
+  CalendarClock,
+  CameraOff,
+  Eye,
+  Moon,
+  MoonStar,
+  Play,
+  Power,
+  RotateCcw,
+  UserRound,
+  type LucideIcon,
+} from 'lucide-react';
+import type { WidgetProps } from '../types/widget';
+import { useWidgetSettings } from '../hooks/useWidgetSettings';
+import { useLayoutStore } from '../store/layoutStore';
+import { useLegacyDefaults } from '../services/legacyDefaults';
+import {
+  bool,
+  DISPLAY_UNAVAILABLE,
+  OFF_SNAPSHOT,
+  SleeperController,
+  toConfig,
+  WAKE_FAILED,
+  type SleeperSnapshot,
+  type Veil,
+} from '../services/sleeperController';
+import { displayCapabilities, type DisplayCapabilities } from '../utils/backend';
+import { CameraDeviceSelect } from './shared/CameraDeviceSelect';
+import { SLEEPER_DEFAULT_SETTINGS, SLEEPER_LEGACY_DEFAULTS } from './manifests/sleeper';
+import './styles/sleeper.css';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ── Registry (widget ↔ its settings extra) ───────────────────────────────────
 
-type SleeperState = 'idle' | 'watching' | 'sleeping' | 'error';
+const controllers = new Map<string, SleeperController>();
+const registryListeners = new Set<() => void>();
 
-interface SleeperSettings {
-  autoStart: boolean;
-  timeoutMinutes: number;
-  scoreThreshold: number;
-  inputSize: number;
-  deviceId: string;
+function setRegistered(instanceId: string, controller: SleeperController, registered: boolean): void {
+  if (registered) controllers.set(instanceId, controller);
+  else if (controllers.get(instanceId) === controller) controllers.delete(instanceId);
+  else return;
+  for (const listener of [...registryListeners]) listener();
 }
 
-const DEFAULT: SleeperSettings = {
-  autoStart: false,
-  timeoutMinutes: 180,
-  scoreThreshold: 0.4,
-  inputSize: 160,
-  deviceId: '',
+function subscribeRegistry(listener: () => void): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
+
+function useRegisteredController(instanceId: string): SleeperController | null {
+  return useSyncExternalStore(subscribeRegistry, () => controllers.get(instanceId) ?? null);
+}
+
+const subscribeNothing = (): (() => void) => () => {};
+const getOffSnapshot = (): SleeperSnapshot => OFF_SNAPSHOT;
+
+// ── Presentation ─────────────────────────────────────────────────────────────
+
+function formatMinutes(minutes: number): string {
+  if (minutes < 60) return `${minutes} Min.`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours} Std.` : `${hours} Std. ${rest} Min.`;
+}
+
+interface PhaseView {
+  icon: LucideIcon;
+  title: string;
+  detail: string | null;
+  tone: 'neutral' | 'warning' | 'error';
+}
+
+function describe(snapshot: SleeperSnapshot): PhaseView {
+  const { phase, error, notice, minutesLeft, present, displayUnavailable, wakeFailed } = snapshot;
+  switch (phase) {
+    case 'aus':
+      return { icon: CameraOff, title: 'Kamera aus', detail: 'Der Ruhemodus ist gestoppt.', tone: 'neutral' };
+    case 'startet':
+      return { icon: Eye, title: 'Wird gestartet …', detail: null, tone: 'neutral' };
+    case 'zeitplan':
+      return { icon: CalendarClock, title: 'Pausiert', detail: 'Bildschirm-Zeitplan: aus', tone: 'neutral' };
+    case 'fehler':
+      return { icon: AlertTriangle, title: 'Gestört', detail: error, tone: 'error' };
+    case 'dimmt':
+      return { icon: Moon, title: 'Wird abgedunkelt', detail: 'Der Bildschirm geht gleich aus.', tone: 'neutral' };
+    case 'schlaeft':
+      return {
+        icon: MoonStar,
+        title: 'Schläft',
+        detail: displayUnavailable ? `${DISPLAY_UNAVAILABLE} – schwarz abgedeckt` : null,
+        tone: displayUnavailable ? 'warning' : 'neutral',
+      };
+    case 'aktiv':
+      return {
+        icon: present ? UserRound : Eye,
+        title: `Aktiv · schläft in ${formatMinutes(minutesLeft ?? 1)}`,
+        detail: wakeFailed
+          ? WAKE_FAILED
+          : displayUnavailable
+            ? DISPLAY_UNAVAILABLE
+            : (notice ?? (present ? 'Person erkannt' : null)),
+        tone: wakeFailed || displayUnavailable || notice ? 'warning' : 'neutral',
+      };
+  }
+}
+
+const VEIL_HINTS: Record<Exclude<Veil, 'none'>, string> = {
+  dim: 'Niemand erkannt – der Bildschirm geht gleich aus. Berühren hält ihn wach.',
+  black: 'Ruhemodus · zum Aufwecken berühren',
+  clear: '',
 };
 
-// ─── Sleep Overlay ────────────────────────────────────────────────────────────
+// ── Widget ───────────────────────────────────────────────────────────────────
 
-interface SleepOverlayProps {
-  onWake: () => void;
-}
+function SleeperComponent({ instanceId }: WidgetProps) {
+  const [merged] = useWidgetSettings(instanceId, SLEEPER_DEFAULT_SETTINGS);
+  // An instance from the old kiosk keeps its old defaults: no auto-start, 180 minutes.
+  const settings = useLegacyDefaults('sleeper', instanceId, merged, SLEEPER_LEGACY_DEFAULTS);
+  const config = useMemo(() => toConfig(settings), [settings]);
+  const autoStart = bool(settings.autoStart, SLEEPER_DEFAULT_SETTINGS.autoStart);
+  const [controller] = useState(() => new SleeperController(instanceId, config));
+  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const editMode = useLayoutStore((s) => s.editMode);
+  const videoRef = useCallback((video: HTMLVideoElement | null) => controller.setVideo(video), [controller]);
 
-const SleepOverlay: React.FC<SleepOverlayProps> = ({ onWake }) => {
-  const overlay = (
-    <div
-      className="sleeper-overlay"
-      onClick={onWake}
-      onKeyDown={onWake}
-      role="button"
-      tabIndex={0}
-      aria-label="Zum Aufwecken klicken"
-    >
-      <div className="sleeper-overlay-hint">Tippen zum Aufwecken</div>
+  useEffect(() => {
+    controller.mount();
+    setRegistered(instanceId, controller, true);
+    return () => {
+      setRegistered(instanceId, controller, false);
+      controller.unmount();
+    };
+  }, [controller, instanceId]);
+
+  useEffect(() => controller.configure(config), [controller, config]);
+
+  // Switching auto-start on starts the Ruhemodus; switching it off leaves it running.
+  useEffect(() => {
+    if (autoStart) controller.autoStart();
+  }, [controller, autoStart]);
+
+  const view = describe(snapshot);
+  const Icon = view.icon;
+  const { phase, running, veil } = snapshot;
+
+  return (
+    <div className={`sleeper sleeper-${phase}`}>
+      <video ref={videoRef} className="sleeper-video" muted playsInline autoPlay aria-hidden="true" />
+      <Icon className="sleeper-icon" aria-hidden="true" />
+      <div className="sleeper-title" role="status">
+        {view.title}
+      </div>
+      {view.detail && <div className={`sleeper-detail ${view.tone}`}>{view.detail}</div>}
+      {(!running || phase === 'fehler' || editMode) && (
+        <div className="sleeper-actions">
+          {!running && (
+            <button type="button" className="sleeper-button primary" onClick={controller.start}>
+              <Play size={16} aria-hidden="true" />
+              Starten
+            </button>
+          )}
+          {phase === 'fehler' && (
+            <button type="button" className="sleeper-button" onClick={controller.retry}>
+              <RotateCcw size={16} aria-hidden="true" />
+              Erneut versuchen
+            </button>
+          )}
+          {running && editMode && (
+            <button type="button" className="sleeper-button" onClick={controller.stop}>
+              <Power size={16} aria-hidden="true" />
+              Stoppen
+            </button>
+          )}
+        </div>
+      )}
+      {veil !== 'none' &&
+        createPortal(
+          <div className={`sleeper-veil ${veil}`} aria-hidden="true">
+            {VEIL_HINTS[veil] && <span className="sleeper-veil-hint">{VEIL_HINTS[veil]}</span>}
+          </div>,
+          document.body,
+        )}
     </div>
   );
-  return createPortal(overlay, document.body);
-};
+}
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ── Settings extra (kiosk only) ──────────────────────────────────────────────
 
-const SleeperComponent: React.FC<WidgetProps> = ({ instanceId }) => {
-  const videoRef      = useRef<HTMLVideoElement>(null);
-  const streamRef     = useRef<MediaStream | null>(null);
-  const loopRef       = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const detectingRef  = useRef(false);
-  const lastSeenRef   = useRef<number>(Date.now());
+export function SleeperSettingsExtra({ instanceId }: { instanceId: string }) {
+  const [settings, update] = useWidgetSettings(instanceId, SLEEPER_DEFAULT_SETTINGS);
+  const controller = useRegisteredController(instanceId);
+  const snapshot = useSyncExternalStore(
+    controller?.subscribe ?? subscribeNothing,
+    controller?.getSnapshot ?? getOffSnapshot,
+  );
+  const [capabilities, setCapabilities] = useState<DisplayCapabilities | null>(null);
+  const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
 
-  const [state, setState]             = useState<SleeperState>('idle');
-  const [modelsReady, setModelsReady] = useState(false);
-  const [errorMsg, setErrorMsg]       = useState('');
-  const [faceCount, setFaceCount]     = useState(0);
-  const [timeUntilSleep, setTimeUntilSleep] = useState(0); // seconds
-  const [settingsOpen, setSettingsOpen]     = useState(false);
-
-  const { getSettings, updateSettings } = useWidgetSettingsStore();
-  const s = getSettings<SleeperSettings>(instanceId, DEFAULT);
-
-  // ─── Settings event ──────────────────────────────────────────────────────
   useEffect(() => {
-    const h = () => setSettingsOpen(true);
-    eventBus.on(`widget:openSettings:${instanceId}`, h);
-    return () => eventBus.off(`widget:openSettings:${instanceId}`, h);
-  }, [instanceId]);
-
-  // ─── Load models ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    faceapi.nets.tinyFaceDetector.loadFromUri('/models')
-      .then(() => setModelsReady(true))
-      .catch(() => setErrorMsg('Face-Detection-Modelle konnten nicht geladen werden (/public/models/).'));
-  }, []);
-
-  // ─── Stop watching ───────────────────────────────────────────────────────
-  const stopWatching = useCallback(() => {
-    detectingRef.current = false;
-    if (loopRef.current)  { clearTimeout(loopRef.current);  loopRef.current  = null; }
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setFaceCount(0);
-    setTimeUntilSleep(0);
-    setState('idle');
-  }, []);
-
-  // ─── Wake up ─────────────────────────────────────────────────────────────
-  const wakeUp = useCallback(async () => {
-    if (state !== 'sleeping') return;
-    lastSeenRef.current = Date.now();
-    setState('watching');
-    try { await invoke('wake_display'); } catch { /* ignore if not available */ }
-  }, [state]);
-
-  // ─── Detection loop (~3 fps is enough for presence) ──────────────────────
-  const runDetection = useCallback(async () => {
-    const video = videoRef.current;
-    if (!detectingRef.current || !video) return;
-    if (video.readyState < 2 || video.videoWidth === 0) {
-      loopRef.current = setTimeout(runDetection, 300);
-      return;
-    }
-
-    try {
-      const detections = await faceapi.detectAllFaces(
-        video,
-        new faceapi.TinyFaceDetectorOptions({
-          inputSize:      s.inputSize as 128 | 160 | 224 | 320,
-          scoreThreshold: s.scoreThreshold,
-        })
-      );
-      const count = detections.length;
-      setFaceCount(count);
-
-      if (count > 0) {
-        lastSeenRef.current = Date.now();
-        // Wake display if sleeping
-        setState(prev => {
-          if (prev === 'sleeping') {
-            invoke('wake_display').catch(() => {});
-            return 'watching';
-          }
-          return prev;
-        });
-      }
-    } catch { /* ignore */ }
-
-    if (detectingRef.current) loopRef.current = setTimeout(runDetection, 333);
-  }, [s.inputSize, s.scoreThreshold]);
-
-  // ─── Start watching ──────────────────────────────────────────────────────
-  const startWatching = useCallback(async () => {
-    if (state === 'watching' || !modelsReady) return;
-    setErrorMsg('');
-    lastSeenRef.current = Date.now();
-
-    const constraints: MediaStreamConstraints = {
-      video: {
-        width:  { ideal: 320 },
-        height: { ideal: 240 },
-        ...(s.deviceId ? { deviceId: { exact: s.deviceId } } : { facingMode: 'user' }),
+    let cancelled = false;
+    displayCapabilities().then(
+      (result) => {
+        if (!cancelled) setCapabilities(result);
       },
+      (err: unknown) => {
+        if (!cancelled) setCapabilitiesError(err instanceof Error ? err.message : String(err));
+      },
+    );
+    return () => {
+      cancelled = true;
     };
+  }, []);
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current  = stream;
-      const video        = videoRef.current!;
-      video.srcObject    = stream;
-      await video.play();
+  const view = describe(snapshot);
+  const status = controller ? [view.title, view.detail].filter(Boolean).join(' – ') : 'Das Widget ist nicht aktiv.';
 
-      detectingRef.current = true;
-      setState('watching');
-      runDetection();
+  let displayInfo: string | null = null;
+  if (capabilities?.backend) {
+    const environment = [capabilities.sessionType, capabilities.desktop].filter(Boolean).join(', ');
+    displayInfo = `Bildschirm-Steuerung: ${capabilities.backend}${environment ? ` (${environment})` : ''}`;
+  } else if (capabilities || capabilitiesError) {
+    const reason = capabilitiesError ? ` (${capabilitiesError})` : '';
+    displayInfo = `${DISPLAY_UNAVAILABLE}${reason} – statt auszuschalten wird der Bildschirm schwarz abgedeckt.`;
+  }
 
-      // Sleep check every 30 seconds
-      const timeoutMs = s.timeoutMinutes * 60 * 1000;
-      timerRef.current = setInterval(async () => {
-        const elapsed = Date.now() - lastSeenRef.current;
-        const remaining = Math.max(0, timeoutMs - elapsed);
-        setTimeUntilSleep(Math.round(remaining / 1000));
-
-        if (elapsed >= timeoutMs) {
-          setState(prev => {
-            if (prev === 'watching') {
-              invoke('sleep_display').catch(() => {});
-              return 'sleeping';
-            }
-            return prev;
-          });
-        }
-      }, 30_000);
-
-      // Also update countdown every minute
-      setTimeUntilSleep(timeoutMs / 1000);
-    } catch (err: unknown) {
-      const e = err as DOMException;
-      setErrorMsg(
-        e?.name === 'NotAllowedError'  ? 'Kamera-Zugriff verweigert.' :
-        e?.name === 'NotFoundError'    ? 'Keine Kamera gefunden.' :
-        `Kamera-Fehler: ${e?.message ?? 'Unbekannt'}`
-      );
-      setState('error');
-    }
-  }, [state, modelsReady, s.deviceId, s.timeoutMinutes, runDetection]);
-
-  // ─── Re-start detection loop when settings change ────────────────────────
-  useEffect(() => {
-    if (state !== 'watching') return;
-    if (loopRef.current) clearTimeout(loopRef.current);
-    runDetection();
-    return () => { if (loopRef.current) clearTimeout(loopRef.current); };
-  }, [state, runDetection]);
-
-  // ─── Auto-start ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (s.autoStart && state === 'idle' && modelsReady) startWatching();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.autoStart, modelsReady]);
-
-  // ─── Cleanup on unmount ──────────────────────────────────────────────────
-  useEffect(() => () => stopWatching(), [stopWatching]);
-
-  // ─── Countdown display ───────────────────────────────────────────────────
-  const formatCountdown = (seconds: number): string => {
-    if (seconds <= 0) return '—';
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
-  };
-
-  const dotColor =
-    state === 'watching' ? (faceCount > 0 ? '#22c55e' : '#f59e0b') :
-    state === 'sleeping' ? '#6366f1' :
-    state === 'error'    ? '#ef4444' :
-    'var(--text-tertiary)';
-
-  const stateLabel =
-    state === 'idle'     ? 'Gestoppt' :
-    state === 'watching' ? (faceCount > 0 ? `${faceCount} Person${faceCount > 1 ? 'en' : ''} erkannt` : 'Kein Gesicht') :
-    state === 'sleeping' ? 'Display schläft' :
-    `Fehler: ${errorMsg}`;
-
-  // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <>
-      {/* Hidden video element – never shown to user */}
-      <video ref={videoRef} muted playsInline style={{ display: 'none' }} />
-
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 10 }}>
-
-        {/* Status row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className={`sleeper-dot${state === 'watching' && faceCount > 0 ? ' sleeper-dot-pulse' : ''}`}
-            style={{ background: dotColor }} />
-          <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', fontWeight: 600 }}>
-            {stateLabel}
-          </span>
+    <section className="settings-section">
+      <div className="settings-section-title">Kamera und Bildschirm</div>
+      <CameraDeviceSelect
+        value={typeof settings.deviceId === 'string' ? settings.deviceId : ''}
+        onChange={(deviceId) => update({ deviceId })}
+      />
+      <div className="settings-field">
+        <div className="settings-status" role="status">
+          <span className={`settings-status-dot sleeper-status-${controller ? snapshot.phase : 'aus'}`} />
+          <span>{status}</span>
         </div>
-
-        {/* Presence icon */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          <span style={{ fontSize: 40, lineHeight: 1, filter: state === 'sleeping' ? 'grayscale(1) opacity(0.4)' : 'none' }}>
-            {state === 'sleeping' ? '😴' : state === 'watching' && faceCount > 0 ? '👤' : state === 'watching' ? '👁' : '💤'}
-          </span>
-          {state === 'watching' && (
-            <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-              Schlaf in {formatCountdown(timeUntilSleep)}
-            </span>
-          )}
-          {state === 'sleeping' && (
-            <span style={{ fontSize: 11, color: '#6366f1' }}>
-              Gesicht → aufwecken
-            </span>
-          )}
-        </div>
-
-        {/* Controls */}
-        <div style={{ display: 'flex', gap: 6 }}>
-          {state === 'idle' || state === 'error' ? (
-            <button
-              onClick={startWatching}
-              disabled={!modelsReady}
-              style={{
-                flex: 1, background: modelsReady ? 'var(--accent-color)' : 'var(--bg-secondary)',
-                border: 'none', color: modelsReady ? '#fff' : 'var(--text-tertiary)',
-                borderRadius: 6, padding: '5px 0', fontSize: 11, cursor: modelsReady ? 'pointer' : 'not-allowed', fontWeight: 600,
-              }}
-            >
-              {modelsReady ? '▶ Starten' : '⏳ Laden…'}
-            </button>
-          ) : state === 'sleeping' ? (
-            <button
-              onClick={wakeUp}
-              style={{
-                flex: 1, background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)',
-                color: '#818cf8', borderRadius: 6, padding: '5px 0', fontSize: 11, cursor: 'pointer', fontWeight: 600,
-              }}
-            >
-              ☀ Aufwecken
+        {displayInfo && <p className="settings-description sleeper-extra-info">{displayInfo}</p>}
+      </div>
+      {controller && (
+        <div className="sleeper-extra-actions">
+          {snapshot.running ? (
+            <button type="button" className="settings-btn settings-btn-danger" onClick={controller.stop}>
+              <Power size={16} aria-hidden="true" />
+              Ruhemodus stoppen
             </button>
           ) : (
-            <button
-              onClick={stopWatching}
-              style={{
-                flex: 1, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                color: '#ef4444', borderRadius: 6, padding: '5px 0', fontSize: 11, cursor: 'pointer', fontWeight: 600,
-              }}
-            >
-              ⏹ Stoppen
+            <button type="button" className="settings-btn settings-btn-primary" onClick={controller.start}>
+              <Play size={16} aria-hidden="true" />
+              Ruhemodus starten
+            </button>
+          )}
+          {snapshot.phase === 'aktiv' && (
+            <button type="button" className="settings-btn" onClick={controller.sleepNow}>
+              <MoonStar size={16} aria-hidden="true" />
+              Jetzt ausschalten (Test)
+            </button>
+          )}
+          {snapshot.phase === 'fehler' && (
+            <button type="button" className="settings-btn" onClick={controller.retry}>
+              <RotateCcw size={16} aria-hidden="true" />
+              Erneut versuchen
             </button>
           )}
         </div>
-
-        {/* Models status */}
-        {!modelsReady && (
-          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textAlign: 'center' }}>
-            Face-Detection-Modelle werden geladen…
-          </div>
-        )}
-      </div>
-
-      {/* Sleep overlay */}
-      {state === 'sleeping' && <SleepOverlay onWake={wakeUp} />}
-
-      {/* Settings */}
-      <WidgetSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Einstellungen: Sleeper">
-
-        {/* Status */}
-        <div className="settings-section">
-          <div className="settings-section-title">Status</div>
-          <div className="settings-field" style={{ display: 'flex', gap: 8 }}>
-            {state === 'watching' || state === 'sleeping' ? (
-              <button className="settings-btn settings-btn-danger" onClick={stopWatching}>⏹ Stoppen</button>
-            ) : (
-              <button className="settings-btn settings-btn-primary" onClick={startWatching} disabled={!modelsReady}>
-                {modelsReady ? '▶ Starten' : '⏳ Laden…'}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Timeout */}
-        <div className="settings-section">
-          <div className="settings-section-title">Schlaf-Timeout</div>
-          <div className="settings-field">
-            <label className="settings-label">
-              Keine Präsenz seit
-              <span className="settings-range-value">{s.timeoutMinutes} Min</span>
-            </label>
-            <p className="settings-description">Nach dieser Zeit ohne erkanntes Gesicht schläft der Display ein.</p>
-            <input type="range" className="settings-range"
-              min="1" max="360" step="1" value={s.timeoutMinutes}
-              onChange={e => updateSettings(instanceId, { timeoutMinutes: parseInt(e.target.value) })} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2 }}>
-              <span>1 Min</span><span>1h</span><span>3h</span><span>6h</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Detection */}
-        <div className="settings-section">
-          <div className="settings-section-title">Gesichtserkennung</div>
-          <div className="settings-field">
-            <label className="settings-label">
-              Erkennungsschwelle
-              <span className="settings-range-value">{Math.round(s.scoreThreshold * 100)}%</span>
-            </label>
-            <input type="range" className="settings-range"
-              min="0.1" max="0.9" step="0.05" value={s.scoreThreshold}
-              onChange={e => updateSettings(instanceId, { scoreThreshold: parseFloat(e.target.value) })} />
-          </div>
-          <div className="settings-field">
-            <label className="settings-label">Modell-Auflösung</label>
-            <select className="settings-select" value={s.inputSize}
-              onChange={e => updateSettings(instanceId, { inputSize: parseInt(e.target.value) })}>
-              <option value="128">128px – Schnellst (weniger CPU)</option>
-              <option value="160">160px – Schnell</option>
-              <option value="224">224px – Standard</option>
-              <option value="320">320px – Genau (mehr CPU)</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Behaviour */}
-        <div className="settings-section">
-          <div className="settings-section-title">Verhalten</div>
-          <div className="settings-field">
-            <div className="settings-toggle">
-              <div>
-                <div className="settings-toggle-label">Auto-Start</div>
-                <div className="settings-toggle-sublabel">Presence-Erkennung beim App-Start aktivieren</div>
-              </div>
-              <label className="toggle-switch">
-                <input type="checkbox" checked={s.autoStart}
-                  onChange={e => updateSettings(instanceId, { autoStart: e.target.checked })} />
-                <span className="toggle-switch-slider" />
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div className="settings-info-box">
-          🔒 Gesichtserkennung läuft lokal – keine Daten verlassen das Gerät. Der Kamerastream wird nicht angezeigt.
-        </div>
-      </WidgetSettingsDialog>
-    </>
+      )}
+    </section>
   );
-};
+}
 
-// ─── Widget Definition ────────────────────────────────────────────────────────
-
-export const sleeperWidgetDef: WidgetDefinition = {
-  manifest: {
-    id: 'sleeper',
-    name: 'Sleeper',
-    description: 'Display-Schlafmodus bei fehlender Präsenz',
-    version: '1.0.0',
-    author: 'SlateDesk',
-    minWidth: 2,
-    minHeight: 2,
-    defaultWidth: 2,
-    defaultHeight: 3,
-    permissions: ['camera'],
-    hasSettings: true,
-  },
-  component: SleeperComponent,
-};
+export const SleeperWidget = SleeperComponent;

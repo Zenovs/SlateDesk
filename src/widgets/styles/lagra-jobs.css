@@ -1,0 +1,162 @@
+/* lagra Aufgaben (LagraJobsWidget) */
+
+.lj {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lj-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.lj-head-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--accent-color);
+}
+
+.lj-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+}
+
+.lj-time {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.lj-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  transition: opacity var(--transition-normal);
+}
+
+.lj-list-stale {
+  opacity: 0.6;
+}
+
+.lj-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.lj-row + .lj-row {
+  border-top: 1px solid var(--border-color);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.lj-row-problem {
+  background: rgba(var(--wp-tone-rgb), 0.08);
+}
+
+.lj-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lj-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(13px, 3.6cqmin, 16px);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+}
+
+.lj-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.lj-row-problem .lj-meta {
+  color: var(--wp-tone);
+}
+
+.lj-side {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.lj-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  color: var(--accent-color);
+}
+
+.lj-duration {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lj-history {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.lj-more {
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+@container widget (max-width: 280px) {
+  .lj-side,
+  .lj-time {
+    display: none;
+  }
+}
+
+@container widget (max-height: 170px) {
+  .lj-meta,
+  .lj-history {
+    display: none;
+  }
+
+  .lj-row {
+    padding: 4px 6px;
+  }
+}

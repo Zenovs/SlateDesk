@@ -1,0 +1,295 @@
+/**
+ * planbar Projekte (PlanbarProjekteWidget) – cards in as many columns as
+ * fit; the root font size follows the widget width.
+ */
+
+.pp {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  overflow: hidden;
+  font-size: clamp(14px, 2cqw, 19px);
+}
+
+.pp-empty {
+  flex: 1;
+  min-height: 0;
+}
+
+.pp-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16em), 1fr));
+  align-content: start;
+  gap: 0.6em;
+  transition: opacity var(--transition-normal);
+}
+
+.pp-grid-stale {
+  opacity: 0.6;
+}
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
+
+.pp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45em;
+  min-width: 0;
+  padding: 0.6em 0.75em 0.7em 0.85em;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--pp-color, var(--border-color-hover));
+  border-radius: var(--radius-md);
+  background: var(--bg-widget-hover);
+}
+
+.pp-card-overdue {
+  border-color: rgba(var(--error-rgb), 0.5);
+  border-left-color: var(--pp-color, var(--error-color));
+  box-shadow: inset 0 0 0 1px rgba(var(--error-rgb), 0.15);
+}
+
+.pp-card-done {
+  opacity: 0.7;
+}
+
+.pp-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  min-width: 0;
+}
+
+.pp-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.05em;
+  font-weight: var(--font-weight-bold);
+  line-height: 1.25;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.pp-pin {
+  width: 0.85em;
+  height: 0.85em;
+  margin-right: 0.3em;
+  vertical-align: -0.05em;
+  color: var(--accent-color);
+}
+
+.pp-deadline {
+  flex-shrink: 0;
+  margin-top: 0.1em;
+  padding: 0.1em 0.55em;
+  border-radius: 999px;
+  font-size: max(12px, 0.76em);
+  font-weight: var(--font-weight-bold);
+  white-space: nowrap;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.pp-deadline-soon {
+  background: rgba(var(--warning-rgb), 0.16);
+  color: var(--warning-color);
+}
+
+.pp-deadline-overdue {
+  background: rgba(var(--error-rgb), 0.16);
+  color: var(--error-color);
+}
+
+.pp-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-width: 0;
+  margin-top: -0.25em;
+  font-size: max(12px, 0.8em);
+  color: var(--text-secondary);
+}
+
+.pp-sub-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-state {
+  flex-shrink: 0;
+  padding: 0.05em 0.5em;
+  border: 1px solid var(--border-color-hover);
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+/* ── Bars ────────────────────────────────────────────────────────────────── */
+
+.pp-tone-accent {
+  --pp-tone: var(--accent-color);
+}
+
+.pp-tone-ok {
+  --pp-tone: var(--success-color);
+}
+
+.pp-tone-warn {
+  --pp-tone: var(--warning-color);
+}
+
+.pp-tone-error {
+  --pp-tone: var(--error-color);
+}
+
+.pp-tone-info {
+  --pp-tone: var(--info-color);
+}
+
+.pp-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  min-width: 0;
+}
+
+.pp-bar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5em;
+  font-size: max(12px, 0.76em);
+  line-height: 1.25;
+}
+
+.pp-bar-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pp-bar-value {
+  flex-shrink: 0;
+  font-weight: var(--font-weight-bold);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.pp-tone-error .pp-bar-value,
+.pp-tone-error .pp-bar-label {
+  color: var(--error-color);
+}
+
+.pp-bar-track {
+  height: max(5px, 0.35em);
+  border-radius: 999px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+
+.pp-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--pp-tone);
+  transition: width var(--transition-slow);
+}
+
+/* ── Lines: milestone, notes ─────────────────────────────────────────────── */
+
+.pp-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  min-width: 0;
+  font-size: max(12px, 0.8em);
+  color: var(--text-secondary);
+}
+
+.pp-muted {
+  color: var(--text-tertiary);
+}
+
+.pp-milestone svg {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  color: var(--accent-color);
+}
+
+.pp-milestone-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.pp-milestone-day {
+  flex-shrink: 0;
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pp-milestone-late svg,
+.pp-milestone-late .pp-milestone-day {
+  color: var(--error-color);
+  font-weight: var(--font-weight-bold);
+}
+
+/* ── Members ─────────────────────────────────────────────────────────────── */
+
+.pp-members {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.1em 0.35em 0.2em 0;
+  font-size: max(12px, 0.78em);
+}
+
+.pp-members-more {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pp-more {
+  grid-column: 1 / -1;
+  padding: 0.2em 0.3em;
+  font-size: max(12px, 0.72em);
+  color: var(--text-tertiary);
+}
+
+/* ── Small widgets ───────────────────────────────────────────────────────── */
+
+@container widget (max-height: 220px) {
+  .pp-members,
+  .pp-milestone {
+    display: none;
+  }
+}
+
+@container widget (max-width: 300px) {
+  .pp-card {
+    padding: 0.5em 0.6em 0.55em 0.7em;
+  }
+
+  .pp-members {
+    display: none;
+  }
+}

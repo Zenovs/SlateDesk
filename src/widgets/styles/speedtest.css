@@ -1,0 +1,320 @@
+/**
+ * Speedtest widget. Sizes follow the widget body (size container "widget");
+ * the gauges take the space left after banner, header, history and footer,
+ * and the optional rows disappear on small widgets instead of overflowing.
+ */
+
+.speedtest {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(4px, 2cqh, 10px);
+  overflow: hidden;
+  font-size: clamp(11px, 3.4cqmin, 15px);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Banner ── */
+
+.speedtest-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.45em 0.75em;
+  border-radius: var(--radius-md);
+  border: 1px solid;
+  line-height: 1.25;
+}
+
+.speedtest-banner.is-error {
+  background: rgba(var(--error-rgb), 0.12);
+  border-color: rgba(var(--error-rgb), 0.4);
+}
+
+.speedtest-banner.is-warning {
+  background: rgba(var(--warning-rgb), 0.12);
+  border-color: rgba(var(--warning-rgb), 0.4);
+}
+
+.speedtest-banner-icon {
+  flex-shrink: 0;
+  width: 1.3em;
+  height: 1.3em;
+}
+
+.speedtest-banner.is-error .speedtest-banner-icon,
+.speedtest-banner.is-error strong {
+  color: var(--error-color);
+}
+
+.speedtest-banner.is-warning .speedtest-banner-icon,
+.speedtest-banner.is-warning strong {
+  color: var(--warning-color);
+}
+
+.speedtest-banner-text {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.6em;
+  align-items: baseline;
+}
+
+.speedtest-banner-text span {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Header ── */
+
+.speedtest-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  min-width: 0;
+  font-size: 0.85em;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.speedtest-interface {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  min-width: 0;
+  padding: 0.15em 0.6em;
+  border-radius: var(--radius-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--success-color);
+  background: rgba(var(--success-rgb), 0.12);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.speedtest-interface.is-wlan {
+  color: var(--info-color);
+  background: rgba(var(--info-rgb), 0.12);
+}
+
+.speedtest-ping {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.speedtest-time {
+  flex-shrink: 0;
+}
+
+/* ── Gauges ── */
+
+.speedtest-gauges {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  gap: 4cqw;
+}
+
+.speedtest-gauge {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--transition-slow);
+}
+
+.speedtest-gauges.is-running .speedtest-gauge {
+  opacity: 0.25;
+}
+
+/* Sized by the arc's aspect ratio and allowed to shrink, so the caption stays right below it. */
+.speedtest-gauge-svg {
+  flex: 0 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 260px;
+  aspect-ratio: 120 / 68;
+}
+
+.speedtest-gauge-caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  margin-top: 0.15em;
+  font-size: 0.8em;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.speedtest-gauge-scale {
+  font-size: 0.75em;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.speedtest-empty,
+.speedtest-running {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.speedtest-empty {
+  flex: 1;
+}
+
+.speedtest-empty svg,
+.speedtest-running svg {
+  width: clamp(20px, 9cqmin, 40px);
+  height: clamp(20px, 9cqmin, 40px);
+}
+
+.speedtest-running {
+  position: absolute;
+  inset: 0;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-bold);
+}
+
+.speedtest-spin {
+  animation: spin 1.2s linear infinite;
+}
+
+/* ── History ── */
+
+.speedtest-history {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+}
+
+.speedtest-history-legend {
+  display: flex;
+  gap: 0.9em;
+  font-size: 0.75em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.speedtest-legend-down {
+  color: var(--accent-color);
+}
+
+.speedtest-legend-up {
+  color: var(--info-color);
+}
+
+.speedtest-legend-window {
+  margin-left: auto;
+}
+
+.speedtest-history-chart {
+  height: clamp(28px, 13cqh, 80px);
+}
+
+/* ── Footer ── */
+
+.speedtest-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  padding-top: 0.35em;
+  border-top: 1px solid var(--border-color);
+}
+
+.speedtest-status {
+  min-width: 0;
+  font-size: 0.85em;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.speedtest-button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  min-height: 40px;
+  padding: 0 0.9em;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-widget-header);
+  color: var(--accent-color);
+  font-family: var(--font-family);
+  font-size: 0.9em;
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.speedtest-button:hover:not(:disabled) {
+  border-color: var(--accent-color);
+}
+
+.speedtest-button:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+/* ── Small widgets: drop the optional rows ── */
+
+@container widget (max-height: 250px) {
+  .speedtest-history {
+    display: none;
+  }
+}
+
+@container widget (max-height: 240px) {
+  .speedtest-gauge-scale,
+  .speedtest-ping {
+    display: none;
+  }
+}
+
+@container widget (max-height: 180px) {
+  .speedtest-head {
+    display: none;
+  }
+
+  .speedtest-banner-text span {
+    display: none;
+  }
+}
+
+@container widget (max-width: 300px) {
+  .speedtest-gauge-scale {
+    display: none;
+  }
+
+  .speedtest-button {
+    padding: 0 0.6em;
+  }
+}

@@ -1,0 +1,429 @@
+/**
+ * Host-Monitor widget (id 'nas'). One host: big gauge; several: list rows.
+ * Status colours come from the chart tone classes (charts.css) through
+ * currentColor; optional parts disappear on small widgets.
+ */
+
+.hostmon {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(4px, 1.8cqh, 10px);
+  overflow: hidden;
+  font-size: clamp(11px, 3.4cqmin, 15px);
+  font-variant-numeric: tabular-nums;
+}
+
+.hostmon-dot {
+  flex-shrink: 0;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.hostmon-spin {
+  animation: spin 1.2s linear infinite;
+}
+
+/* ── Empty / config state ── */
+
+.hostmon-empty {
+  flex: 1;
+}
+
+.hostmon-empty,
+.hostmon-config {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  padding: 0 0.5em;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.hostmon-empty svg,
+.hostmon-config svg {
+  width: clamp(22px, 10cqmin, 44px);
+  height: clamp(22px, 10cqmin, 44px);
+}
+
+.hostmon-empty strong {
+  color: var(--text-secondary);
+}
+
+.hostmon-config svg,
+.hostmon-config strong {
+  color: var(--warning-color);
+}
+
+/* ── Banner ── */
+
+.hostmon-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.45em 0.75em;
+  border-radius: var(--radius-md);
+  background: rgba(var(--error-rgb), 0.12);
+  border: 1px solid rgba(var(--error-rgb), 0.4);
+  line-height: 1.25;
+}
+
+.hostmon-banner-icon {
+  flex-shrink: 0;
+  width: 1.3em;
+  height: 1.3em;
+  color: var(--error-color);
+}
+
+.hostmon-banner-text {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.6em;
+  align-items: baseline;
+}
+
+.hostmon-banner-text strong {
+  color: var(--error-color);
+}
+
+.hostmon-banner-text span {
+  min-width: 0;
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Single host ── */
+
+.hostmon-single-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  min-width: 0;
+}
+
+.hostmon-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.15em 0.65em;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 0.85em;
+  font-weight: var(--font-weight-bold);
+}
+
+.hostmon-address {
+  min-width: 0;
+  font-size: 0.85em;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Gauge, caption and stats as one group, centred in the free space. */
+.hostmon-main {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3em;
+}
+
+.hostmon-gauge {
+  flex: 0 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 300px;
+  aspect-ratio: 120 / 68;
+}
+
+.hostmon-caption {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  column-gap: 0.6em;
+  text-align: center;
+  min-width: 0;
+}
+
+.hostmon-caption strong {
+  color: var(--text-primary);
+}
+
+.hostmon-caption span {
+  font-size: 0.8em;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.hostmon-stats {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.2em 0.9em;
+  font-size: 0.85em;
+  color: var(--text-secondary);
+}
+
+.hostmon-stats .is-warn {
+  color: var(--warning-color);
+}
+
+.hostmon-stats .is-error {
+  color: var(--error-color);
+}
+
+.hostmon-spark {
+  flex: 0 0 auto;
+  height: clamp(26px, 13cqh, 80px);
+}
+
+/* ── List ── */
+
+.hostmon-list {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hostmon-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65em;
+  min-height: 2.6em;
+  padding: 0.3em 0.5em;
+  border-radius: var(--radius-sm);
+}
+
+.hostmon-row:nth-child(odd) {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.hostmon-row.is-down {
+  background: rgba(var(--error-rgb), 0.1);
+}
+
+.hostmon-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.hostmon-row-name {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-bold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hostmon-row-detail {
+  font-size: 0.8em;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hostmon-row.is-down .hostmon-row-detail,
+.hostmon-row.is-unstable .hostmon-row-detail,
+.hostmon-row.is-config .hostmon-row-detail {
+  color: currentColor;
+}
+
+.hostmon-row-spark {
+  flex: 0 1 30%;
+  min-width: 0;
+  max-width: 160px;
+  height: 1.8em;
+}
+
+.hostmon-row-values {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+  min-width: 4.2em;
+}
+
+.hostmon-row-latency {
+  font-weight: var(--font-weight-bold);
+  white-space: nowrap;
+}
+
+.hostmon-row-uptime {
+  font-size: 0.8em;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* ── Footer ── */
+
+.hostmon-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  padding-top: 0.35em;
+  border-top: 1px solid var(--border-color);
+}
+
+.hostmon-foot-status {
+  min-width: 0;
+  font-size: 0.85em;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hostmon-foot-status.is-error {
+  color: var(--error-color);
+}
+
+.hostmon-button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 0.9em;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-widget-header);
+  color: var(--accent-color);
+  font-family: var(--font-family);
+  font-size: 0.9em;
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.hostmon-button:hover:not(:disabled) {
+  border-color: var(--accent-color);
+}
+
+.hostmon-button:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+/* ── Settings dialog: connection test ── */
+
+.hostmon-test {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  align-items: flex-start;
+}
+
+.hostmon-test-list {
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.hostmon-test-dot {
+  background: var(--error-color);
+}
+
+.hostmon-test-dot.is-ok {
+  background: var(--success-color);
+}
+
+.hostmon-test-name {
+  flex-shrink: 0;
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+}
+
+.hostmon-test-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-secondary);
+}
+
+.hostmon-test-text small {
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* ── Small widgets ── */
+
+@container widget (max-height: 300px) {
+  .hostmon.is-single .hostmon-spark {
+    display: none;
+  }
+}
+
+@container widget (max-height: 230px) {
+  .hostmon.is-single .hostmon-stats,
+  .hostmon-caption span {
+    display: none;
+  }
+
+  .hostmon-banner-text span {
+    display: none;
+  }
+}
+
+@container widget (max-height: 170px) {
+  .hostmon-foot {
+    display: none;
+  }
+}
+
+@container widget (max-width: 380px) {
+  .hostmon-row-spark {
+    display: none;
+  }
+}
+
+@container widget (max-width: 260px) {
+  .hostmon-row-uptime,
+  .hostmon-button-label {
+    display: none;
+  }
+
+  .hostmon-button {
+    padding: 0;
+  }
+}

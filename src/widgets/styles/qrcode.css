@@ -1,0 +1,139 @@
+/* QR-Code (QrCodeWidget) */
+
+.qr {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-height: 0;
+  overflow: hidden;
+  text-align: center;
+}
+
+.qr > .wp-message {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.qr-title {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(15px, 8cqmin, 34px);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.15;
+  color: var(--text-primary);
+}
+
+.qr-stage {
+  flex: 1;
+  align-self: stretch;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Always black on white – phones must read it in the dark theme too. */
+.qr-card {
+  box-sizing: border-box;
+  border-radius: var(--radius-lg);
+  background: #fff;
+  color: #000;
+  box-shadow: var(--shadow-sm);
+}
+
+.qr-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.qr-caption {
+  flex-shrink: 0;
+  max-width: 100%;
+  font-size: clamp(12px, 4.5cqmin, 20px);
+  line-height: 1.3;
+  color: var(--text-secondary);
+}
+
+.qr-info {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 16px;
+  max-width: 100%;
+}
+
+.qr-info-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: clamp(13px, 4.6cqmin, 20px);
+  color: var(--text-primary);
+}
+
+.qr-info-item svg {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  color: var(--accent-color);
+}
+
+.qr-info-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--font-weight-bold);
+}
+
+.qr-mono {
+  font-family: ui-monospace, 'DejaVu Sans Mono', monospace;
+  letter-spacing: 0.04em;
+}
+
+.qr-preview {
+  flex: 1;
+  min-height: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.qr-preview-note {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.qr-preview-text {
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-color);
+  background: var(--bg-widget-hover);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+@container widget (max-height: 220px) {
+  .qr-caption {
+    display: none;
+  }
+}
+
+@container widget (max-height: 160px) {
+  .qr-title,
+  .qr-info {
+    display: none;
+  }
+}

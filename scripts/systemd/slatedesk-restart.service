@@ -1,0 +1,12 @@
+# Nächtlicher, geordneter Neustart der App (ersetzt den alten stündlichen Kill).
+# try-restart startet die App nur neu, wenn sie läuft (also eine grafische
+# Sitzung besteht); während eines Updates hält auto-update.sh die Sperre und
+# der Neustart entfällt.
+
+[Unit]
+Description=SlateDesk nächtlicher Neustart
+Documentation=https://github.com/Zenovs/SlateDesk/blob/main/docs/BETRIEB.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock --nonblock --conflict-exit-code 0 %t/slatedesk-update.lock /usr/bin/systemctl --user try-restart slatedesk.service

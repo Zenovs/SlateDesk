@@ -21,7 +21,12 @@ class EventBus {
   }
 
   off(event: string, handler: EventHandler): void {
-    this.listeners.get(event)?.delete(handler);
+    const handlers = this.listeners.get(event);
+    if (!handlers) return;
+    handlers.delete(handler);
+    // Per-instance event names would otherwise pile up over weeks of adding
+    // and removing widgets on the 24/7 kiosk.
+    if (handlers.size === 0) this.listeners.delete(event);
   }
 
   emit(event: string, data?: unknown): void {

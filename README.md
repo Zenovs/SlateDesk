@@ -1,351 +1,220 @@
 # SlateDesk
 
-> Minimalistisches Smart Office Dashboard für Ubuntu – gebaut mit Tauri + React.
+Dashboard-Kiosk für das Büro – Tauri 2, React 19 und Rust, mit Fernsteuerung per Handy im LAN.
 
-![Phase](https://img.shields.io/badge/Phase-4a%20Widget--Settings-blue)
-![License](https://img.shields.io/badge/License-Open%20Source-green)
-![Platform](https://img.shields.io/badge/Platform-Ubuntu-orange)
+SlateDesk läuft rund um die Uhr im Vollbild auf einem Bildschirm-PC (Ubuntu GNOME, Wayland, WebKitGTK)
+und zeigt Widgets in einem frei einteilbaren Raster: Uhr, Kalender, Wetter, Nachrichten, Aufgaben,
+Netzwerk-Status, KI-Assistent und die Arbeitsdaten aus **lagra** und **planbar**. Bedient wird der Kiosk
+über die **Fernsteuerung**, eine Web-Oberfläche, die die App selbst im Büro-LAN bereitstellt (Port 7380,
+Anmeldung mit PIN).
 
-## 📊 Übersicht
+Den Zustand (Layout, Widget-Einstellungen, Inhalte, Zugangsdaten) verwaltet das Rust-Backend in einer
+Datei auf dem Gerät. Kiosk und Fernsteuerung zeigen Änderungen sofort gegenseitig an.
 
-SlateDesk ist ein erweiterbares Desktop-Dashboard für den Office-Einsatz. Es läuft als native Tauri-App auf Ubuntu und bietet ein Widget-basiertes Grid-Layout mit Dark/Light Theme.
+## Funktionen
 
-### Phase 1 Features
+### Kiosk
 
-- ✅ **Grid-Layout Dashboard** – Widgets per Drag & Drop positionieren und skalieren
-- ✅ **Dark/Light Theme** – Zwei Themes inspiriert von modernem Dashboard-Design
-- ✅ **Kalender-Widget** – Office 365 Termine (Mock-Daten)
-- ✅ **Uhr-Widget** – Aktuelle Zeit und Datum
-- ✅ **Wetter-Widget** – Wettervorhersage (Mock-Daten)
-- ✅ **Nachrichten-Widget** – Ungelesene Nachrichten (Mock-Daten)
-- ✅ **Aufgaben-Widget** – Todo-Liste mit Kategorien
-- ✅ **Widget-Architektur** – Einfach erweiterbar mit Registry-Pattern
-- ✅ **Event Bus** – Inter-Widget Kommunikation
-- ✅ **Layout Persistenz** – Widget-Positionen werden in localStorage gespeichert
+- Vollbild ohne Fensterrahmen, startet nach der automatischen Anmeldung von selbst
+- Raster mit frei wählbarer Spaltenzahl; Widgets per Ziehen verschieben und in der Grösse ändern
+  («Bearbeiten» in der oberen Leiste oder in der Fernsteuerung)
+- Design Dunkel/Hell mit wählbarer Akzentfarbe
+- obere Leiste ausblendbar (antippen der Ecke oben rechts blendet sie für 30 Sekunden ein),
+  Mauszeiger verschwindet nach einstellbarer Zeit
+- Bildschirmzeiten: Bildschirm z. B. nachts und am Wochenende aus, eine Berührung weckt ihn
+- Update-Knopf in der oberen Leiste, nächtliche Updates mit automatischem Rollback
 
-### Widget-Settings-System (Erweitert)
+### Widgets
 
-- ✅ **Generisches Settings-System** – Jedes Widget kann eigene Einstellungen haben
-- ✅ **Settings-Button** – Zahnrad-Icon im Widget-Header (nur bei Widgets mit Settings)
-- ✅ **Erweiterter Settings-Dialog** – 600px Modal mit Scroll, Sektionen und Validierung
-- ✅ **Persistente Settings** – Widget-Einstellungen in localStorage (Widget-ID basiert)
-- ✅ **Event-basiert** – WidgetWrapper kommuniziert über EventBus mit Widgets
-- ✅ **Uhr-Widget Settings** – Zeitformat (12h/24h), Zeitzone, Sekunden, Datumsformat
-- ✅ **Kalender-Widget Settings** – Quelle, Zeitbereich, max. Termine
-- ✅ **Wetter-Widget Settings** – Standort, Temperatur-Einheit (°C/°F), API-Key, Update-Intervall
-- ✅ **News-Widget Settings** – Kategorie, Land, Sprache, Artikelanzahl, API-Key
-- ✅ **Aufgaben-Widget Settings** – Sortierung, Filter (Alle/Offen/Erledigt), Quelle
-- ✅ **Kamera-Widget Settings** – Verbesserte Permission-Anleitung, Schritt-für-Schritt Guide
-- ✅ **Sofortige Aktualisierung** – Widgets reagieren sofort auf Settings-Änderungen
+| Kategorie | Widget | Inhalt |
+|---|---|---|
+| Zeit & Kalender | Uhr | digital oder analog, Datum, Kalenderwoche, Weltzeituhren |
+| | Kalender | ICS-Kalender (Office 365, Google, iCloud) als Agenda, Tagesansicht oder Raumbelegung; Option «Nur Besetzt» |
+| Information | Wetter | MeteoSwiss ICON-CH2 bzw. Open-Meteo, Stundenverlauf, Vorhersage, Luftqualität und Pollen – ohne API-Schlüssel |
+| | Nachrichten | RSS-/Atom-Feeds (z. B. SRF, NZZ) als Liste, wechselnde Schlagzeile oder Laufband |
+| Büro | Pinnwand | Mitteilungen, erfasst in der Fernsteuerung, mit Sichtbarkeitszeitraum |
+| | Aufgaben | gemeinsame Aufgabenlisten mit Fälligkeit, Priorität und Zuständigkeit |
+| | QR-Code | Gäste-WLAN, Webadresse oder Text |
+| Medien | Volumio | aktueller Titel mit Wiedergabe- und Lautstärke-Tasten |
+| Netzwerk | Speedtest | Download, Upload und Ping (Cloudflare), Verlauf |
+| | Host-Monitor | Erreichbarkeit von NAS, Servern, Druckern (Ping, TCP-Port, HTTP) mit Verlauf |
+| | Kiosk-Status | Laufzeit, Temperatur, Auslastung und QR-Code zur Fernsteuerung |
+| Sensorik & KI | Gesichtserkennung | Kamerabild mit lokaler Gesichtserkennung (face-api.js), auch nur als Personenzahl |
+| | Ruhemodus | schaltet den Bildschirm aus, wenn niemand da ist, und weckt ihn per Kamera |
+| | KI-Assistent | Sprach- und Textassistent mit OpenAI oder lokal mit Ollama / LM Studio |
+| lagra | lagra Übersicht | Server, Aufgaben, Virenscanner, DAM und mehr – nur Zahlen und Zustände |
+| | lagra Aufgaben | Hintergrundaufgaben: letzter Lauf, Fortschritt, nächster Lauf |
+| | lagra: Neu im DAM | Diashow oder Raster der zuletzt aufgenommenen Bilder |
+| planbar | planbar Aufgaben | Arbeitsliste ausgewählter Personen, nach Fälligkeit gruppiert, optional abhaken |
+| | planbar Projekte | Fortschritt, Termin, Stunden, Meilenstein und Beteiligte |
+| | planbar News | Beiträge der planbar-Infowand |
+| | planbar Zeit | erfasste Stunden von heute und dieser Woche, laufender Timer |
 
-### Gesichtserkennung (verbessert)
+Einrichtung der Datenquellen: [API_SETUP.md](API_SETUP.md).
 
-- ✅ **Kamera-Widget** – Live-Kamera-Feed via WebRTC (getUserMedia)
-- ✅ **Gesichtserkennung** – Browser-basiert mit face-api.js (TinyFaceDetector)
-- ✅ **Kamera-Auswahl** – Dropdown aller verfügbaren Kameras
-- ✅ **Kamera starten/stoppen** – Button im Widget und in den Einstellungen
-- ✅ **Gesichtserkennung an/aus** – Toggle in den Einstellungen
-- ✅ **Erkennungs-Schwellenwert** – Slider für Score Threshold
-- ✅ **Auto-Start** – Kamera kann beim Widget-Laden automatisch starten
-- ✅ **Verbesserte Permission-UI** – Schritt-für-Schritt Anleitung, Info-Boxen, Auto-Retry
-- ✅ **Error-Handling** – Klare Fehlermeldungen mit Tipps zur Fehlerbehebung
-- ✅ **Status-Anzeige** – "Gesicht erkannt ✅" / "Kein Gesicht ❌" + Anzahl
-- ✅ **Bounding Boxes** – Visuelle Markierung erkannter Gesichter mit Konfidenz
-- ✅ **Privatsphäre** – 100% lokale Verarbeitung, keine Daten werden übertragen
+### Fernsteuerung
 
-### Phase 2a Features
+Web-Oberfläche für Handy, Tablet und PC im selben Netzwerk: `http://<IP-des-Kiosks>:7380`, Anmeldung mit dem
+PIN, den der Kiosk unter **Bearbeiten → Fernsteuerung** anzeigt – dort steht auch die Adresse als QR-Code.
 
-- ✅ **Wetter-Widget Live** – OpenWeatherMap API-Integration mit Echtzeit-Wetterdaten
-- ✅ **Nachrichten-Widget** – NewsAPI-Integration mit Top-Schlagzeilen
-- ✅ **API-Konfigurationssystem** – Sichere Verwaltung von API-Keys über `.env`-Datei
-- ✅ **Fallback auf Mock-Daten** – App funktioniert auch ohne API-Keys
-- ✅ **Error-Handling** – Netzwerkfehler, API-Fehler und fehlende Keys werden abgefangen
-- ✅ **Status-Anzeige** – Widgets zeigen Live/Offline-Status an
+- **Übersicht** – Zustand des Geräts, Schnellaktionen (neu laden, identifizieren, Bildschirm aus/an,
+  Bearbeiten-Modus, Design), Live-Vorschau des Bildschirms
+- **Layout** – Widgets hinzufügen, verschieben, skalieren, duplizieren, entfernen
+- **Widgets** – Einstellungen jedes Widgets, dasselbe Formular wie am Kiosk
+- **Inhalte** – Pinnwand und Aufgaben pflegen
+- **lagra**, **planbar** – Verbindung einrichten, testen und Daten in der Vorschau prüfen
+- **Kiosk** – Name, Bedienung am Kiosk, Bildschirmzeiten, Design, Raster
+- **System** – Geräteinfo, Update mit Fortschritt, Neustart, PIN ändern, Sicherung herunterladen und
+  wiederherstellen
 
-## 🚀 Installation (Ubuntu / Kiosk-Gerät)
+Anleitung: [docs/FERNSTEUERUNG.md](docs/FERNSTEUERUNG.md).
 
-### Schritt 1 – Voraussetzungen installieren
+## Schnellstart (Entwicklung)
 
-```bash
-sudo apt update
-sudo apt install -y git curl build-essential libwebkit2gtk-4.1-dev \
-  libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-  libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
-```
+Voraussetzungen:
 
-Node.js installieren (falls noch nicht vorhanden):
+- Node.js 22.12 oder neuer (20.19 geht auch; Vite 8 verlangt eine dieser Versionen)
+- Rust 1.90 oder neuer über [rustup](https://rustup.rs)
+- unter Ubuntu/Debian die Build-Abhängigkeiten von Tauri:
 
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-```
-
-Rust installieren (falls noch nicht vorhanden):
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
-```
-
-### Schritt 2 – Nutzer anlegen & Repo klonen
-
-```bash
-sudo useradd -m -s /bin/bash slatedesk
-sudo -u slatedesk git clone https://github.com/Zenovs/SlateDesk.git /home/slatedesk/SlateDesk
-```
-
-### Schritt 3 – Abhängigkeiten & Build
-
-```bash
-cd /home/slatedesk/SlateDesk
-sudo -u slatedesk npm install
-sudo -u slatedesk npx tauri build
-```
-
-> Der Build dauert **10–20 Minuten** (Rust-Kompilierung).
-
-### Schritt 4 – App installieren
-
-```bash
-sudo dpkg -i /home/slatedesk/SlateDesk/src-tauri/target/release/bundle/deb/*.deb
-```
-
-### Schritt 5 – Autostart beim Boot einrichten
-
-```bash
-sudo mkdir -p /etc/systemd/system
-sudo tee /etc/systemd/system/slatedesk.service > /dev/null << 'EOF'
-[Unit]
-Description=SlateDesk Dashboard
-After=graphical.target
-
-[Service]
-Type=simple
-User=slatedesk
-Environment=DISPLAY=:0
-ExecStart=/usr/bin/slate-desk
-# Fallback falls Binary noch "app" heisst (vor Update): ExecStart=/usr/bin/app
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=graphical.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable slatedesk.service
-sudo systemctl start slatedesk.service
-```
-
-### Schritt 6 – Auto-Update-System einrichten
-
-```bash
-sudo bash /home/slatedesk/SlateDesk/scripts/setup-auto-update.sh
-```
-
----
-
-### Manuelles Update (sofort, ohne zu warten)
-
-```bash
-bash /home/slatedesk/SlateDesk/scripts/auto-update.sh
-```
-
-Fortschritt verfolgen:
-
-```bash
-tail -f /home/slatedesk/slatedesk-update.log
-```
-
----
-
-### Vollständige Deinstallation (Hard Reset)
-
-Löscht SlateDesk komplett – App, Nutzer, Daten, Services, Logs.
-
-```bash
-# 1. Service stoppen & deaktivieren
-sudo systemctl stop slatedesk.service slatedesk-boot-update.service 2>/dev/null || true
-sudo systemctl disable slatedesk.service slatedesk-boot-update.service 2>/dev/null || true
-sudo rm -f /etc/systemd/system/slatedesk.service
-sudo rm -f /etc/systemd/system/slatedesk-boot-update.service
-sudo systemctl daemon-reload
-
-# 2. App deinstallieren
-sudo dpkg -r slate-desk 2>/dev/null || true
-
-# 3. Cronjob entfernen
-sudo crontab -u slatedesk -r 2>/dev/null || true
-
-# 4. Sudo-Rechte entfernen
-sudo rm -f /etc/sudoers.d/slatedesk-update
-
-# 5. Nutzer, Home-Verzeichnis & alle Daten löschen
-sudo userdel -r slatedesk 2>/dev/null || true
-
-# 6. Systemd neu laden
-sudo systemctl daemon-reload
-```
-
-Danach ist SlateDesk vollständig entfernt. Für eine Neuinstallation die Schritte oben ab **Schritt 1** durchführen.
-
----
-
-### Entwicklung (macOS / lokal)
+  ```bash
+  sudo apt install build-essential pkg-config curl git libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev \
+    libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libxdo-dev
+  ```
 
 ```bash
 git clone https://github.com/Zenovs/SlateDesk.git
 cd SlateDesk
-npm install
-npx tauri dev
+npm ci
+
+npm run dev       # nur die Oberfläche im Browser (Vite, http://localhost:5173)
+npx tauri dev     # die ganze App: Rust-Backend, Kiosk-Fenster und Fernsteuerung auf Port 7380
 ```
 
-### API-Keys konfigurieren (optional)
+- `npm run dev` startet nur Vite. Der Kiosk unter `http://localhost:5173` speichert dann im localStorage des
+  Browsers; Widgets, die das Rust-Backend brauchen (Wetter, Kalender, Netzwerk, lagra, planbar …), melden
+  «Nur im Kiosk verfügbar». Die Fernsteuerung unter `http://localhost:5173/remote.html` leitet `/api` an
+  `127.0.0.1:7380` weiter und braucht deshalb eine laufende App (`npx tauri dev`).
+- `npx tauri dev` startet Vite selbst (`beforeDevCommand`) und öffnet das Kiosk-Fenster im Vollbild und
+  immer im Vordergrund. Im Dev-Build lässt es sich mit Alt+F4 schliessen, im Release-Build nicht. Die App
+  legt ihren Zustand wie im Betrieb unter `~/.config/com.slatedesk.app/` an und startet die Fernsteuerung
+  auf Port 7380 (abschalten mit `SLATEDESK_REMOTE_DISABLED=1 npx tauri dev`). Es läuft immer nur eine
+  Instanz – ein zweiter Start holt das vorhandene Fenster nach vorne.
+- Ein Skript `npm run tauri` gibt es nicht; die Tauri-CLI ist als Abhängigkeit installiert und läuft über `npx tauri`.
+
+### Prüfen
 
 ```bash
-cp .env.example .env
-nano .env
+npm test            # Unit-Tests (Vitest)
+npm run lint        # ESLint
+npm run build       # TypeScript-Prüfung und Produktions-Build der Oberfläche (dist/)
+cd src-tauri && cargo test && cargo clippy
 ```
 
-👉 **Ausführliche Anleitung:** [API_SETUP.md](./API_SETUP.md)
+`src/widgets/catalog.test.ts` prüft die Widget-Manifeste (Icons, Einstellungen, Geheimnis-Felder) –
+Details in [docs/WIDGET_DEVELOPMENT.md](docs/WIDGET_DEVELOPMENT.md).
 
-> Ohne API-Keys funktioniert die App mit Mock-Daten.
+## Installation auf dem Kiosk
 
-## 📁 Projektstruktur
+Der Kiosk baut SlateDesk selbst aus diesem Repository und läuft als Benutzer `slatedesk` mit
+systemd-User-Diensten – ohne Root-Rechte und ohne `.deb`-Paket:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/scripts/setup.sh -o /tmp/slatedesk-setup.sh
+sudo bash /tmp/slatedesk-setup.sh --autologin
+```
+
+Installation, Migration vom alten `.deb`-Setup, Updates, Rollback, Logs, Datensicherung und Fehlersuche:
+**[docs/BETRIEB.md](docs/BETRIEB.md)**. Vor der ersten Migration eines bestehenden Kiosks dort den
+Abschnitt «Migration vom alten Setup» lesen.
+
+## Konfiguration
+
+Es gibt keine `.env`-Datei und keine API-Schlüssel zur Build-Zeit. Eingestellt wird alles zur Laufzeit:
+Widgets in ihren Einstellungen (am Kiosk über das Zahnrad im Bearbeiten-Modus oder in der Fernsteuerung
+unter **Widgets**), lagra und planbar auf ihren eigenen Seiten der Fernsteuerung.
+
+| Datei (im Home des Kiosk-Benutzers) | Inhalt |
+|---|---|
+| `~/.config/com.slatedesk.app/state.json` | Layout, Widget-Einstellungen, Design, Kiosk-Einstellungen, lagra, planbar, Aufgaben, Pinnwand (Rechte 0600, vorherige Fassung als `state.json.bak`) |
+| `~/.config/com.slatedesk.app/remote.json` | Fernsteuerung: `enabled`, `port`, `pin` (Rechte 0600, nie über HTTP lesbar) |
+
+Umgebungsvariablen der App (im Betrieb per systemd-Drop-in, siehe BETRIEB.md):
+
+| Variable | Wirkung |
+|---|---|
+| `SLATEDESK_REMOTE_PORT` | Port der Fernsteuerung (Standard 7380) |
+| `SLATEDESK_REMOTE_DISABLED=1` | Fernsteuerung abschalten |
+| `SLATEDESK_REMOTE_HOSTS` | Zusätzliche Host-Namen der Fernsteuerung (kommagetrennt), z. B. ein DNS-Name mit öffentlicher Endung |
+| `SLATEDESK_HOME` | Git-Checkout für Update-Prüfung und -Start (Standard `~/SlateDesk`) |
+| `WEBKIT_DISABLE_DMABUF_RENDERER=1` | Abhilfe bei weissem Fenster mit manchen Grafiktreibern |
+
+## Sicherheit
+
+- **PIN:** Beim ersten Start erzeugt die App einen zufälligen 6-stelligen PIN; ändern lässt er sich in der
+  Fernsteuerung unter **System** (6 bis 12 Ziffern). Nach 5 Fehlversuchen innert 5 Minuten sperrt die
+  Anmeldung für diese IP-Adresse; 20 Fehlversuche aller Geräte zusammen sperren jede PIN-Anmeldung für
+  15 Minuten (bei Wiederholung länger). Eine Anmeldung gilt 30 Tage, endet aber mit jedem Neustart der App
+  (täglich 04:00, nach Updates); eine PIN-Änderung meldet alle anderen Browser ab.
+- **Nur im LAN:** Die Fernsteuerung spricht unverschlüsseltes HTTP und lauscht auf allen Netzwerkschnittstellen.
+  Kein Port-Forwarding im Router einrichten; von ausserhalb nur über VPN. Mit ufw den Port auf das
+  Büro-Subnetz beschränken (`setup.sh --ufw` oder
+  `sudo ufw allow from 192.168.19.0/24 to any port 7380 proto tcp`).
+- **Zugangsdaten:** Felder, deren Name auf `apiKey`, `token`, `password` oder `secret` endet, gibt das Backend
+  über HTTP nie heraus – die Fernsteuerung und der Export zeigen nur «gesetzt». Wird über die Fernsteuerung
+  eine Adresse (`…url`, `…host`) geändert, löscht der Kiosk das Geheimnis daneben, damit niemand ein Token
+  auf einen fremden Server umleiten kann. Das lagra-Token und der planbar-Schlüssel verlassen das
+  Rust-Backend nie; der Browser fragt lagra und planbar nur über den Kiosk ab.
+- **Nicht geheim:** ICS-Links von Kalendern und andere Adressen gelten nicht als Geheimnis und stehen im
+  Klartext in der Fernsteuerung und im Export.
+- **Webschutz:** Änderungen über die API verlangen den Header `X-SlateDesk: 1`; das Sitzungs-Cookie ist
+  `HttpOnly` und `SameSite=Strict`; die Web-Oberfläche läuft mit strikter Content-Security-Policy und darf
+  nicht eingebettet werden. Ohne Anmeldung liefert die API nur den Health-Check (`/api/health`, mit
+  Versionsnummer) und den Namen des Kiosks.
+- **Kiosk:** Das Fenster lässt sich im Release-Build nicht schliessen. Die Webansicht erhält nur Kamera und
+  Mikrofon (Gesichtserkennung, Ruhemodus, KI-Assistent); alle anderen Berechtigungen werden abgelehnt.
+- **Besucherbereich:** lagra-Widgets zeigen standardmässig nur Zahlen und Zustände, der Kalender kann Termine
+  als «Besetzt» anonymisieren, der Kiosk-Status zeigt den PIN nie.
+
+## Projektstruktur
 
 ```
-slatedesk/
+SlateDesk/
+├── index.html, remote.html   Einstiegsseiten: Kiosk und Fernsteuerung
 ├── src/
-│   ├── components/     # UI-Komponenten (TopBar, Dashboard, WidgetWrapper)
-│   ├── widgets/        # Widget-Implementierungen
-│   ├── styles/         # CSS (Design Tokens, Global, Widgets)
-│   ├── store/          # Zustand State Management (Theme, Layout, Widget Settings)
-│   ├── types/          # TypeScript Type Definitions
-│   ├── utils/          # Widget Registry, Event Bus, Mock Data
-│   ├── App.tsx         # Haupt-App Komponente
-│   └── main.tsx        # Entry Point
-├── src-tauri/          # Tauri (Rust) Backend
-└── public/             # Statische Assets
+│   ├── App.tsx, main.tsx     Kiosk-Oberfläche
+│   ├── components/           Kiosk-Shell: Dashboard, obere Leiste, Widget-Rahmen, Dialoge
+│   │   └── settings/         SettingsForm (Einstellungen für Kiosk und Fernsteuerung), Icons, Auswahllisten
+│   ├── widgets/              Widgets: <Name>Widget.tsx, manifests/, styles/, shared/, catalog.ts, index.ts
+│   ├── remote/               Fernsteuerung: Seiten, UI-Bausteine, Sitzung, API-Client
+│   ├── state/                gemeinsamer Zustand: Typen, Standardwerte, Operationen, Transport (Tauri, HTTP, localStorage)
+│   ├── hooks/                useWidgetSettings, usePolling, useElementSize, Bildschirmzeiten, Mauszeiger
+│   ├── lagra/, planbar/      Clients und Typen der Integrationen
+│   ├── services/             Kamera und Gesichtserkennung
+│   ├── store/                Kiosk-Stores über dem gemeinsamen Zustand (Bearbeiten-Modus, Design)
+│   ├── styles/               Design-Tokens und globale Styles
+│   ├── types/                Widget-, Einstellungs- und Raster-Typen
+│   └── utils/                backend.ts (Tauri-Befehle), Widget-Registry, Event-Bus
+├── src-tauri/src/            Rust-Backend
+│   ├── state.rs              state.json, Operationen, Schwärzen von Geheimnissen
+│   ├── web.rs, remote.rs     Webserver der Fernsteuerung, PIN, Sitzungen
+│   ├── http.rs, feeds.rs, calendar.rs, net.rs, ollama.rs   externe Abfragen der Widgets
+│   ├── lagra.rs, planbar.rs  Integrationen (Token bzw. Schlüssel bleiben im Backend)
+│   └── display.rs, system.rs, update.rs, qr.rs
+├── scripts/                  setup.sh, auto-update.sh, uninstall.sh, systemd/ (User-Dienste und Timer)
+├── public/models/            Modell der Gesichtserkennung
+└── docs/                     BETRIEB.md, FERNSTEUERUNG.md, WIDGET_DEVELOPMENT.md
 ```
 
-## 🧩 Neues Widget erstellen
+## Dokumentation
 
-1. **Erstelle eine Datei** in `src/widgets/MeinWidget.tsx`:
+| Dokument | Inhalt |
+|---|---|
+| [docs/BETRIEB.md](docs/BETRIEB.md) | Installation, Migration, Updates, Logs, Sicherung, Fehlersuche |
+| [docs/FERNSTEUERUNG.md](docs/FERNSTEUERUNG.md) | Anleitung zur Web-Oberfläche |
+| [API_SETUP.md](API_SETUP.md) | Datenquellen und Integrationen einrichten (Wetter, Feeds, Kalender, Volumio, KI, lagra, planbar) |
+| [docs/WIDGET_DEVELOPMENT.md](docs/WIDGET_DEVELOPMENT.md) | eigene Widgets entwickeln |
 
-```tsx
-import { WidgetProps, WidgetDefinition } from '../types/widget';
+## Lizenz
 
-const MeinWidget: React.FC<WidgetProps> = ({ instanceId, width, height }) => {
-  return <div>Mein Widget Inhalt</div>;
-};
-
-export const meinWidgetDef: WidgetDefinition = {
-  manifest: {
-    id: 'mein-widget',
-    name: 'Mein Widget',
-    description: 'Beschreibung',
-    version: '1.0.0',
-    author: 'Dein Name',
-    minWidth: 2,
-    minHeight: 2,
-    defaultWidth: 4,
-    defaultHeight: 3,
-    permissions: [],
-  },
-  component: MeinWidget,
-};
-```
-
-2. **Registriere es** in `src/widgets/index.ts`:
-
-```tsx
-import { meinWidgetDef } from './MeinWidget';
-registerWidget(meinWidgetDef);
-```
-
-3. Fertig! Das Widget erscheint im Widget-Picker.
-
-### Widget mit Einstellungen erstellen
-
-Um ein Widget mit Settings zu versehen:
-
-1. **Setze `hasSettings: true`** im Manifest:
-```tsx
-manifest: {
-  ...
-  hasSettings: true,
-},
-```
-
-2. **Importiere den Settings-Store und EventBus:**
-```tsx
-import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
-import { eventBus } from '../utils/eventBus';
-```
-
-3. **Höre auf das Settings-Event im Widget:**
-```tsx
-useEffect(() => {
-  const handler = () => setSettingsOpen(true);
-  eventBus.on(`widget:openSettings:${instanceId}`, handler);
-  return () => eventBus.off(`widget:openSettings:${instanceId}`, handler);
-}, [instanceId]);
-```
-
-4. **Verwende den WidgetSettingsDialog:**
-```tsx
-<WidgetSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Mein Widget – Einstellungen">
-  {/* Settings-Formular */}
-</WidgetSettingsDialog>
-```
-
-Siehe `CameraWidget.tsx` als Referenz-Implementierung.
-
-## 🔄 Auto-Update
-
-SlateDesk verfügt über ein vollautomatisches Update-System:
-
-- **Täglicher Check** um 01:00 Uhr per Cronjob
-- **Boot-Check** falls der Rechner um 01:00 aus war (systemd Service)
-- **Automatischer Rollback** bei Fehlern mit Backup
-- **Kein manueller Eingriff** nötig (sudo ohne Passwort für dpkg)
-
-### Setup
-
-```bash
-sudo bash scripts/setup-auto-update.sh
-```
-
-📖 Vollständige Dokumentation: [AUTO_UPDATE.md](AUTO_UPDATE.md)
-
-## 🎨 Design System
-
-- **Spacing:** 8px-Raster
-- **Border Radius:** 8px (Standard)
-- **Animationen:** 150–250ms ease
-- **Font:** Lato / Roboto
-- **Dark Theme:** Dunkles Grau + Orange Akzente
-- **Light Theme:** Türkis/Teal + Graue Karten
-
-## 📍 Roadmap
-
-| Phase | Features |
-|-------|----------|
-| **1 (MVP)** ✅ | Grid-Layout, Themes, Kalender-Widget (Mock), Widget-Architektur |
-| **2a** ✅ | Wetter-API (OpenWeatherMap), News-API (NewsAPI), API-Key-Verwaltung |
-| **2b** | Office 365 OAuth, Live-Kalender, Synology NAS Widget |
-| **3** | Lokale AI (Mistral/Phi-3), Sprachsteuerung |
-| **4a** ✅ | Gesichtserkennung Phase 1 (Face Detection, Kamera-Widget) |
-| **4b** | Gesichtserkennung Phase 2 (Face Recognition), Kiosk-Modus, .deb Installer |
-| **5** | Widget-Marketplace, erweiterte Sicherheit |
-
-## 🛡️ Sicherheitskonzept
-
-- **Zero Trust:** Neue Widgets sind standardmässig deaktiviert
-- **Sandbox:** Widgets haben keinen direkten Systemzugriff
-- **Deklarative Permissions:** Im Widget-Manifest definiert
-- **Lokale Datenhaltung:** Keine Cloud-Abhängigkeit
-
-## 📝 Lizenz
-
-Open Source – Details folgen.
+Noch nicht festgelegt.

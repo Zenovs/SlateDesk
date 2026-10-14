@@ -1,42 +1,42 @@
 /**
- * Theme Store – Manages light/dark theme state.
- * Persists theme preference to localStorage.
+ * Theme Store – light/dark mode and accent colour.
+ * Mirrors `state.theme` of the backend state (useAppState).
  */
 import { create } from 'zustand';
-import type { ThemeMode } from '../types/widget';
+import { useAppState } from '../state/appState';
+import { themeActions } from '../state/dataActions';
+import type { ThemeData, ThemeMode } from '../state/types';
 
 interface ThemeState {
   theme: ThemeMode;
-  accentColor: string;
+  /**
+   * User-chosen accent colour (hex) or `null` = the active theme's own accent.
+   * When null, don't set `--accent-color` inline (remove the property), so the
+   * theme tokens apply.
+   */
+  accentColor: string | null;
   toggleTheme: () => void;
   setTheme: (theme: ThemeMode) => void;
-  setAccentColor: (color: string) => void;
+  /** `null` resets to the theme default. */
+  setAccentColor: (color: string | null) => void;
 }
 
-const getStoredTheme = (): ThemeMode => {
-  const stored = localStorage.getItem('slatedesk-theme');
-  return (stored === 'light' || stored === 'dark') ? stored : 'dark';
-};
+const fromTheme = (theme: ThemeData) => ({ theme: theme.mode, accentColor: theme.accent ?? null });
 
-const getStoredAccent = (): string => {
-  return localStorage.getItem('slatedesk-accent') || '#e8642b';
-};
-
-export const useThemeStore = create<ThemeState>((set) => ({
-  theme: getStoredTheme(),
-  accentColor: getStoredAccent(),
-  toggleTheme: () =>
-    set((state) => {
-      const next = state.theme === 'dark' ? 'light' : 'dark';
-      localStorage.setItem('slatedesk-theme', next);
-      return { theme: next };
-    }),
+export const useThemeStore = create<ThemeState>()(() => ({
+  ...fromTheme(useAppState.getState().state.theme),
+  toggleTheme: () => {
+    void themeActions.toggle();
+  },
   setTheme: (theme) => {
-    localStorage.setItem('slatedesk-theme', theme);
-    set({ theme });
+    void themeActions.setMode(theme);
   },
   setAccentColor: (color) => {
-    localStorage.setItem('slatedesk-accent', color);
-    set({ accentColor: color });
+    void themeActions.setAccent(color);
   },
 }));
+
+const unsubscribe = useAppState.subscribe((next, prev) => {
+  if (next.state.theme !== prev.state.theme) useThemeStore.setState(fromTheme(next.state.theme));
+});
+import.meta.hot?.dispose(unsubscribe);

@@ -1,0 +1,175 @@
+/* lagra: Neu im DAM (LagraNeuWidget) – the image fills the widget body edge to edge. */
+
+.ln {
+  position: relative;
+  /* Cancel the widget body padding: pictures reach the (clipped, rounded) widget edge. */
+  margin: calc(-1 * var(--spacing-md));
+  height: calc(100% + 2 * var(--spacing-md));
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+.ln-stale {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.ln-stale .wp-banner {
+  max-width: 100%;
+  background: var(--bg-widget);
+  box-shadow: var(--shadow-md);
+}
+
+/* ── Slideshow with crossfade ──────────────────────────────────────────── */
+
+.ln-show {
+  position: absolute;
+  inset: 0;
+}
+
+.ln-slide {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+}
+
+.ln-slide-current {
+  z-index: 2;
+}
+
+.ln-slide-current.ln-slide-loaded {
+  opacity: 1;
+}
+
+.ln-slide-previous {
+  z-index: 1;
+}
+
+/* Preloading: decoded but not painted. */
+.ln-slide-next {
+  z-index: 0;
+  visibility: hidden;
+  transition: none;
+}
+
+.ln-backdrop {
+  position: absolute;
+  inset: -8%;
+  width: 116%;
+  height: 116%;
+  object-fit: cover;
+  filter: blur(22px) brightness(0.55) saturate(1.2);
+}
+
+.ln-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.ln-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 28px 14px 10px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
+  color: #fff;
+  pointer-events: none;
+}
+
+.ln-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(12px, 3.6cqmin, 17px);
+  font-weight: var(--font-weight-bold);
+}
+
+.ln-added {
+  font-size: clamp(11px, 3cqmin, 14px);
+  opacity: 0.85;
+}
+
+/* ── Raster ────────────────────────────────────────────────────────────── */
+
+.ln-raster {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ln-cell {
+  position: relative;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+}
+
+.ln-cell-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: lnFadeIn 0.6s ease;
+}
+
+.ln-cell-missing {
+  width: 24px;
+  height: 24px;
+  color: var(--text-tertiary);
+}
+
+.ln-cell .ln-caption {
+  padding: 18px 8px 6px;
+}
+
+.ln-raster-dense .ln-caption,
+.ln-raster-dense .ln-name {
+  display: none;
+}
+
+@keyframes lnFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@container widget (max-height: 140px) {
+  .ln-caption {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ln-slide {
+    transition: none;
+  }
+
+  .ln-cell-image {
+    animation: none;
+  }
+}

@@ -1,0 +1,85 @@
+/* Shared by the planbar widgets (src/widgets/planbar/PlanbarParts.tsx). */
+
+/* ── Summary line ──────────────────────────────────────────────────────── */
+
+.pb-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-width: 0;
+  flex-shrink: 0;
+  font-size: clamp(13px, 2.4cqw, 17px);
+}
+
+.pb-head-icon {
+  width: 1.15em;
+  height: 1.15em;
+  flex-shrink: 0;
+  color: var(--accent-color);
+}
+
+.pb-head-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+}
+
+.pb-head-time {
+  flex-shrink: 0;
+  font-size: max(11px, 0.78em);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-alert {
+  color: var(--error-color);
+}
+
+@container widget (max-width: 260px) {
+  .pb-head-time {
+    display: none;
+  }
+}
+
+/* ── Person avatar ─────────────────────────────────────────────────────── */
+
+/* Sized by the font size of its parent: a circle of 1.9em. */
+.pb-avatar {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9em;
+  height: 1.9em;
+  border-radius: 50%;
+  background: hsl(var(--pb-hue, 210) 50% 42%);
+  color: #fff;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  user-select: none;
+}
+
+.pb-avatar-initials {
+  font-size: 0.74em;
+  letter-spacing: 0.02em;
+}
+
+.pb-avatar-count {
+  position: absolute;
+  right: -0.45em;
+  bottom: -0.35em;
+  min-width: 1.6em;
+  padding: 0.15em 0.3em;
+  border-radius: 999px;
+  border: 2px solid var(--bg-widget);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.6em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}

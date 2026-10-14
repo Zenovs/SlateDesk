@@ -1,74 +1,66 @@
 /**
- * Layout Store – Manages widget layout positions and sizes.
- * Persists layout configuration to localStorage.
+ * Layout Store – widget positions and sizes.
+ * Mirrors `state.layout` of the backend state (useAppState); writes go
+ * through layoutActions. Only `editMode` is local to this webview.
  */
 import { create } from 'zustand';
-import type { WidgetInstance } from '../types/widget';
-import type { GridLayoutItem } from '../types/grid';
+import { useAppState } from '../state/appState';
+import { layoutActions, type LayoutItemLike } from '../state/dataActions';
+import type { LayoutData, WidgetInstance } from '../state/types';
+import { forgetRemovedInstances } from '../utils/instanceStorage';
 
 interface LayoutState {
   widgets: WidgetInstance[];
   cols: number;
   rowHeight: number;
+  /** 0 = off; > 0: rowHeight is computed so that many rows fill the screen height. */
+  fitRows: number;
   editMode: boolean;
+  /** Widget just added on this kiosk – its wrapper scrolls it into view once rendered. */
+  revealId: string | null;
+  /** A non-finite y (e.g. Infinity) places the widget below all others. */
   addWidget: (widget: WidgetInstance) => void;
+  /** Clears `revealId` if it still is `instanceId`. */
+  clearReveal: (instanceId: string) => void;
+  /** Also deletes the instance's widget settings. */
   removeWidget: (instanceId: string) => void;
-  updateLayout: (layout: readonly GridLayoutItem[]) => void;
+  /** Persists only when a position or size actually changed. */
+  updateLayout: (layout: readonly LayoutItemLike[]) => void;
   setEditMode: (mode: boolean) => void;
   toggleEditMode: () => void;
 }
 
-const STORAGE_KEY = 'slatedesk-layout';
+const fromLayout = (layout: LayoutData) => ({
+  widgets: layout.widgets,
+  cols: layout.cols,
+  rowHeight: layout.rowHeight,
+  fitRows: layout.fitRows,
+});
 
-const getDefaultWidgets = (): WidgetInstance[] => [
-  { instanceId: 'clock-1', widgetId: 'clock', x: 0, y: 0, w: 3, h: 3 },
-  { instanceId: 'calendar-1', widgetId: 'calendar', x: 3, y: 0, w: 5, h: 6 },
-  { instanceId: 'weather-1', widgetId: 'weather', x: 8, y: 0, w: 4, h: 3 },
-  { instanceId: 'messages-1', widgetId: 'messages', x: 0, y: 3, w: 3, h: 3 },
-  { instanceId: 'todo-1', widgetId: 'todo', x: 8, y: 3, w: 4, h: 3 },
-];
-
-const loadWidgets = (): WidgetInstance[] => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch { /* ignore */ }
-  return getDefaultWidgets();
-};
-
-const saveWidgets = (widgets: WidgetInstance[]) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(widgets));
-};
-
-export const useLayoutStore = create<LayoutState>((set) => ({
-  widgets: loadWidgets(),
-  cols: 12,
-  rowHeight: 80,
+export const useLayoutStore = create<LayoutState>()((set) => ({
+  ...fromLayout(useAppState.getState().state.layout),
   editMode: false,
-  addWidget: (widget) =>
-    set((state) => {
-      const next = [...state.widgets, widget];
-      saveWidgets(next);
-      return { widgets: next };
-    }),
-  removeWidget: (instanceId) =>
-    set((state) => {
-      const next = state.widgets.filter((w) => w.instanceId !== instanceId);
-      saveWidgets(next);
-      return { widgets: next };
-    }),
-  updateLayout: (layout) =>
-    set((state) => {
-      const next = state.widgets.map((w) => {
-        const item = layout.find((l) => l.i === w.instanceId);
-        if (item) {
-          return { ...w, x: item.x, y: item.y, w: item.w, h: item.h };
-        }
-        return w;
-      });
-      saveWidgets(next);
-      return { widgets: next };
-    }),
+  revealId: null,
+  addWidget: (widget) => {
+    // Before the write: the new wrapper mounts in the render it triggers.
+    set({ revealId: widget.instanceId });
+    layoutActions.add(widget);
+  },
+  clearReveal: (instanceId) => set((state) => (state.revealId === instanceId ? { revealId: null } : state)),
+  removeWidget: (instanceId) => {
+    void layoutActions.remove(instanceId);
+  },
+  updateLayout: (layout) => {
+    void layoutActions.update(layout);
+  },
   setEditMode: (mode) => set({ editMode: mode }),
   toggleEditMode: () => set((state) => ({ editMode: !state.editMode })),
 }));
+
+const unsubscribe = useAppState.subscribe((next, prev) => {
+  if (next.state.layout === prev.state.layout) return;
+  useLayoutStore.setState(fromLayout(next.state.layout));
+  // Only removals while running – not the switch from the defaults to the loaded state.
+  if (prev.ready && next.ready) forgetRemovedInstances(prev.state.layout.widgets, next.state.layout.widgets);
+});
+import.meta.hot?.dispose(unsubscribe);

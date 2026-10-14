@@ -1,12 +1,12 @@
 [package]
-name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+name = "slatedesk"
+version = "0.2.0"
+description = "SlateDesk – Dashboard-Kiosk mit Fernsteuerung im LAN"
+authors = ["Schnyder Werbung"]
 license = ""
 repository = ""
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.90"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -19,14 +19,37 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.5.6" }
+tauri-build = { version = "~2.7", features = [] }
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.0" }
+# Same minor as @tauri-apps/api and @tauri-apps/cli (the CLI aborts on a minor mismatch).
+tauri = { version = "~2.12", features = [] }
 tauri-plugin-log = "2"
+tauri-plugin-single-instance = "2"
+axum = "0.8"
+# Own accept loop for the Fernsteuerung (axum::serve runs hyper without a timer, so the header
+# read timeout never fires) – both are already part of the tree through axum and reqwest.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
+tower = { version = "0.5", features = ["util"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "process", "time", "sync", "fs", "io-util"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip"] }
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+if-addrs = "0.15"
+feed-rs = "3"
+icalendar = { version = "0.17", default-features = false, features = ["parser"] }
+rrule = "0.14"
+chrono = "0.4"
+chrono-tz = "0.10"
+qrcode = { version = "0.14", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-webkit2gtk = { version = "2.0", features = ["v2_20"] }
+webkit2gtk = { version = "2.0", features = ["v2_24"] }

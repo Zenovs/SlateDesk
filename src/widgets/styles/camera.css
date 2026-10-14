@@ -1,0 +1,287 @@
+/**
+ * Camera widget ("Gesichtserkennung"). Sizes derive from the widget body
+ * (size container "widget"). The face-box canvas covers the video element
+ * exactly – both are inset: 0 in .camera-stage, so the box mapping in
+ * CameraWidget.tsx only has to follow object-fit.
+ */
+
+.camera {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.camera-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: transparent;
+  transition: background var(--transition-normal);
+}
+
+.camera-stage.dark {
+  background: #000;
+}
+
+.camera-video,
+.camera-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * Stays rendered (detection reads its frames) but invisible unless the image is
+ * shown. No fade: switching to "Nur Anzahl" must not show the sharp image for a moment.
+ */
+.camera-video {
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.camera-video.visible {
+  opacity: 1;
+}
+
+.camera-video.mirrored {
+  transform: scaleX(-1);
+}
+
+/* Fallback first: should the second value not be supported, the image is still blurred */
+.camera-video.blurred {
+  filter: blur(18px);
+  filter: blur(clamp(12px, 4cqmin, 32px));
+}
+
+.camera-overlay {
+  pointer-events: none;
+}
+
+.camera-badge {
+  position: absolute;
+  top: var(--spacing-sm);
+  left: var(--spacing-sm);
+  max-width: calc(100% - 2 * var(--spacing-sm));
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: clamp(11px, 4.5cqmin, 15px);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+.camera-badge-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.camera-dot.present {
+  background: var(--success-color);
+  box-shadow: 0 0 0 3px rgba(var(--success-rgb), 0.3);
+}
+
+.camera-dot.error {
+  background: var(--error-color);
+}
+
+/* "Nur Anzahl": no image, only the number of people */
+.camera-count {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1cqh;
+  padding: var(--spacing-sm);
+  text-align: center;
+}
+
+.camera-count-value {
+  font-size: clamp(32px, 40cqmin, 180px);
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.camera-count-label {
+  font-size: clamp(12px, 8cqmin, 32px);
+  color: var(--text-secondary);
+}
+
+.camera-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  text-align: center;
+  overflow: auto;
+}
+
+.camera-placeholder-icon {
+  width: clamp(24px, 16cqmin, 56px);
+  height: clamp(24px, 16cqmin, 56px);
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.camera-placeholder-icon.error {
+  color: var(--error-color);
+}
+
+.camera-placeholder-icon.pulse {
+  color: var(--accent-color);
+  animation: cameraPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes cameraPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.camera-message {
+  max-width: 36ch;
+  font-size: clamp(12px, 5cqmin, 16px);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.camera-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 var(--spacing-md);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent-color);
+  color: #fff;
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.camera-button:hover {
+  background: var(--accent-color-light);
+}
+
+.camera-footer {
+  position: absolute;
+  left: var(--spacing-sm);
+  right: var(--spacing-sm);
+  bottom: var(--spacing-sm);
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  pointer-events: none;
+}
+
+.camera-notice {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--spacing-sm);
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: clamp(11px, 4cqmin, 13px);
+  line-height: 1.35;
+  pointer-events: auto;
+}
+
+.camera-notice-action {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: #fff;
+  font-family: var(--font-family);
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.camera-power {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.camera-power:hover {
+  background: var(--error-color);
+}
+
+/* Settings extra (kiosk dialog) */
+.settings-status-dot.camera-status-off {
+  background: var(--text-tertiary);
+}
+
+.settings-status-dot.camera-status-starting {
+  background: var(--warning-color);
+}
+
+.settings-status-dot.camera-status-on {
+  background: var(--success-color);
+}
+
+.settings-status-dot.camera-status-error {
+  background: var(--error-color);
+}
+
+.camera-extra-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.camera-extra-actions .settings-btn {
+  min-height: 40px;
+}
+
+/* Small widgets: keep the essentials */
+@container widget (max-height: 160px) {
+  .camera-placeholder-icon {
+    display: none;
+  }
+
+  .camera-badge {
+    padding: 2px 8px;
+  }
+}

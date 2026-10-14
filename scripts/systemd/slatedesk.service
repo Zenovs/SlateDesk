@@ -1,0 +1,23 @@
+# SlateDesk Kiosk-Dashboard (systemd-User-Dienst des Kiosk-Benutzers)
+# Installiert von scripts/setup.sh nach ~/.config/systemd/user/,
+# Anpassungen bitte per "systemctl --user edit slatedesk.service" (Drop-in),
+# damit sie beim nächsten Update nicht überschrieben werden.
+
+[Unit]
+Description=SlateDesk Kiosk-Dashboard
+Documentation=https://github.com/Zenovs/SlateDesk/blob/main/docs/BETRIEB.md
+PartOf=graphical-session.target
+After=graphical-session.target
+# Vor der ersten Installation nicht in einer Neustart-Schleife hängen
+ConditionPathExists=%h/.local/opt/slatedesk/current/slate-desk
+
+[Service]
+Type=simple
+ExecStart=%h/.local/opt/slatedesk/current/slate-desk
+Environment=SLATEDESK_HOME=%h/SlateDesk
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=graphical-session.target

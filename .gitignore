@@ -30,3 +30,12 @@ npm-debug.log*
 
 # TypeScript cache
 *.tsbuildinfo
+
+# Laufzeit-Zustand der App (gehört nach ~/.config/com.slatedesk.app bzw.
+# ~/.local/state/slatedesk, nie ins Repository – enthält PIN und API-Tokens)
+state.json
+state.json.bak
+state.json.tmp*
+remote.json
+update-status.json
+slatedesk-state*.json

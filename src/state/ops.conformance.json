@@ -1,0 +1,296 @@
+{
+  "description": "Shared cases for the state operations. Run by src/state/ops.conformance.test.ts (TypeScript) and by the conformance test in src-tauri/src/state.rs (Rust) – both implementations must agree on every case. A case either has `expect` (the resulting state) or `error: true` (the whole batch is rejected).",
+  "cases": [
+    {
+      "name": "set creates missing intermediate objects",
+      "state": {},
+      "ops": [{ "op": "set", "path": ["kiosk", "displaySchedule", "on"], "value": "07:00" }],
+      "expect": { "kiosk": { "displaySchedule": { "on": "07:00" } } }
+    },
+    {
+      "name": "set treats a null step as missing",
+      "state": { "kiosk": { "displaySchedule": null } },
+      "ops": [{ "op": "set", "path": ["kiosk", "displaySchedule", "off"], "value": "19:00" }],
+      "expect": { "kiosk": { "displaySchedule": { "off": "19:00" } } }
+    },
+    {
+      "name": "set cannot descend into a primitive",
+      "state": { "kiosk": { "name": "SlateDesk" } },
+      "ops": [{ "op": "set", "path": ["kiosk", "name", "x"], "value": 1 }],
+      "error": true
+    },
+    {
+      "name": "set replaces an array element by number",
+      "state": { "data": { "list": [1, 2, 3] } },
+      "ops": [{ "op": "set", "path": ["data", "list", 1], "value": 20 }],
+      "expect": { "data": { "list": [1, 20, 3] } }
+    },
+    {
+      "name": "set accepts a canonical numeric string as array index",
+      "state": { "data": { "list": [1, 2, 3] } },
+      "ops": [{ "op": "set", "path": ["data", "list", "2"], "value": 30 }],
+      "expect": { "data": { "list": [1, 2, 30] } }
+    },
+    {
+      "name": "set rejects a non-canonical index on an array",
+      "state": { "data": { "list": [1, 2, 3] } },
+      "ops": [{ "op": "set", "path": ["data", "list", "01"], "value": 9 }],
+      "error": true
+    },
+    {
+      "name": "set at index === length appends",
+      "state": { "data": { "list": [1, 2] } },
+      "ops": [{ "op": "set", "path": ["data", "list", 2], "value": 3 }],
+      "expect": { "data": { "list": [1, 2, 3] } }
+    },
+    {
+      "name": "set beyond the end of an array is rejected",
+      "state": { "data": { "list": [1, 2] } },
+      "ops": [{ "op": "set", "path": ["data", "list", 3], "value": 4 }],
+      "error": true
+    },
+    {
+      "name": "set through the next free index creates an object",
+      "state": { "layout": { "widgets": [{ "instanceId": "a", "x": 0 }] } },
+      "ops": [{ "op": "set", "path": ["layout", "widgets", 1, "x"], "value": 4 }],
+      "expect": { "layout": { "widgets": [{ "instanceId": "a", "x": 0 }, { "x": 4 }] } }
+    },
+    {
+      "name": "a number addresses an object key as its string",
+      "state": { "widgetSettings": {} },
+      "ops": [{ "op": "set", "path": ["widgetSettings", 7, "label"], "value": "Sieben" }],
+      "expect": { "widgetSettings": { "7": { "label": "Sieben" } } }
+    },
+    {
+      "name": "set with an empty path replaces the whole state",
+      "state": { "theme": { "mode": "dark" }, "kiosk": { "name": "Alt" } },
+      "ops": [{ "op": "set", "path": [], "value": { "version": 1, "kiosk": { "name": "Neu" } } }],
+      "expect": { "version": 1, "kiosk": { "name": "Neu" } }
+    },
+    {
+      "name": "set with an empty path is validated",
+      "state": {},
+      "ops": [{ "op": "set", "path": [], "value": { "fremd": {} } }],
+      "error": true
+    },
+    {
+      "name": "merge is shallow and keeps other keys",
+      "state": { "theme": { "mode": "dark", "accent": "#ff8800" } },
+      "ops": [{ "op": "merge", "path": ["theme"], "value": { "accent": null } }],
+      "expect": { "theme": { "mode": "dark", "accent": null } }
+    },
+    {
+      "name": "merge replaces nested objects instead of merging them",
+      "state": { "kiosk": { "displaySchedule": { "on": "07:00", "off": "19:00" } } },
+      "ops": [{ "op": "merge", "path": ["kiosk"], "value": { "displaySchedule": { "on": "08:00" } } }],
+      "expect": { "kiosk": { "displaySchedule": { "on": "08:00" } } }
+    },
+    {
+      "name": "merge creates a missing target",
+      "state": {},
+      "ops": [{ "op": "merge", "path": ["lagra"], "value": { "enabled": true } }],
+      "expect": { "lagra": { "enabled": true } }
+    },
+    {
+      "name": "merge onto a non-object replaces it",
+      "state": { "widgetSettings": { "a": 5 } },
+      "ops": [{ "op": "merge", "path": ["widgetSettings", "a"], "value": { "format": "24h" } }],
+      "expect": { "widgetSettings": { "a": { "format": "24h" } } }
+    },
+    {
+      "name": "planbar is a known top-level section",
+      "state": {},
+      "ops": [{ "op": "merge", "path": ["planbar"], "value": { "enabled": true, "apiKey": "pk_live_x" } }],
+      "expect": { "planbar": { "enabled": true, "apiKey": "pk_live_x" } }
+    },
+    {
+      "name": "merge needs an object value",
+      "state": { "theme": {} },
+      "ops": [{ "op": "merge", "path": ["theme"], "value": ["dark"] }],
+      "error": true
+    },
+    {
+      "name": "merge with an empty path merges into the root",
+      "state": { "theme": { "mode": "dark" } },
+      "ops": [{ "op": "merge", "path": [], "value": { "kiosk": { "name": "Empfang" } } }],
+      "expect": { "theme": { "mode": "dark" }, "kiosk": { "name": "Empfang" } }
+    },
+    {
+      "name": "merge without create merges into an existing target",
+      "state": { "data": { "todos": { "a": { "text": "A", "done": false } } } },
+      "ops": [{ "op": "merge", "path": ["data", "todos", "a"], "value": { "done": true }, "create": false }],
+      "expect": { "data": { "todos": { "a": { "text": "A", "done": true } } } }
+    },
+    {
+      "name": "merge without create replaces an existing null or non-object target",
+      "state": { "data": { "todos": { "a": null, "b": 3 } } },
+      "ops": [
+        { "op": "merge", "path": ["data", "todos", "a"], "value": { "done": true }, "create": false },
+        { "op": "merge", "path": ["data", "todos", "b"], "value": { "done": true }, "create": false }
+      ],
+      "expect": { "data": { "todos": { "a": { "done": true }, "b": { "done": true } } } }
+    },
+    {
+      "name": "merge without create on a missing leaf is a no-op",
+      "state": { "data": { "todos": { "b": { "text": "B" } } } },
+      "ops": [{ "op": "merge", "path": ["data", "todos", "a"], "value": { "done": true }, "create": false }],
+      "expect": { "data": { "todos": { "b": { "text": "B" } } } }
+    },
+    {
+      "name": "merge without create on a missing or null intermediate is a no-op",
+      "state": { "data": { "notes": null } },
+      "ops": [
+        { "op": "merge", "path": ["data", "todos", "a"], "value": { "done": true }, "create": false },
+        { "op": "merge", "path": ["data", "notes", "a"], "value": { "done": true }, "create": false }
+      ],
+      "expect": { "data": { "notes": null } }
+    },
+    {
+      "name": "merge without create through a mistyped step is a no-op",
+      "state": { "data": { "todos": "x", "list": [{ "id": "a" }] } },
+      "ops": [
+        { "op": "merge", "path": ["data", "todos", "a"], "value": { "done": true }, "create": false },
+        { "op": "merge", "path": ["data", "list", "a"], "value": { "done": true }, "create": false },
+        { "op": "merge", "path": ["data", "list", 1], "value": { "done": true }, "create": false },
+        { "op": "merge", "path": ["data", "list", 5, "x"], "value": { "done": true }, "create": false }
+      ],
+      "expect": { "data": { "todos": "x", "list": [{ "id": "a" }] } }
+    },
+    {
+      "name": "merge without create still needs an object value",
+      "state": { "data": {} },
+      "ops": [{ "op": "merge", "path": ["data", "todos", "a"], "value": 1, "create": false }],
+      "error": true
+    },
+    {
+      "name": "delete removes an object key",
+      "state": { "data": { "todos": { "a": { "text": "A" }, "b": { "text": "B" } } } },
+      "ops": [{ "op": "delete", "path": ["data", "todos", "a"] }],
+      "expect": { "data": { "todos": { "b": { "text": "B" } } } }
+    },
+    {
+      "name": "delete of something missing is a no-op",
+      "state": { "data": { "todos": {} } },
+      "ops": [{ "op": "delete", "path": ["data", "todos", "fehlt", "text"] }],
+      "expect": { "data": { "todos": {} } }
+    },
+    {
+      "name": "delete through a primitive is a no-op",
+      "state": { "kiosk": { "name": "SlateDesk" } },
+      "ops": [{ "op": "delete", "path": ["kiosk", "name", "x"] }],
+      "expect": { "kiosk": { "name": "SlateDesk" } }
+    },
+    {
+      "name": "delete splices an array element",
+      "state": { "data": { "list": ["a", "b", "c"] } },
+      "ops": [{ "op": "delete", "path": ["data", "list", 1] }],
+      "expect": { "data": { "list": ["a", "c"] } }
+    },
+    {
+      "name": "delete of an index beyond the end is a no-op",
+      "state": { "data": { "list": ["a"] } },
+      "ops": [{ "op": "delete", "path": ["data", "list", 4] }],
+      "expect": { "data": { "list": ["a"] } }
+    },
+    {
+      "name": "delete on the root is rejected",
+      "state": { "theme": {} },
+      "ops": [{ "op": "delete", "path": [] }],
+      "error": true
+    },
+    {
+      "name": "push creates a missing array",
+      "state": {},
+      "ops": [{ "op": "push", "path": ["data", "log"], "value": { "n": 1 } }],
+      "expect": { "data": { "log": [{ "n": 1 }] } }
+    },
+    {
+      "name": "push replaces null with a new array",
+      "state": { "data": { "log": null } },
+      "ops": [{ "op": "push", "path": ["data", "log"], "value": 1 }],
+      "expect": { "data": { "log": [1] } }
+    },
+    {
+      "name": "push appends to an existing array",
+      "state": { "data": { "log": [1] } },
+      "ops": [{ "op": "push", "path": ["data", "log"], "value": 2 }],
+      "expect": { "data": { "log": [1, 2] } }
+    },
+    {
+      "name": "push onto a non-array is rejected",
+      "state": { "data": { "log": "voll" } },
+      "ops": [{ "op": "push", "path": ["data", "log"], "value": 2 }],
+      "error": true
+    },
+    {
+      "name": "push on the root is rejected",
+      "state": {},
+      "ops": [{ "op": "push", "path": [], "value": 1 }],
+      "error": true
+    },
+    {
+      "name": "unknown top-level keys are rejected",
+      "state": {},
+      "ops": [{ "op": "set", "path": ["fremd"], "value": {} }],
+      "error": true
+    },
+    {
+      "name": "top-level sections must be objects",
+      "state": {},
+      "ops": [{ "op": "set", "path": ["theme"], "value": "dark" }],
+      "error": true
+    },
+    {
+      "name": "version must be a non-negative integer",
+      "state": {},
+      "ops": [{ "op": "set", "path": ["version"], "value": 1 }],
+      "expect": { "version": 1 }
+    },
+    {
+      "name": "a fractional version is rejected",
+      "state": {},
+      "ops": [{ "op": "set", "path": ["version"], "value": 1.5 }],
+      "error": true
+    },
+    {
+      "name": "a version string is rejected",
+      "state": {},
+      "ops": [{ "op": "set", "path": ["version"], "value": "1" }],
+      "error": true
+    },
+    {
+      "name": "a negative version is rejected",
+      "state": {},
+      "ops": [{ "op": "set", "path": ["version"], "value": -1 }],
+      "error": true
+    },
+    {
+      "name": "ops apply in order within a batch",
+      "state": { "data": { "todos": { "a": { "done": false } } } },
+      "ops": [
+        { "op": "delete", "path": ["data", "todos", "a"] },
+        { "op": "set", "path": ["data", "todos", "a", "done"], "value": true },
+        { "op": "merge", "path": ["data", "todos", "a"], "value": { "text": "Neu" } }
+      ],
+      "expect": { "data": { "todos": { "a": { "done": true, "text": "Neu" } } } }
+    },
+    {
+      "name": "a batch is all or nothing",
+      "state": { "theme": { "mode": "dark" } },
+      "ops": [
+        { "op": "set", "path": ["theme", "mode"], "value": "light" },
+        { "op": "push", "path": ["theme", "mode"], "value": "x" }
+      ],
+      "error": true
+    },
+    {
+      "name": "the top level is only validated after the whole batch",
+      "state": {},
+      "ops": [
+        { "op": "set", "path": [], "value": { "theme": "dark" } },
+        { "op": "set", "path": ["theme"], "value": { "mode": "dark" } }
+      ],
+      "expect": { "theme": { "mode": "dark" } }
+    }
+  ]
+}

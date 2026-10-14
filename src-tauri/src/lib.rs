@@ -1,435 +1,373 @@
+mod calendar;
+mod display;
+mod feeds;
+mod http;
+mod lagra;
+mod net;
+mod ollama;
+mod planbar;
+mod proc;
+mod qr;
+mod remote;
+mod state;
+mod system;
+mod update;
+mod web;
+
+use futures_util::future::BoxFuture;
 use serde::Serialize;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::Manager;
+use serde_json::Value;
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use web::{KioskAction, KioskHost, WebAsset};
 
-#[cfg(target_os = "linux")]
-use webkit2gtk::{WebViewExt, PermissionRequestExt};
+const MAIN_WINDOW: &str = "main";
+/// Exit code used to let systemd restart the unit (non-zero, so `Restart=on-failure` works too).
+const SYSTEMD_RESTART_CODE: i32 = 75;
 
-#[derive(Serialize)]
-struct UpdateInfo {
-    available: bool,
-    current_commit: String,
-    remote_commit: String,
-    short_current: String,
-    short_remote: String,
+#[derive(Serialize, Clone)]
+struct StateChangedEvent<'a> {
+    rev: u64,
+    state: &'a Value,
+    origin: &'a str,
 }
 
-fn project_dir() -> String {
-    std::env::var("SLATEDESK_HOME").unwrap_or_else(|_| "/home/slatedesk/SlateDesk".to_string())
+#[derive(Serialize, Clone)]
+struct KioskActionEvent {
+    action: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<Value>,
 }
 
-#[tauri::command]
-fn check_for_updates() -> Result<UpdateInfo, String> {
-    let dir = project_dir();
+/// Graphical session and SlateDesk settings a replacement started by systemd-run needs; the
+/// user manager's environment may lack them (desktops without systemd integration).
+const SESSION_ENV: [&str; 10] = [
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XAUTHORITY",
+    "XDG_SESSION_TYPE",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_DESKTOP",
+    "SLATEDESK_HOME",
+    "SLATEDESK_REMOTE_PORT",
+    "SLATEDESK_REMOTE_DISABLED",
+    "SLATEDESK_REMOTE_HOSTS",
+];
+/// Waits (at most 30 s) until the old process (`$1`) is gone – while it lives, the
+/// single-instance lock would send the new one away – then becomes the app (`$0`).
+const WAIT_THEN_EXEC: &str = r#"i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 60 ]; do sleep 0.5; i=$((i+1)); done; exec "$0""#;
 
-    // git fetch origin main
-    let fetch = Command::new("git")
-        .args(["fetch", "origin", "main"])
-        .current_dir(&dir)
-        .output()
-        .map_err(|e| format!("git fetch fehlgeschlagen: {e}"))?;
-
-    if !fetch.status.success() {
-        let stderr = String::from_utf8_lossy(&fetch.stderr);
-        return Err(format!("git fetch: {stderr}"));
-    }
-
-    let current_commit = String::from_utf8_lossy(
-        &Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(&dir)
-            .output()
-            .map_err(|e| format!("git rev-parse HEAD: {e}"))?
-            .stdout,
-    )
-    .trim()
-    .to_string();
-
-    let remote_commit = String::from_utf8_lossy(
-        &Command::new("git")
-            .args(["rev-parse", "origin/main"])
-            .current_dir(&dir)
-            .output()
-            .map_err(|e| format!("git rev-parse origin/main: {e}"))?
-            .stdout,
-    )
-    .trim()
-    .to_string();
-
-    Ok(UpdateInfo {
-        available: current_commit != remote_commit,
-        short_current: current_commit.chars().take(7).collect(),
-        short_remote: remote_commit.chars().take(7).collect(),
-        current_commit,
-        remote_commit,
-    })
+/// Who restarts the app, from its cgroup.
+#[derive(Debug, PartialEq, Eq)]
+enum Supervisor {
+    /// The installed `slatedesk.service` (Restart=always): exiting lets systemd restart it.
+    SlateDeskUnit,
+    /// Another service unit, e.g. the transient `slatedesk-legacy-<ts>.service` the update and
+    /// setup scripts start. It has no Restart=, and when the main process exits systemd kills
+    /// what is left in its cgroup – a self-spawned successor included.
+    OtherService(String),
+    /// A session scope or a terminal: a self-spawned successor survives.
+    None,
 }
 
-#[derive(Serialize)]
-struct SpeedResult {
-    download_mbps: f64,
-    upload_mbps: f64,
-    interface: String,
-    interface_type: String,
-    timestamp: u64,
-}
-
-#[tauri::command]
-fn run_speed_test() -> Result<SpeedResult, String> {
-    // Aktives Netzwerk-Interface ermitteln
-    let route = Command::new("ip")
-        .args(["route", "get", "8.8.8.8"])
-        .output()
-        .map_err(|e| format!("ip route fehlgeschlagen: {e}"))?;
-    let route_str = String::from_utf8_lossy(&route.stdout);
-    let interface = route_str
-        .split_whitespace()
-        .skip_while(|&s| s != "dev")
-        .nth(1)
-        .unwrap_or("unknown")
-        .to_string();
-
-    // LAN oder WLAN?
-    let wireless_path = format!("/sys/class/net/{}/wireless", interface);
-    let interface_type = if std::path::Path::new(&wireless_path).exists() {
-        "WLAN".to_string()
-    } else {
-        "LAN".to_string()
-    };
-
-    // Download-Speed messen (10 MB via curl)
-    let dl = Command::new("curl")
-        .args([
-            "-o", "/dev/null", "-s", "-w", "%{speed_download}",
-            "--max-time", "20",
-            "https://speed.cloudflare.com/__down?bytes=10000000",
-        ])
-        .output()
-        .map_err(|e| format!("curl Download fehlgeschlagen: {e}"))?;
-    let dl_bps: f64 = String::from_utf8_lossy(&dl.stdout)
-        .trim().parse().unwrap_or(0.0);
-    let download_mbps = (dl_bps * 8.0 / 1_000_000.0 * 10.0).round() / 10.0;
-
-    // Upload-Speed messen (5 MB Nullbytes via curl)
-    let ul = Command::new("sh")
-        .args(["-c",
-            "dd if=/dev/zero bs=1M count=5 2>/dev/null | curl -o /dev/null -s -w '%{speed_upload}' -X POST --data-binary @- --max-time 20 https://speed.cloudflare.com/__up"
-        ])
-        .output()
-        .map_err(|e| format!("curl Upload fehlgeschlagen: {e}"))?;
-    let ul_str = String::from_utf8_lossy(&ul.stdout);
-    let ul_bps: f64 = ul_str.trim().trim_matches('\'').parse().unwrap_or(0.0);
-    let upload_mbps = (ul_bps * 8.0 / 1_000_000.0 * 10.0).round() / 10.0;
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-
-    Ok(SpeedResult { download_mbps, upload_mbps, interface, interface_type, timestamp })
-}
-
-#[derive(Serialize)]
-struct UpdateProgress {
-    percent: u8,
-    message: String,
-    done: bool,
-    error: bool,
-}
-
-#[tauri::command]
-fn get_update_progress() -> UpdateProgress {
-    let log_path = std::env::var("SLATEDESK_LOG")
-        .unwrap_or_else(|_| "/home/slatedesk/slatedesk-update.log".to_string());
-
-    let content = std::fs::read_to_string(&log_path).unwrap_or_default();
-
-    // Nur den letzten Update-Durchlauf betrachten
-    let start_idx = content.rfind("Auto-Update gestartet").unwrap_or(0);
-    let run = &content[start_idx..];
-
-    let has = |needle: &str| run.contains(needle);
-
-    if has("Update erfolgreich abgeschlossen") {
-        return UpdateProgress { percent: 100, message: "Abgeschlossen!".into(), done: true, error: false };
-    }
-    if has("Rollback") || run.lines().any(|l| l.contains("[ERROR]")) {
-        return UpdateProgress { percent: 0, message: "Fehler – siehe Log".into(), done: false, error: true };
-    }
-    if has("Starte SlateDesk") {
-        return UpdateProgress { percent: 95, message: "Starte SlateDesk…".into(), done: false, error: false };
-    }
-    if has("Installiere neues Paket") {
-        return UpdateProgress { percent: 88, message: "Installiere Paket…".into(), done: false, error: false };
-    }
-    if has("Deinstalliere altes Paket") {
-        return UpdateProgress { percent: 84, message: "Deinstalliere altes Paket…".into(), done: false, error: false };
-    }
-    if has("Stoppe SlateDesk") {
-        return UpdateProgress { percent: 82, message: "Stoppe SlateDesk…".into(), done: false, error: false };
-    }
-
-    // Build-Phase: zeitbasiert von 35% → 81% (ca. 12 Minuten)
-    if has("Baue SlateDesk neu") {
-        let build_pct = run.lines()
-            .find(|l| l.contains("Baue SlateDesk neu"))
-            .and_then(|line| {
-                // Timestamp: [2024-01-15 14:32:05]
-                let ts_str = line.trim_start_matches('[').get(..19)?;
-                let dt = chrono_parse(ts_str)?;
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-                let elapsed_secs = now.saturating_sub(dt);
-                // 12 Minuten = 720 Sekunden für 35%→81%
-                let ratio = (elapsed_secs as f64 / 720.0).min(1.0);
-                Some(35u8 + (ratio * 46.0) as u8)
-            })
-            .unwrap_or(35);
-        return UpdateProgress {
-            percent: build_pct,
-            message: format!("Build läuft… (~{} Min)", (81u8.saturating_sub(build_pct) as f64 / 46.0 * 12.0).ceil() as u8),
-            done: false,
-            error: false,
-        };
-    }
-
-    if has("npm install") {
-        return UpdateProgress { percent: 28, message: "npm install…".into(), done: false, error: false };
-    }
-    if has("Lade neue Änderungen") {
-        return UpdateProgress { percent: 20, message: "git pull…".into(), done: false, error: false };
-    }
-    if has("Erstelle Backup") {
-        return UpdateProgress { percent: 15, message: "Backup erstellen…".into(), done: false, error: false };
-    }
-    if has("Neues Update gefunden") {
-        return UpdateProgress { percent: 12, message: "Update gefunden…".into(), done: false, error: false };
-    }
-    if has("Prüfe auf Updates") {
-        return UpdateProgress { percent: 8, message: "Prüfe auf Updates…".into(), done: false, error: false };
-    }
-    if has("Netzwerk verfügbar") {
-        return UpdateProgress { percent: 5, message: "Netzwerk verbunden…".into(), done: false, error: false };
-    }
-
-    UpdateProgress { percent: 2, message: "Update gestartet…".into(), done: false, error: false }
-}
-
-/// Parst "[YYYY-MM-DD HH:MM:SS]"-Timestamps aus dem Log zu Unix-Sekunden.
-fn chrono_parse(s: &str) -> Option<u64> {
-    // s = "2024-01-15 14:32:05"
-    let parts: Vec<&str> = s.splitn(2, ' ').collect();
-    if parts.len() != 2 { return None; }
-    let date_parts: Vec<u32> = parts[0].split('-').filter_map(|p| p.parse().ok()).collect();
-    let time_parts: Vec<u32> = parts[1].split(':').filter_map(|p| p.parse().ok()).collect();
-    if date_parts.len() != 3 || time_parts.len() != 3 { return None; }
-    // Grobe Umrechnung (ignoriert Zeitzonen, reicht für Fortschrittsschätzung)
-    let days_since_epoch = days_from_ymd(date_parts[0], date_parts[1], date_parts[2]);
-    let secs = days_since_epoch * 86400
-        + time_parts[0] as u64 * 3600
-        + time_parts[1] as u64 * 60
-        + time_parts[2] as u64;
-    Some(secs)
-}
-
-fn days_from_ymd(y: u32, m: u32, d: u32) -> u64 {
-    // Einfache Näherung: Tage seit 1970-01-01
-    let y = y as u64;
-    let m = m as u64;
-    let d = d as u64;
-    let leap = |yr: u64| (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
-    let month_days = [0u64, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut days = (y - 1970) * 365 + (y - 1969) / 4 - (y - 1901) / 100 + (y - 1601) / 400;
-    for mo in 1..m {
-        days += month_days[mo as usize];
-        if mo == 2 && leap(y) { days += 1; }
-    }
-    days + d - 1
-}
-
-#[derive(Serialize)]
-struct NasResult {
-    reachable: bool,
-    latency_ms: f64,
-    packet_loss_pct: u8,
-    timestamp: u64,
-}
-
-#[tauri::command]
-fn test_nas_connection(ip: String) -> Result<NasResult, String> {
-    let ip = ip.trim().to_string();
-    if ip.is_empty() {
-        return Err("Keine IP-Adresse angegeben".to_string());
-    }
-    // Einfache Validierung gegen Command-Injection (nur erlaubte Zeichen)
-    if !ip.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ':' || c == '-') {
-        return Err("Ungültige IP-Adresse".to_string());
-    }
-
-    let output = Command::new("ping")
-        .args(["-c", "4", "-W", "2", &ip])
-        .output()
-        .map_err(|e| format!("ping fehlgeschlagen: {e}"))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Paketverlust parsen: "3 packets transmitted, 3 received, 0% packet loss"
-    let packet_loss_pct = stdout
+/// `0::/user.slice/user-1000.slice/user@1000.service/app.slice/slatedesk.service` (cgroup v2;
+/// v1 lists one line per hierarchy).
+fn supervisor_from_cgroup(cgroups: &str) -> Supervisor {
+    let units: Vec<&str> = cgroups
         .lines()
-        .find(|l| l.contains("packet loss"))
-        .and_then(|l| {
-            l.split_whitespace()
-                .find(|w| w.ends_with('%'))
-                .and_then(|w| w.trim_end_matches('%').parse::<u8>().ok())
+        .filter_map(|line| line.splitn(3, ':').nth(2))
+        .filter_map(|path| path.rsplit('/').next())
+        .filter(|leaf| leaf.ends_with(".service") && !leaf.starts_with("user@"))
+        .collect();
+    if units.contains(&"slatedesk.service") {
+        Supervisor::SlateDeskUnit
+    } else if let Some(unit) = units.first() {
+        Supervisor::OtherService((*unit).to_string())
+    } else {
+        Supervisor::None
+    }
+}
+
+fn supervisor() -> Supervisor {
+    std::fs::read_to_string("/proc/self/cgroup")
+        .map(|cgroups| supervisor_from_cgroup(&cgroups))
+        .unwrap_or(Supervisor::None)
+}
+
+/// `systemd-run` arguments that start `exe` in a new transient unit once `pid` has exited.
+fn transient_restart_args(
+    exe: &str,
+    pid: u32,
+    unit: &str,
+    env: &[(String, String)],
+) -> Vec<String> {
+    let mut args = vec![
+        "--user".to_string(),
+        "--collect".to_string(),
+        "--quiet".to_string(),
+        format!("--unit={unit}"),
+    ];
+    args.extend(
+        env.iter()
+            .map(|(name, value)| format!("--setenv={name}={value}")),
+    );
+    args.extend([
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        WAIT_THEN_EXEC.to_string(),
+        exe.to_string(),
+        pid.to_string(),
+    ]);
+    args
+}
+
+/// Starts the replacement outside the current unit's cgroup, so it outlives this process.
+async fn spawn_in_transient_unit() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("Programmpfad unbekannt: {e}"))?;
+    // After an update replaced the binary, /proc/self/exe ends in " (deleted)".
+    let exe = exe.to_string_lossy();
+    let exe = exe.trim_end_matches(" (deleted)");
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let env: Vec<(String, String)> = SESSION_ENV
+        .iter()
+        .filter_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| (name.to_string(), value))
         })
-        .unwrap_or(100);
-
-    let reachable = packet_loss_pct < 100;
-
-    // Durchschnittliche Latenz parsen: "rtt min/avg/max/mdev = 0.412/0.430/0.456/0.019 ms"
-    let latency_ms = stdout
-        .lines()
-        .find(|l| l.starts_with("rtt "))
-        .and_then(|l| l.split('=').nth(1))
-        .and_then(|vals| vals.trim().split('/').nth(1))
-        .and_then(|avg| avg.parse::<f64>().ok())
-        .unwrap_or(0.0);
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    Ok(NasResult { reachable, latency_ms, packet_loss_pct, timestamp })
-}
-
-#[derive(Serialize)]
-struct OllamaStatus {
-    installed: bool,
-    running: bool,
-    version: String,
-}
-
-/// Prüft ob Ollama installiert und ob der Server läuft.
-#[tauri::command]
-fn check_ollama() -> OllamaStatus {
-    // Installiert? – `which ollama` liefert Exit-0 wenn Binary gefunden
-    let installed = Command::new("which")
-        .arg("ollama")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    // Version
-    let version = if installed {
-        Command::new("ollama")
-            .arg("--version")
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default()
+        .collect();
+    let args = transient_restart_args(
+        exe,
+        std::process::id(),
+        &format!("slatedesk-legacy-{secs}"),
+        &env,
+    );
+    let mut cmd = tokio::process::Command::new("systemd-run");
+    cmd.args(&args).stdin(std::process::Stdio::null());
+    let output = proc::output_with_timeout(cmd, "systemd-run", Duration::from_secs(10)).await?;
+    if output.status.success() {
+        Ok(())
     } else {
-        String::new()
-    };
-
-    // Läuft? – curl auf den Health-Endpunkt (Timeout 2s)
-    let running = Command::new("curl")
-        .args(["-sf", "--connect-timeout", "2", "http://localhost:11434"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    OllamaStatus { installed, running, version }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(stderr
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("systemd-run fehlgeschlagen")
+            .to_string())
+    }
 }
 
-/// Startet die Ollama-Installation (nicht-blockierend, Ausgabe in /tmp/ollama-install.log).
+async fn restart_app(app: &AppHandle) {
+    match supervisor() {
+        Supervisor::SlateDeskUnit => {
+            log::info!("Neustart über systemd");
+            app.exit(SYSTEMD_RESTART_CODE);
+        }
+        Supervisor::OtherService(unit) => match spawn_in_transient_unit().await {
+            Ok(()) => {
+                log::info!("Neustart in einer neuen systemd-Unit (bisher {unit})");
+                app.exit(0);
+            }
+            Err(e) => {
+                log::warn!("Neustart über systemd-run nicht möglich ({e}) – direkter Neustart");
+                app.request_restart();
+            }
+        },
+        Supervisor::None => {
+            log::info!("Neustart");
+            app.request_restart();
+        }
+    }
+}
+
+/// Delayed so the HTTP response / IPC reply still reaches the caller.
+fn schedule_restart(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        restart_app(&app).await;
+    });
+}
+
 #[tauri::command]
-fn install_ollama() -> Result<(), String> {
-    // Ollamas offizielles Install-Script; benötigt root → sudo
-    Command::new("sh")
-        .args([
-            "-c",
-            "curl -fsSL https://ollama.com/install.sh | sudo sh > /tmp/ollama-install.log 2>&1",
-        ])
-        .spawn()
-        .map_err(|e| format!("Spawn fehlgeschlagen: {e}"))?;
+async fn app_restart(app: AppHandle) -> Result<(), String> {
+    schedule_restart(app);
     Ok(())
 }
 
-/// Liest die aktuelle Ausgabe des Install-Logs (für Fortschrittsanzeige).
-#[tauri::command]
-fn get_ollama_install_log() -> String {
-    std::fs::read_to_string("/tmp/ollama-install.log").unwrap_or_default()
+/// Tauri side of the web server: bundled assets and actions on the kiosk.
+struct TauriHost {
+    app: AppHandle,
 }
 
-/// Startet den Ollama-Server (systemd → Fallback: direkt spawnen).
-#[tauri::command]
-fn start_ollama() -> Result<(), String> {
-    // Versuche systemd (Ollamas Installer legt ollama.service an)
-    let via_systemd = Command::new("sudo")
-        .args(["systemctl", "start", "ollama"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if via_systemd {
-        return Ok(());
+impl KioskHost for TauriHost {
+    fn asset(&self, path: &str) -> Option<WebAsset> {
+        self.app
+            .asset_resolver()
+            .get(path.to_string())
+            .map(|asset| WebAsset {
+                bytes: asset.bytes,
+                mime_type: asset.mime_type,
+            })
     }
 
-    // Fallback: ollama serve im Hintergrund
-    Command::new("ollama")
-        .arg("serve")
-        .spawn()
-        .map_err(|e| format!("Ollama serve fehlgeschlagen: {e}"))?;
-
-    Ok(())
+    fn perform(
+        &self,
+        action: KioskAction,
+        value: Option<Value>,
+    ) -> BoxFuture<'static, Result<Option<Value>, String>> {
+        let app = self.app.clone();
+        Box::pin(async move {
+            match action {
+                KioskAction::Reload | KioskAction::Identify | KioskAction::EditMode => {
+                    let event = KioskActionEvent {
+                        action: action.as_str(),
+                        value,
+                    };
+                    app.emit_to(MAIN_WINDOW, "kiosk://action", event)
+                        .map_err(|e| format!("Kiosk nicht erreichbar: {e}"))?;
+                    Ok(None)
+                }
+                KioskAction::Restart => {
+                    schedule_restart(app);
+                    Ok(None)
+                }
+                KioskAction::DisplaySleep | KioskAction::DisplayWake => {
+                    let backend = if action == KioskAction::DisplaySleep {
+                        display::sleep().await?
+                    } else {
+                        display::wake().await?
+                    };
+                    // The display schedule and the Ruhemodus must learn about the switch, or
+                    // they would undo it (or miss the next touch). The switch itself succeeded,
+                    // so a failed notification only gets logged.
+                    let event = KioskActionEvent {
+                        action: action.as_str(),
+                        value: Some(Value::String(backend.clone())),
+                    };
+                    if let Err(e) = app.emit_to(MAIN_WINDOW, "kiosk://action", event) {
+                        log::warn!("Bildschirm-Aktion nicht an den Kiosk gemeldet: {e}");
+                    }
+                    Ok(Some(Value::String(backend)))
+                }
+                KioskAction::UpdateCheck => {
+                    let info = update::check()
+                        .await
+                        .map_err(|e| format!("{}: {e}", update::CHECK_FAILED))?;
+                    serde_json::to_value(info)
+                        .map(Some)
+                        .map_err(|e| e.to_string())
+                }
+                KioskAction::UpdateRun => update::trigger()
+                    .await
+                    .map(|()| None)
+                    .map_err(|e| format!("{}: {e}", update::TRIGGER_FAILED)),
+            }
+        })
+    }
 }
 
-/// Schaltet den Display aus (Ruhemodus).
-#[tauri::command]
-fn sleep_display() -> Result<(), String> {
-    // Raspberry Pi
-    let rpi = Command::new("vcgencmd")
-        .args(["display_power", "0"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if rpi { return Ok(()); }
-
-    // X11-Fallback
-    Command::new("xset")
-        .args(["dpms", "force", "off"])
-        .spawn()
-        .map_err(|e| format!("xset dpms off fehlgeschlagen: {e}"))?;
-    Ok(())
+fn log_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri_plugin_log::Builder::default()
+        .level(log::LevelFilter::Info)
+        .level_for("hyper", log::LevelFilter::Warn)
+        .level_for("reqwest", log::LevelFilter::Warn)
+        .max_file_size(2 * 1024 * 1024)
+        .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
+        .build()
 }
 
-/// Weckt den Display wieder auf.
-#[tauri::command]
-fn wake_display() -> Result<(), String> {
-    // Raspberry Pi
-    let rpi = Command::new("vcgencmd")
-        .args(["display_power", "1"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if rpi { return Ok(()); }
-
-    // X11-Fallback
-    Command::new("xset")
-        .args(["dpms", "force", "on"])
-        .spawn()
-        .map_err(|e| format!("xset dpms on fehlgeschlagen: {e}"))?;
-    Ok(())
+fn focus_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
-#[tauri::command]
-fn trigger_update() -> Result<(), String> {
-    let dir = project_dir();
-    let script = format!("{dir}/scripts/auto-update.sh");
+/// Camera/microphone (Sleeper, AI widget) and device labels only – geolocation,
+/// notifications, pointer lock etc. are denied.
+#[cfg(target_os = "linux")]
+fn restrict_webview_permissions(app: &tauri::App) {
+    use webkit2gtk::glib::prelude::{Cast, ObjectExt};
+    use webkit2gtk::{
+        DeviceInfoPermissionRequest, PermissionRequestExt, UserMediaPermissionRequest,
+        UserMediaPermissionRequestExt, WebViewExt,
+    };
 
-    Command::new("bash")
-        .arg(&script)
-        .env("SLATEDESK_HOME", &dir)
-        .spawn()
-        .map_err(|e| format!("Update-Script konnte nicht gestartet werden: {e}"))?;
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+        log::error!("Hauptfenster fehlt – Berechtigungen nicht eingeschränkt");
+        return;
+    };
+    let result = window.with_webview(|webview| {
+        webview.inner().connect_permission_request(
+            |_view: &webkit2gtk::WebView, request: &webkit2gtk::PermissionRequest| {
+                let media = request
+                    .downcast_ref::<UserMediaPermissionRequest>()
+                    .is_some_and(|m| m.is_for_audio_device() || m.is_for_video_device());
+                if media || request.is::<DeviceInfoPermissionRequest>() {
+                    request.allow();
+                } else {
+                    request.deny();
+                }
+                true
+            },
+        );
+    });
+    if let Err(e) = result {
+        log::error!("WebView-Berechtigungen nicht eingerichtet: {e}");
+    }
+}
+
+fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let handle = app.handle().clone();
+    let config_dir = app.path().app_config_dir()?;
+
+    let store = Arc::new(state::StateStore::load(config_dir.clone()));
+    let remote = Arc::new(remote::RemoteAuth::load(
+        &config_dir,
+        remote::EnvOverrides::from_env(),
+    ));
+    let system = Arc::new(system::SystemContext::default());
+    let http = http::HttpClient(http::build_client()?);
+    // lagra and planbar get their own client: it never follows redirects off their API root.
+    let api = http::build_api_client()?;
+    let lagra = Arc::new(lagra::LagraService::new(api.clone()));
+    let planbar = Arc::new(planbar::PlanbarService::new(api));
+
+    let emitter = handle.clone();
+    store.set_change_hook(move |change| {
+        let event = StateChangedEvent {
+            rev: change.rev,
+            state: change.state,
+            origin: change.origin,
+        };
+        if let Err(e) = emitter.emit_to(MAIN_WINDOW, "state://changed", event) {
+            log::warn!("state://changed nicht gesendet: {e}");
+        }
+    });
+
+    app.manage(Arc::clone(&store));
+    app.manage(Arc::clone(&remote));
+    app.manage(Arc::clone(&system));
+    app.manage(Arc::clone(&lagra));
+    app.manage(Arc::clone(&planbar));
+    app.manage(http);
+
+    if remote.enabled() {
+        let host: Arc<dyn KioskHost> = Arc::new(TauriHost { app: handle });
+        let ctx = web::WebContext::new(store, Arc::clone(&remote), system, lagra, planbar, host);
+        tauri::async_runtime::spawn(web::serve(ctx));
+    } else {
+        log::info!("Fernsteuerung ist deaktiviert");
+    }
+
+    #[cfg(target_os = "linux")]
+    restrict_webview_permissions(app);
 
     Ok(())
 }
@@ -437,38 +375,101 @@ fn trigger_update() -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+        // Must be the first plugin: a second start only focuses the running kiosk.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            focus_main_window(app);
+        }))
+        .plugin(log_plugin())
+        .setup(setup)
+        .on_window_event(|window, event| {
+            // The kiosk must not disappear through Alt+F4 or a compositor close; dev builds
+            // stay closable.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == MAIN_WINDOW && !cfg!(debug_assertions) {
+                    log::warn!("Schliessen des Kiosk-Fensters verhindert");
+                    api.prevent_close();
+                }
             }
-
-            // Kamera-Zugriff auf Linux/WebKitGTK automatisch erlauben
-            #[cfg(target_os = "linux")]
-            {
-                let window = app.get_webview_window("main")
-                    .expect("Kein Hauptfenster gefunden");
-                window.with_webview(|webview| {
-                    webview.inner().connect_permission_request(
-                        |_view: &webkit2gtk::WebView, request: &webkit2gtk::PermissionRequest| {
-                            request.allow();
-                            true
-                        }
-                    );
-                }).ok();
-            }
-
-            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            check_for_updates, trigger_update, run_speed_test, get_update_progress,
-            test_nas_connection,
-            check_ollama, install_ollama, get_ollama_install_log, start_ollama,
-            sleep_display, wake_display,
+            state::state_get,
+            state::state_apply,
+            remote::remote_info,
+            system::system_info,
+            system::report_viewport,
+            http::http_fetch,
+            feeds::feeds_fetch,
+            calendar::calendar_events,
+            lagra::lagra_get,
+            lagra::lagra_image,
+            planbar::planbar_get,
+            planbar::planbar_patch,
+            net::net_check,
+            net::run_speed_test,
+            net::test_nas_connection,
+            update::check_for_updates,
+            update::trigger_update,
+            update::get_update_progress,
+            ollama::check_ollama,
+            display::sleep_display,
+            display::wake_display,
+            display::display_capabilities,
+            qr::qr_svg,
+            app_restart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supervisor_comes_from_the_cgroup() {
+        let unit = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/slatedesk.service\n";
+        assert_eq!(supervisor_from_cgroup(unit), Supervisor::SlateDeskUnit);
+        let legacy = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/slatedesk-legacy-1760000000.service\n";
+        assert_eq!(
+            supervisor_from_cgroup(legacy),
+            Supervisor::OtherService("slatedesk-legacy-1760000000.service".into())
+        );
+        let scope = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-gnome-slatedesk-4242.scope\n";
+        assert_eq!(supervisor_from_cgroup(scope), Supervisor::None);
+        let v1 = "12:pids:/user.slice/user-1000.slice/user@1000.service\n1:name=systemd:/user.slice/user-1000.slice/session-2.scope\n";
+        assert_eq!(supervisor_from_cgroup(v1), Supervisor::None);
+        assert_eq!(supervisor_from_cgroup(""), Supervisor::None);
+    }
+
+    #[test]
+    fn replacement_waits_for_the_old_process() {
+        let env = vec![("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string())];
+        let args = transient_restart_args("/usr/bin/slate-desk", 4242, "slatedesk-legacy-1", &env);
+        assert_eq!(
+            args,
+            [
+                "--user",
+                "--collect",
+                "--quiet",
+                "--unit=slatedesk-legacy-1",
+                "--setenv=WAYLAND_DISPLAY=wayland-0",
+                "/bin/sh",
+                "-c",
+                WAIT_THEN_EXEC,
+                "/usr/bin/slate-desk",
+                "4242",
+            ]
+        );
+    }
+
+    #[test]
+    fn wait_script_execs_once_the_process_is_gone() {
+        // A PID that cannot exist: the script must exec right away.
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-c", WAIT_THEN_EXEC, "/bin/echo", "4194305"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "");
+    }
 }

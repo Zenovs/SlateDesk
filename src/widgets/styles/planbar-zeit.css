@@ -1,0 +1,287 @@
+/**
+ * planbar Zeit (PlanbarZeitWidget) – one row per person; the week sits to
+ * the right when there is room, below otherwise. Root font size follows the
+ * widget width.
+ */
+
+.pz {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  overflow: hidden;
+  font-size: clamp(14px, 2.6cqw, 21px);
+}
+
+.pz-empty {
+  flex: 1;
+  min-height: 0;
+}
+
+.pz-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  transition: opacity var(--transition-normal);
+}
+
+.pz-list-stale {
+  opacity: 0.6;
+}
+
+.pz-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+  min-width: 0;
+  padding: 0.45em 0.2em;
+}
+
+.pz-row + .pz-row {
+  border-top: 1px solid var(--border-color);
+}
+
+.pz-row > .pb-avatar {
+  font-size: 0.95em;
+}
+
+.pz-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+}
+
+.pz-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  min-width: 0;
+}
+
+.pz-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.pz-today {
+  flex-shrink: 0;
+  font-size: 1.1em;
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Today against target ────────────────────────────────────────────────── */
+
+.pz-track {
+  display: flex;
+  height: max(5px, 0.32em);
+  border-radius: 999px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+
+.pz-fill {
+  height: 100%;
+  background: var(--accent-color);
+  transition: width var(--transition-slow);
+}
+
+/* The running timer: same colour, striped – not booked yet. */
+.pz-fill-running {
+  height: 100%;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(var(--accent-color-rgb), 0.85) 0 4px,
+    rgba(var(--accent-color-rgb), 0.45) 4px 8px
+  );
+  transition: width var(--transition-slow);
+}
+
+.pz-track-full .pz-fill {
+  background: var(--success-color);
+}
+
+.pz-track-full .pz-fill-running {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(var(--success-rgb), 0.85) 0 4px,
+    rgba(var(--success-rgb), 0.45) 4px 8px
+  );
+}
+
+/* ── Running timer ───────────────────────────────────────────────────────── */
+
+.pz-timer {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  min-width: 0;
+  font-size: max(12px, 0.8em);
+  color: var(--text-secondary);
+}
+
+.pz-timer-dot {
+  flex-shrink: 0;
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  background: var(--success-color);
+  animation: pz-pulse 1.6s ease-in-out infinite;
+}
+
+.pz-timer-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pz-timer-time {
+  flex-shrink: 0;
+  font-weight: var(--font-weight-bold);
+  color: var(--success-color);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes pz-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--success-rgb), 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 0.3em rgba(var(--success-rgb), 0);
+  }
+}
+
+/* ── Week ────────────────────────────────────────────────────────────────── */
+
+.pz-week {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25em;
+}
+
+.pz-week-total {
+  font-size: max(12px, 0.76em);
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pz-week-target {
+  color: var(--text-tertiary);
+}
+
+.pz-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.18em;
+  height: 2.4em;
+}
+
+.pz-bar {
+  width: 0.62em;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1em;
+}
+
+.pz-bar-column {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  border-radius: 2px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+
+.pz-bar-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--text-tertiary);
+  transition: height var(--transition-slow);
+}
+
+.pz-bar-today .pz-bar-fill {
+  background: var(--accent-color);
+}
+
+.pz-bar-future .pz-bar-column {
+  opacity: 0.45;
+}
+
+.pz-bar-target {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.pz-bar-letter {
+  font-size: max(9px, 0.42em);
+  line-height: 1;
+  color: var(--text-tertiary);
+}
+
+.pz-bar-today .pz-bar-letter {
+  font-weight: var(--font-weight-bold);
+  color: var(--text-accent);
+}
+
+/* ── Narrow and low widgets ──────────────────────────────────────────────── */
+
+@container widget (max-width: 380px) {
+  .pz-row {
+    flex-wrap: wrap;
+  }
+
+  .pz-week {
+    flex-basis: 100%;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: calc(1.9em * 0.95 + 0.7em);
+  }
+
+  .pz-bars {
+    height: 1.6em;
+  }
+
+  .pz-bar-letter {
+    display: none;
+  }
+}
+
+@container widget (max-height: 180px) {
+  .pz-bars {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pz-timer-dot {
+    animation: none;
+  }
+}

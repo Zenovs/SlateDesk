@@ -1,0 +1,530 @@
+/**
+ * planbar Aufgaben (PlanbarAufgabenWidget) – the root font size follows the
+ * widget width (container `widget`), everything inside is sized in em.
+ */
+
+.pa {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  overflow: hidden;
+  font-size: clamp(15px, 2.7cqw, 22px);
+}
+
+.pa-empty {
+  flex: 1;
+  min-height: 0;
+}
+
+.pa-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  transition: opacity var(--transition-normal);
+}
+
+.pa-scroll-stale {
+  opacity: 0.6;
+}
+
+/* ── Groups ──────────────────────────────────────────────────────────────── */
+
+.pa-group + .pa-group {
+  margin-top: 0.6em;
+}
+
+.pa-group-title {
+  margin: 0 0 0.15em;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-width: 0;
+  font-size: max(12px, 0.66em);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-accent);
+}
+
+.pa-group-title .pb-avatar {
+  font-size: 1.15em;
+  letter-spacing: normal;
+}
+
+.pa-group-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pa-group-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-tertiary);
+}
+
+.pa-group-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pa-group-ueberfaellig .pa-group-title {
+  color: var(--error-color);
+}
+
+.pa-group-erledigt .pa-group-title {
+  color: var(--text-tertiary);
+}
+
+/* ── Rows ────────────────────────────────────────────────────────────────── */
+
+.pa-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pa-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  min-width: 0;
+  max-height: 8em;
+  padding: 0.3em 0.35em 0.3em 0.45em;
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.pa-row + .pa-row {
+  border-top: 1px solid var(--border-color);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.pa-prio-high {
+  border-left-color: var(--warning-color);
+}
+
+.pa-prio-critical {
+  border-left-color: var(--error-color);
+  background: rgba(var(--error-rgb), 0.07);
+}
+
+/* Not tickable: priority bullet, project icon, done check. */
+.pa-mark {
+  flex-shrink: 0;
+  width: 1.3em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.pa-mark svg {
+  width: 1.05em;
+  height: 1.05em;
+}
+
+.pa-row-done .pa-mark {
+  color: var(--success-color);
+}
+
+.pa-bullet {
+  width: 0.45em;
+  height: 0.45em;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+.pa-prio-high .pa-bullet {
+  background: var(--warning-color);
+}
+
+.pa-prio-critical .pa-bullet,
+.pa-row-overdue .pa-bullet {
+  background: var(--error-color);
+}
+
+/* Tickable: the button is the touch target (≥ 40 px), the circle sits inside. */
+.pa-check {
+  flex-shrink: 0;
+  width: max(40px, 2em);
+  height: max(40px, 2em);
+  margin: -0.3em -0.25em -0.3em -0.35em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: #fff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pa-check:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.pa-check:disabled {
+  cursor: default;
+}
+
+.pa-check-circle {
+  width: max(20px, 1.2em);
+  height: max(20px, 1.2em);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--border-color-hover);
+  border-radius: 50%;
+  transition: background var(--transition-normal), border-color var(--transition-normal);
+}
+
+.pa-check-circle svg {
+  width: 72%;
+  height: 72%;
+  stroke-width: 3.2;
+  transform: scale(0);
+  transition: transform var(--transition-normal);
+}
+
+.pa-check:active .pa-check-circle {
+  background: var(--bg-widget-hover);
+}
+
+.pa-prio-high .pa-check-circle {
+  border-color: var(--warning-color);
+}
+
+.pa-prio-critical .pa-check-circle,
+.pa-row-overdue .pa-check-circle {
+  border-color: var(--error-color);
+}
+
+.pa-row-done .pa-check-circle {
+  border-color: var(--success-color);
+  background: var(--success-color);
+}
+
+.pa-row-done .pa-check-circle svg {
+  transform: scale(1);
+}
+
+/* ── Text ────────────────────────────────────────────────────────────────── */
+
+.pa-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+}
+
+.pa-title {
+  line-height: 1.25;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-decoration: line-through;
+  text-decoration-color: transparent;
+  transition: color var(--transition-normal), text-decoration-color var(--transition-normal);
+}
+
+.pa-prio-critical .pa-title,
+.pa-prio-high .pa-title {
+  font-weight: var(--font-weight-bold);
+}
+
+.pa-row-done .pa-title {
+  color: var(--text-tertiary);
+  text-decoration-color: currentColor;
+}
+
+.pa-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2em 0.5em;
+  min-width: 0;
+  font-size: max(12px, 0.76em);
+  line-height: 1.3;
+  color: var(--text-secondary);
+}
+
+.pa-project {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pa-hours {
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pa-tag {
+  flex-shrink: 0;
+  padding: 0.05em 0.5em;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.pa-tag-type {
+  border-color: transparent;
+  background: rgba(var(--accent-color-rgb), 0.14);
+  color: var(--text-accent);
+}
+
+.pa-tag-active {
+  border-color: rgba(var(--info-rgb), 0.45);
+  color: var(--info-color);
+}
+
+.pa-row-done .pa-meta {
+  opacity: 0.7;
+}
+
+/* ── Due day and people ──────────────────────────────────────────────────── */
+
+.pa-side {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25em;
+}
+
+.pa-due {
+  font-size: max(12px, 0.8em);
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pa-row-overdue .pa-due {
+  color: var(--error-color);
+  font-weight: var(--font-weight-bold);
+}
+
+.pa-people {
+  display: flex;
+  gap: 0.2em;
+  font-size: max(12px, 0.7em);
+}
+
+.pa-more {
+  padding: 0.5em 0.5em 0.2em;
+  font-size: max(12px, 0.72em);
+  color: var(--text-tertiary);
+}
+
+/* ── Tick-off feedback ───────────────────────────────────────────────────── */
+
+.pa-row-pending .pa-check-circle {
+  animation: pa-pop 380ms cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+
+.pa-row-pending {
+  animation: pa-flash 1100ms ease-out;
+}
+
+.pa-row-leaving {
+  overflow: hidden;
+  pointer-events: none;
+  animation: pa-leave 500ms ease forwards;
+}
+
+@keyframes pa-pop {
+  40% {
+    transform: scale(1.3);
+  }
+}
+
+@keyframes pa-flash {
+  from {
+    background-color: rgba(var(--success-rgb), 0.24);
+  }
+}
+
+@keyframes pa-leave {
+  40% {
+    opacity: 0;
+    transform: translateX(0.8em);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(0.8em);
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-top-width: 0;
+  }
+}
+
+.pa-feedback {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-width: 0;
+  padding: 0.3em 0.35em 0.3em 0.7em;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  overflow: hidden;
+  font-size: max(13px, 0.8em);
+  animation: pa-feedback-in 200ms ease both;
+}
+
+.pa-feedback-error {
+  padding: 0.5em 0.7em;
+  border-color: rgba(var(--error-rgb), 0.45);
+  background: rgba(var(--error-rgb), 0.12);
+  color: var(--error-color);
+}
+
+.pa-feedback-icon {
+  width: 1.2em;
+  height: 1.2em;
+  flex-shrink: 0;
+  color: var(--success-color);
+}
+
+.pa-feedback-error .pa-feedback-icon {
+  color: var(--error-color);
+}
+
+.pa-feedback-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.pa-feedback-error .pa-feedback-text {
+  color: inherit;
+}
+
+.pa-feedback-more {
+  color: var(--text-tertiary);
+}
+
+.pa-undo {
+  flex-shrink: 0;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0 0.9em;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent-color);
+  color: #fff;
+  font: inherit;
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pa-undo:active {
+  opacity: 0.85;
+}
+
+.pa-undo:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+.pa-undo svg {
+  width: 1.1em;
+  height: 1.1em;
+}
+
+/* Shrinks while the undo window runs (duration set inline). */
+.pa-feedback-timer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--accent-color);
+  transform-origin: left center;
+  animation: pa-undo-timer linear forwards;
+}
+
+@keyframes pa-undo-timer {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes pa-feedback-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ── Small widgets ───────────────────────────────────────────────────────── */
+
+@container widget (max-width: 340px) {
+  .pa-people,
+  .pa-hours {
+    display: none;
+  }
+}
+
+@container widget (max-height: 200px) {
+  .pa-meta {
+    display: none;
+  }
+
+  .pa-group + .pa-group {
+    margin-top: 0.3em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pa-row-pending,
+  .pa-row-pending .pa-check-circle,
+  .pa-feedback {
+    animation: none;
+  }
+
+  .pa-row-leaving {
+    animation-duration: 1ms;
+  }
+}

@@ -1,0 +1,14 @@
+# Tägliches Update um 01:00 und 3 Minuten nach dem Systemstart.
+# Persistent=true holt einen verpassten Lauf (Gerät war aus) nach.
+
+[Unit]
+Description=SlateDesk Update täglich um 01:00 und nach dem Systemstart
+Documentation=https://github.com/Zenovs/SlateDesk/blob/main/docs/BETRIEB.md
+
+[Timer]
+OnCalendar=*-*-* 01:00
+OnBootSec=3min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

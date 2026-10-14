@@ -1,356 +1,498 @@
 /**
- * Speedtest Widget – Elegante Halbkreis-Gauges für Download & Upload.
- * Passt sich an die Widget-Grösse an.
+ * Speedtest widget – download, upload, ping and jitter of the internet line.
+ *
+ * The measurement runs in the backend (`run_speed_test`). The schedule counts
+ * from the last measurement, which is stored per instance, so an app restart
+ * neither skips nor repeats a run. Failed runs are shown as errors and kept as
+ * gaps in the history – never as 0 Mbit/s.
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import type { WidgetProps, WidgetDefinition } from '../types/widget';
-import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
-import { WidgetSettingsDialog } from '../components/WidgetSettingsDialog';
-import { eventBus } from '../utils/eventBus';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowDown, ArrowUp, Network, RefreshCw, Wifi, WifiOff } from 'lucide-react';
+import type { WidgetProps } from '../types/widget';
+import { useWidgetSettings } from '../hooks/useWidgetSettings';
+import { isTauri, KIOSK_ONLY_MESSAGE, runSpeedTest, type SpeedTestResult } from '../utils/backend';
+import {
+  SPEEDTEST_DEFAULT_SETTINGS,
+  SPEEDTEST_INTERVAL_OPTIONS,
+  type SpeedtestSettings,
+} from './manifests/speedtest';
+import { ArcGauge, TimeSparkline, type ChartTone, type SparkPoint } from './shared/charts';
+import './styles/speedtest.css';
 
-interface SpeedResult {
-  download_mbps: number;
-  upload_mbps: number;
-  interface: string;
-  interface_type: string;
-  timestamp: number;
+// ── Storage ──────────────────────────────────────────────────────────────────
+
+/** One run: a measurement or the reason it failed. `t` is epoch ms. */
+type Sample = { t: number; down: number; up: number; ping: number | null } | { t: number; error: string };
+
+interface SpeedStore {
+  /** Last successful measurement – kept beyond the history window for the gauges. */
+  last: SpeedTestResult | null;
+  /** Oldest first. */
+  history: Sample[];
 }
 
-interface SpeedtestSettings {
-  intervalMinutes: number;
+const LEGACY_LAST_KEY = 'slatedesk:speedtest:last';
+const LEGACY_HISTORY_KEY = 'slatedesk:speedtest:history';
+const lastKey = (instanceId: string): string => `slatedesk:speedtest:${instanceId}:last`;
+const historyKey = (instanceId: string): string => `slatedesk:speedtest:${instanceId}:history`;
+
+/** Largest `historyHours` option – switching the window must not lose data. */
+const HISTORY_KEEP_MS = 48 * 3_600_000;
+const MAX_SAMPLES = 600;
+/** Overdue runs after a (re)start wait a moment: the UI and the network come up first. */
+const STARTUP_DELAY_MS = 15_000;
+/** After a failure the next attempt comes sooner than the regular interval. */
+const RETRY_AFTER_FAILURE_MS = 5 * 60_000;
+/** Another instance is measuring – the backend allows one run at a time. */
+const BUSY_MESSAGE = 'Es läuft bereits ein Speedtest';
+const BUSY_RETRY_MS = 60_000;
+const HISTORY_OPTIONS = [6, 12, 24, 48];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+const isFailure = (sample: Sample): sample is { t: number; error: string } => 'error' in sample;
+
+/** Old builds stored failed runs as 0 Mbit/s – those are no measurements. */
+function parseResult(raw: unknown): SpeedTestResult | null {
+  if (!isRecord(raw)) return null;
+  const { download_mbps, upload_mbps, timestamp } = raw;
+  if (!isFiniteNumber(download_mbps) || !isFiniteNumber(upload_mbps) || !isFiniteNumber(timestamp)) return null;
+  if (download_mbps <= 0 || upload_mbps <= 0) return null;
+  return {
+    download_mbps,
+    upload_mbps,
+    ping_ms: isFiniteNumber(raw.ping_ms) ? raw.ping_ms : null,
+    jitter_ms: isFiniteNumber(raw.jitter_ms) ? raw.jitter_ms : null,
+    interface: typeof raw.interface === 'string' ? raw.interface : '',
+    interface_type: typeof raw.interface_type === 'string' ? raw.interface_type : '',
+    timestamp,
+  };
 }
 
-const DEFAULT_SETTINGS: SpeedtestSettings = { intervalMinutes: 30 };
+const toSample = (result: SpeedTestResult): Sample => ({
+  t: result.timestamp * 1000,
+  down: result.download_mbps,
+  up: result.upload_mbps,
+  ping: result.ping_ms,
+});
 
-// Schwellenwerte für Warnung
-const SLOW_DOWNLOAD_MBPS = 10;
-const SLOW_UPLOAD_MBPS   = 2;
-
-const INTERVAL_OPTIONS = [
-  { value: 1,  label: '1 Minute' },
-  { value: 5,  label: '5 Minuten' },
-  { value: 10, label: '10 Minuten' },
-  { value: 30, label: '30 Minuten' },
-];
-
-function speedColor(mbps: number, maxMbps: number): string {
-  if (mbps >= maxMbps * 0.6) return '#22c55e';
-  if (mbps >= maxMbps * 0.25) return '#f59e0b';
-  return '#ef4444';
+function parseSample(raw: unknown): Sample | null {
+  if (!isRecord(raw) || !isFiniteNumber(raw.t)) return null;
+  if (typeof raw.error === 'string') return { t: raw.t, error: raw.error };
+  if (isFiniteNumber(raw.down) && isFiniteNumber(raw.up) && raw.down > 0 && raw.up > 0) {
+    return { t: raw.t, down: raw.down, up: raw.up, ping: isFiniteNumber(raw.ping) ? raw.ping : null };
+  }
+  return null;
 }
 
-// SVG Halbkreis-Gauge (180°, oben)
-function Gauge({ mbps, maxMbps, label, size }: { mbps: number; maxMbps: number; label: string; size: number }) {
-  const r = size * 0.38;
-  const cx = size / 2;
-  const cy = size * 0.54;
-  const circumference = Math.PI * r;
-  const pct = Math.min(mbps / maxMbps, 1);
-  const color = speedColor(mbps, maxMbps);
-  const trackColor = 'var(--bg-tertiary, #2a2a35)';
-  const fontSize = Math.max(size * 0.18, 12);
-  const labelSize = Math.max(size * 0.09, 9);
-  const unitSize = Math.max(size * 0.08, 8);
-  const strokeWidth = Math.max(size * 0.07, 5);
+/** Entries of the old global history had the backend result shape. */
+function parseLegacySample(raw: unknown): Sample | null {
+  const result = parseResult(raw);
+  return result ? toSample(result) : null;
+}
 
-  // Halbkreis: links nach rechts (oben)
-  const startX = cx - r;
-  const startY = cy;
-  const endX   = cx + r;
-  const endY   = cy;
+function prune(history: Sample[], now: number): Sample[] {
+  const cutoff = now - HISTORY_KEEP_MS;
+  const kept = history.filter((sample) => sample.t >= cutoff).sort((a, b) => a.t - b.t);
+  return kept.length > MAX_SAMPLES ? kept.slice(-MAX_SAMPLES) : kept;
+}
 
+/** undefined = missing or unreadable. */
+function readJson(key: string): unknown {
+  try {
+    const text = localStorage.getItem(key);
+    return text === null ? undefined : (JSON.parse(text) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+function writeJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    console.warn('Speedtest-Verlauf konnte nicht gespeichert werden:', err);
+  }
+}
+
+/** The old global keys go to the first instance without own data (only one may take them). */
+let legacyClaimedBy: string | null = null;
+
+function loadStore(instanceId: string, now: number): { store: SpeedStore; fromLegacy: boolean } {
+  let rawLast = readJson(lastKey(instanceId));
+  let rawHistory = readJson(historyKey(instanceId));
+  let fromLegacy = false;
+  if (rawLast === undefined && rawHistory === undefined && (legacyClaimedBy === null || legacyClaimedBy === instanceId)) {
+    const legacyLast = readJson(LEGACY_LAST_KEY);
+    const legacyHistory = readJson(LEGACY_HISTORY_KEY);
+    if (legacyLast !== undefined || legacyHistory !== undefined) {
+      legacyClaimedBy = instanceId;
+      fromLegacy = true;
+      rawLast = legacyLast;
+      rawHistory = legacyHistory;
+    }
+  }
+  const parse = fromLegacy ? parseLegacySample : parseSample;
+  const history = Array.isArray(rawHistory)
+    ? rawHistory.map(parse).filter((sample): sample is Sample => sample !== null)
+    : [];
+  return { store: { last: parseResult(rawLast), history: prune(history, now) }, fromLegacy };
+}
+
+const withResult = (store: SpeedStore, result: SpeedTestResult): SpeedStore => ({
+  last: result,
+  history: prune([...store.history, toSample(result)], result.timestamp * 1000),
+});
+
+const withFailure = (store: SpeedStore, at: number, error: string): SpeedStore => ({
+  last: store.last,
+  history: prune([...store.history, { t: at, error }], at),
+});
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const errorText = (err: unknown): string =>
+  err instanceof Error && err.message ? err.message : typeof err === 'string' && err ? err : 'Unbekannter Fehler';
+
+/** Old settings allowed 1–10 minutes; the next allowed step keeps the intent. */
+function normalizeInterval(minutes: unknown): number {
+  if (!isFiniteNumber(minutes) || minutes < 0) return SPEEDTEST_DEFAULT_SETTINGS.intervalMinutes;
+  if (SPEEDTEST_INTERVAL_OPTIONS.includes(minutes)) return minutes;
+  if (minutes === 0) return 0;
+  return SPEEDTEST_INTERVAL_OPTIONS.find((option) => option >= minutes) ?? Math.max(...SPEEDTEST_INTERVAL_OPTIONS);
+}
+
+const positive = (value: unknown, fallback: number): number => (isFiniteNumber(value) && value > 0 ? value : fallback);
+const nonNegative = (value: unknown, fallback: number): number => (isFiniteNumber(value) && value >= 0 ? value : fallback);
+
+const formatMbps = (mbps: number): string => (mbps >= 100 ? mbps.toFixed(0) : mbps.toFixed(1));
+
+/** Configured values: no trailing ".0". */
+const formatLimit = (mbps: number): string => (Number.isInteger(mbps) ? String(mbps) : mbps.toFixed(1));
+
+const formatMs = (ms: number): string => (ms >= 100 ? ms.toFixed(0) : ms.toFixed(1));
+
+function formatClock(ms: number, now: number): string {
+  const date = new Date(ms);
+  const time = date.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
+  if (new Date(now).toDateString() === date.toDateString()) return time;
+  return `${date.toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' })} ${time}`;
+}
+
+/** Absolute colours: red below the «langsam» limit, yellow below half the subscribed speed. */
+function speedTone(mbps: number, slow: number, expected: number): ChartTone {
+  if (mbps < slow) return 'crit';
+  if (mbps < expected * 0.5) return 'warn';
+  return 'ok';
+}
+
+const isOfflineError = (message: string): boolean => /keine internetverbindung|keine verbindung|netzwerkroute/i.test(message);
+
+// ── Gauge ────────────────────────────────────────────────────────────────────
+
+interface SpeedGaugeProps {
+  direction: 'down' | 'up';
+  mbps: number;
+  expected: number;
+  slow: number;
+}
+
+function SpeedGauge({ direction, mbps, expected, slow }: SpeedGaugeProps) {
+  const label = direction === 'down' ? 'Download' : 'Upload';
+  const Icon = direction === 'down' ? ArrowDown : ArrowUp;
+  const percent = Math.round((mbps / expected) * 100);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <svg width={size} height={cy + strokeWidth / 2 + 2} viewBox={`0 0 ${size} ${cy + strokeWidth / 2 + 2}`}>
-        {/* Track */}
-        <path
-          d={`M ${startX} ${startY} A ${r} ${r} 0 0 1 ${endX} ${endY}`}
-          fill="none"
-          stroke={trackColor}
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
+    <div className="speedtest-gauge">
+      <div className="speedtest-gauge-svg">
+        <ArcGauge
+          fraction={mbps / expected}
+          tone={speedTone(mbps, slow, expected)}
+          value={formatMbps(mbps)}
+          unit="Mbit/s"
+          label={`${label}: ${formatMbps(mbps)} Mbit/s`}
         />
-        {/* Farbiger Bogen */}
-        <path
-          d={`M ${startX} ${startY} A ${r} ${r} 0 0 1 ${endX} ${endY}`}
-          fill="none"
-          stroke={color}
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - pct)}
-          style={{ transition: 'stroke-dashoffset 1s ease, stroke 0.5s ease' }}
-        />
-        {/* Wert */}
-        <text
-          x={cx}
-          y={cy - r * 0.18}
-          textAnchor="middle"
-          fill={color}
-          fontSize={fontSize}
-          fontWeight="700"
-          fontFamily="var(--font-family)"
-          style={{ transition: 'fill 0.5s ease' }}
-        >
-          {mbps.toFixed(1)}
-        </text>
-        {/* Einheit */}
-        <text
-          x={cx}
-          y={cy - r * 0.18 + unitSize + 2}
-          textAnchor="middle"
-          fill="var(--text-tertiary)"
-          fontSize={unitSize}
-          fontFamily="var(--font-family)"
-        >
-          Mbit/s
-        </text>
-      </svg>
-      {/* Label */}
-      <span style={{ fontSize: labelSize, color: 'var(--text-tertiary)', marginTop: 2, letterSpacing: 0.5 }}>
+      </div>
+      <div className="speedtest-gauge-caption">
+        <Icon size="1em" aria-hidden="true" />
         {label}
-      </span>
+      </div>
+      <div className="speedtest-gauge-scale">
+        {percent} % von {formatLimit(expected)}
+      </div>
     </div>
   );
 }
 
-// Gefüllte Sparkline – X-Achse = echte Zeitachse über 12 Stunden
-function Sparkline({ history, width }: { history: SpeedResult[]; width: number }) {
-  if (history.length < 2) return null;
-  const h = 36, pad = 2;
-  const maxDl = Math.max(...history.map(r => r.download_mbps), 1);
-  const now = Date.now() / 1000;
-  const windowSec = 12 * 60 * 60;
-  const earliest = now - windowSec;
-  const pts = history.map(r => ({
-    x: pad + (Math.max(r.timestamp - earliest, 0) / windowSec) * (width - pad * 2),
-    y: h - pad - (r.download_mbps / maxDl) * (h - pad * 2 - 4),
-  }));
-  const line = pts.map(p => `${p.x},${p.y}`).join(' ');
-  const area = `${pts[0].x},${h} ` + line + ` ${pts[pts.length - 1].x},${h}`;
+// ── Widget ───────────────────────────────────────────────────────────────────
 
-  return (
-    <svg width="100%" height={h} viewBox={`0 0 ${width} ${h}`} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--accent-color)" stopOpacity="0.3" />
-          <stop offset="100%" stopColor="var(--accent-color)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={area} fill="url(#sparkGrad)" />
-      <polyline points={line} fill="none" stroke="var(--accent-color)" strokeWidth="1.5" strokeLinejoin="round" />
-    </svg>
-  );
-}
+export function SpeedtestWidget({ instanceId }: WidgetProps) {
+  const [settings, updateSettings] = useWidgetSettings<SpeedtestSettings>(instanceId, SPEEDTEST_DEFAULT_SETTINGS);
+  const [initial] = useState(() => loadStore(instanceId, Date.now()));
+  const [store, setStore] = useState<SpeedStore>(initial.store);
+  const [mountedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  const [runningSince, setRunningSince] = useState<number | null>(null);
+  const [startupPending, setStartupPending] = useState(settings.runOnStartup === true);
+  const [busyUntil, setBusyUntil] = useState<number | null>(null);
+  const runningRef = useRef(false);
+  const aliveRef = useRef(true);
+  const available = isTauri();
 
-const STORAGE_KEY_SPEED         = 'slatedesk:speedtest:last';
-const STORAGE_KEY_SPEED_HISTORY = 'slatedesk:speedtest:history';
-const HISTORY_WINDOW_MS         = 12 * 60 * 60 * 1000; // 12 Stunden
+  const intervalMinutes = normalizeInterval(settings.intervalMinutes);
+  const intervalMs = intervalMinutes * 60_000;
+  const expectedDown = positive(settings.expectedDownloadMbps, SPEEDTEST_DEFAULT_SETTINGS.expectedDownloadMbps);
+  const expectedUp = positive(settings.expectedUploadMbps, SPEEDTEST_DEFAULT_SETTINGS.expectedUploadMbps);
+  const slowDown = nonNegative(settings.slowDownloadMbps, SPEEDTEST_DEFAULT_SETTINGS.slowDownloadMbps);
+  const slowUp = nonNegative(settings.slowUploadMbps, SPEEDTEST_DEFAULT_SETTINGS.slowUploadMbps);
+  const historyHours = HISTORY_OPTIONS.includes(settings.historyHours)
+    ? settings.historyHours
+    : SPEEDTEST_DEFAULT_SETTINGS.historyHours;
 
-function pruneHistory(history: SpeedResult[]): SpeedResult[] {
-  const cutoff = (Date.now() - HISTORY_WINDOW_MS) / 1000; // Unix-Sekunden
-  return history.filter(r => r.timestamp >= cutoff);
-}
-
-const SpeedtestComponent: React.FC<WidgetProps> = ({ instanceId }) => {
-  const [running, setRunning]           = useState(false);
-  const [latest, setLatest]             = useState<SpeedResult | null>(() => {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY_SPEED) || 'null'); } catch { return null; }
-  });
-  const [history, setHistory]           = useState<SpeedResult[]>(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY_SPEED_HISTORY) || '[]');
-      return pruneHistory(stored);
-    } catch { return []; }
-  });
-  const [error, setError]               = useState<string | null>(null);
-  const [countdown, setCountdown]       = useState(0);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [containerSize, setContainerSize] = useState({ w: 320, h: 220 });
-  const containerRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const countRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const { getSettings, updateSettings } = useWidgetSettingsStore();
-  const settings = getSettings<SpeedtestSettings>(instanceId, DEFAULT_SETTINGS);
-
-  // Echte Pixelgrösse via ResizeObserver
+  // Old settings (1/5/10 min) are not offered anymore: store the replacement once.
   useEffect(() => {
-    if (!containerRef.current) return;
-    const observer = new ResizeObserver(entries => {
-      const { width: w, height: h } = entries[0].contentRect;
-      setContainerSize({ w, h });
-    });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    if (settings.intervalMinutes !== intervalMinutes) updateSettings({ intervalMinutes });
+  }, [settings.intervalMinutes, intervalMinutes, updateSettings]);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
   }, []);
 
-  const gaugeSize = Math.round(Math.min((containerSize.w - 48) / 2, containerSize.h * 0.62));
-
-  // Dynamische Skala: Maximum aller bisherigen Messungen, mindestens 10 Mbit/s
-  const maxMbps = Math.max(
-    ...history.map(r => r.download_mbps),
-    ...history.map(r => r.upload_mbps),
-    latest?.download_mbps ?? 0,
-    latest?.upload_mbps ?? 0,
-    10,
-  );
-
   useEffect(() => {
-    const h = () => setSettingsOpen(true);
-    eventBus.on(`widget:openSettings:${instanceId}`, h);
-    return () => { eventBus.off(`widget:openSettings:${instanceId}`, h); };
-  }, [instanceId]);
+    writeJson(lastKey(instanceId), store.last);
+    writeJson(historyKey(instanceId), store.history);
+    if (initial.fromLegacy) {
+      try {
+        localStorage.removeItem(LEGACY_LAST_KEY);
+        localStorage.removeItem(LEGACY_HISTORY_KEY);
+      } catch {
+        // Storage unavailable – the keys stay, but only this instance claims them.
+      }
+    }
+  }, [instanceId, store, initial.fromLegacy]);
 
-  const runTest = useCallback(async () => {
-    setRunning(true);
-    setError(null);
+  // Seconds while measuring, otherwise just enough for the time axis.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), runningSince !== null ? 1000 : 60_000);
+    return () => clearInterval(timer);
+  }, [runningSince]);
+
+  const measure = useCallback(async () => {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    const startedAt = Date.now();
+    setRunningSince(startedAt);
+    setNow(startedAt);
+    setStartupPending(false);
+    setBusyUntil(null);
     try {
-      const result = await invoke<SpeedResult>('run_speed_test');
-      setLatest(result);
-      setHistory(prev => {
-        const updated = pruneHistory([...prev, result]);
-        localStorage.setItem(STORAGE_KEY_SPEED_HISTORY, JSON.stringify(updated));
-        return updated;
-      });
-      localStorage.setItem(STORAGE_KEY_SPEED, JSON.stringify(result));
-    } catch (e) {
-      setError(e as string);
+      const result = await runSpeedTest();
+      if (aliveRef.current) setStore((prev) => withResult(prev, result));
+    } catch (err) {
+      if (aliveRef.current) {
+        const message = errorText(err);
+        const at = Date.now();
+        if (message.startsWith(BUSY_MESSAGE)) setBusyUntil(at + BUSY_RETRY_MS);
+        else setStore((prev) => withFailure(prev, at, message));
+      }
     } finally {
-      setRunning(false);
+      runningRef.current = false;
+      if (aliveRef.current) {
+        setRunningSince(null);
+        setNow(Date.now());
+      }
     }
   }, []);
 
+  const history = store.history;
+  const lastSample = history.length > 0 ? history[history.length - 1] : null;
+  const lastAttempt = lastSample
+    ? { t: lastSample.t, ok: !isFailure(lastSample) }
+    : store.last
+      ? { t: store.last.timestamp * 1000, ok: true }
+      : null;
+
+  let dueAt: number | null = null;
+  if (available) {
+    if (startupPending) {
+      dueAt = mountedAt + STARTUP_DELAY_MS;
+    } else if (intervalMs > 0) {
+      const regular = lastAttempt
+        ? lastAttempt.t + (lastAttempt.ok ? intervalMs : Math.min(intervalMs, RETRY_AFTER_FAILURE_MS))
+        : mountedAt;
+      dueAt = Math.max(regular, mountedAt + STARTUP_DELAY_MS);
+    }
+    if (dueAt !== null && busyUntil !== null) dueAt = Math.max(dueAt, busyUntil);
+  }
+
   useEffect(() => {
-    const intervalSec = settings.intervalMinutes * 60;
-    runTest();
-    setCountdown(intervalSec);
-    timerRef.current = setInterval(() => { runTest(); setCountdown(intervalSec); }, intervalSec * 1000);
-    countRef.current = setInterval(() => setCountdown(prev => prev > 0 ? prev - 1 : 0), 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (countRef.current) clearInterval(countRef.current);
+    if (runningSince !== null || dueAt === null) return;
+    const timer = setTimeout(() => void measure(), Math.max(0, dueAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [dueAt, runningSince, measure]);
+
+  const last = store.last;
+  const failure = lastSample && isFailure(lastSample) && (!last || lastSample.t > last.timestamp * 1000) ? lastSample : null;
+  const failingSince = useMemo(() => {
+    let since: number | null = null;
+    for (let i = history.length - 1; i >= 0 && isFailure(history[i]); i--) since = history[i].t;
+    return since;
+  }, [history]);
+
+  const windowTo = Math.max(now, lastSample?.t ?? 0);
+  const windowFrom = windowTo - historyHours * 3_600_000;
+  const chart = useMemo(() => {
+    const samples = history.filter((s) => s.t >= windowFrom && s.t <= windowTo);
+    const down: SparkPoint[] = samples.map((s) => ({ t: s.t, v: isFailure(s) ? null : s.down }));
+    const up: SparkPoint[] = samples.map((s) => ({ t: s.t, v: isFailure(s) ? null : s.up }));
+    const successes = samples.filter((s): s is Exclude<Sample, { error: string }> => !isFailure(s));
+    return {
+      count: samples.length,
+      down,
+      up,
+      // Each line on its own scale (the subscribed speed), so an asymmetric line keeps both readable.
+      maxDown: Math.max(expectedDown, ...successes.map((s) => s.down)),
+      maxUp: Math.max(expectedUp, ...successes.map((s) => s.up)),
+      marks: samples.filter(isFailure).map((s) => s.t),
     };
-  }, [runTest, settings.intervalMinutes]);
+  }, [history, windowFrom, windowTo, expectedDown, expectedUp]);
 
-  const formatCountdown = (sec: number) => {
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    return m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}s`;
-  };
+  const running = runningSince !== null;
+  const elapsed = running ? Math.max(0, Math.round((now - runningSince) / 1000)) : 0;
+  const slowDownNow = last !== null && last.download_mbps < slowDown;
+  const slowUpNow = last !== null && last.upload_mbps < slowUp;
+  const offline = failure !== null && isOfflineError(failure.error);
 
-  const formatTime = (ts: number) =>
-    new Date(ts * 1000).toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
-
-  return (
-    <>
-      <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
-
-        {/* Langsam-Banner */}
-        {latest && !running && (latest.download_mbps < SLOW_DOWNLOAD_MBPS || latest.upload_mbps < SLOW_UPLOAD_MBPS) && (
-          <div style={{
-            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)',
-            borderRadius: 6, padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8,
-          }}>
-            <span style={{ fontSize: 16 }}>⚠️</span>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b' }}>Internet langsam!</div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>
-                {latest.download_mbps < SLOW_DOWNLOAD_MBPS && `↓ ${latest.download_mbps.toFixed(1)} Mbit/s `}
-                {latest.upload_mbps < SLOW_UPLOAD_MBPS && `↑ ${latest.upload_mbps.toFixed(1)} Mbit/s`}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          {latest ? (
-            <span style={{
-              fontSize: 11, fontWeight: 600, borderRadius: 4, padding: '2px 8px',
-              background: latest.interface_type === 'WLAN' ? 'rgba(99,102,241,0.15)' : 'rgba(34,197,94,0.12)',
-              color: latest.interface_type === 'WLAN' ? '#818cf8' : '#22c55e',
-            }}>
-              {latest.interface_type} · {latest.interface}
-            </span>
-          ) : <span />}
-          {latest && <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{formatTime(latest.timestamp)}</span>}
-        </div>
-
-        {/* Gauges */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-around' }}>
-          {running ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, color: 'var(--text-tertiary)' }}>
-              <span style={{ fontSize: 28, animation: 'spin 1.5s linear infinite', display: 'inline-block' }}>⟳</span>
-              <span style={{ fontSize: 12 }}>Messe…</span>
-            </div>
-          ) : error ? (
-            <div style={{ textAlign: 'center', color: 'var(--error-color, #ef4444)', fontSize: 12 }}>⚠️ {error}</div>
-          ) : latest ? (
-            <>
-              <Gauge mbps={latest.download_mbps} maxMbps={maxMbps} label="↓ DOWNLOAD" size={gaugeSize} />
-              <Gauge mbps={latest.upload_mbps}   maxMbps={maxMbps} label="↑ UPLOAD"   size={gaugeSize} />
-            </>
-          ) : (
-            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Bereit…</span>
-          )}
-        </div>
-
-        {/* Sparkline */}
-        {history.length >= 2 && !running && (
-          <div style={{ paddingTop: 2 }}>
-            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Download-Verlauf
-            </div>
-            <Sparkline history={history} width={containerSize.w - 16} />
-          </div>
-        )}
-
-        {/* Footer */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: 5 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-            {running ? 'Läuft…' : `Nächster Test: ${formatCountdown(countdown)}`}
+  let banner = null;
+  if (failure) {
+    banner = (
+      <div className="speedtest-banner is-error" role="alert">
+        <WifiOff className="speedtest-banner-icon" aria-hidden="true" />
+        <div className="speedtest-banner-text">
+          <strong>{offline ? 'Keine Internetverbindung' : 'Speedtest fehlgeschlagen'}</strong>
+          <span>
+            {offline ? '' : `${failure.error} · `}seit {formatClock(failingSince ?? failure.t, now)}
           </span>
-          {!running && (
-            <button onClick={runTest} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--accent-color)', padding: 0 }}>
-              Jetzt messen
-            </button>
-          )}
         </div>
       </div>
+    );
+  } else if (last && (slowDownNow || slowUpNow)) {
+    banner = (
+      <div className="speedtest-banner is-warning" role="status">
+        <AlertTriangle className="speedtest-banner-icon" aria-hidden="true" />
+        <div className="speedtest-banner-text">
+          <strong>Internet langsam</strong>
+          <span>
+            {[
+              slowDownNow ? `↓ ${formatMbps(last.download_mbps)} Mbit/s` : null,
+              slowUpNow ? `↑ ${formatMbps(last.upload_mbps)} Mbit/s` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
-      <WidgetSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Einstellungen: Speedtest">
-        <div className="settings-section">
-          <div className="settings-section-title">Messintervall</div>
-          <div className="settings-field">
-            <label className="settings-label">Alle</label>
-            <select className="settings-select" value={settings.intervalMinutes} onChange={(e) => updateSettings(instanceId, { intervalMinutes: parseInt(e.target.value) })}>
-              {INTERVAL_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+  const wlan = last?.interface_type === 'WLAN';
+  const InterfaceIcon = wlan ? Wifi : Network;
+
+  let status: string;
+  if (!available) status = KIOSK_ONLY_MESSAGE;
+  else if (running) status = `Messung läuft… ${elapsed} s`;
+  else if (dueAt !== null) status = `Nächste Messung ${formatClock(dueAt, now)}`;
+  else status = 'Nur manuelle Messung';
+
+  return (
+    <div className="speedtest">
+      {banner}
+
+      {last && (
+        <div className="speedtest-head">
+          <span className={`speedtest-interface${wlan ? ' is-wlan' : ''}`}>
+            <InterfaceIcon size="1em" aria-hidden="true" />
+            {[last.interface_type, last.interface].filter(Boolean).join(' · ')}
+          </span>
+          {settings.showPing && last.ping_ms !== null && (
+            <span className="speedtest-ping">
+              Ping {formatMs(last.ping_ms)} ms
+              {last.jitter_ms !== null && <> · Jitter {formatMs(last.jitter_ms)} ms</>}
+            </span>
+          )}
+          <span className="speedtest-time">{formatClock(last.timestamp * 1000, now)}</span>
+        </div>
+      )}
+
+      <div className={`speedtest-gauges${running ? ' is-running' : ''}`}>
+        {last ? (
+          <>
+            <SpeedGauge direction="down" mbps={last.download_mbps} expected={expectedDown} slow={slowDown} />
+            <SpeedGauge direction="up" mbps={last.upload_mbps} expected={expectedUp} slow={slowUp} />
+          </>
+        ) : !running ? (
+          <div className="speedtest-empty">
+            {failure ? (
+              <>
+                <WifiOff aria-hidden="true" />
+                <span>Noch keine erfolgreiche Messung</span>
+              </>
+            ) : (
+              <>
+                <RefreshCw aria-hidden="true" />
+                <span>{available ? 'Noch keine Messung' : KIOSK_ONLY_MESSAGE}</span>
+              </>
+            )}
+          </div>
+        ) : null}
+        {running && (
+          <div className="speedtest-running" role="status">
+            <RefreshCw className="speedtest-spin" aria-hidden="true" />
+            <span>Messe… {elapsed} s</span>
+          </div>
+        )}
+      </div>
+
+      {chart.count >= 2 && (
+        <div className="speedtest-history">
+          <div className="speedtest-history-legend">
+            <span className="speedtest-legend-down">↓ Download</span>
+            <span className="speedtest-legend-up">↑ Upload</span>
+            <span className="speedtest-legend-window">{historyHours} h</span>
+          </div>
+          <div className="speedtest-history-chart">
+            <TimeSparkline
+              from={windowFrom}
+              to={windowTo}
+              maxGapMs={intervalMs > 0 ? intervalMs * 2.5 : Infinity}
+              marks={chart.marks}
+              series={[
+                { id: 'down', points: chart.down, max: chart.maxDown, tone: 'accent', fill: true },
+                { id: 'up', points: chart.up, max: chart.maxUp, tone: 'info' },
+              ]}
+              label={`Verlauf der letzten ${historyHours} Stunden`}
+            />
           </div>
         </div>
-        <div className="settings-info-box">
-          💡 Jede Messung lädt ~15 MB. Bei 30 Minuten ca. 720 MB/Tag.
-        </div>
-      </WidgetSettingsDialog>
-    </>
-  );
-};
+      )}
 
-export const speedtestWidgetDef: WidgetDefinition = {
-  manifest: {
-    id: 'speedtest',
-    name: 'Speedtest',
-    description: 'LAN/WLAN Download- & Upload-Geschwindigkeit',
-    version: '2.0.0',
-    author: 'SlateDesk',
-    minWidth: 3,
-    minHeight: 3,
-    defaultWidth: 4,
-    defaultHeight: 4,
-    permissions: ['network'],
-    hasSettings: true,
-  },
-  component: SpeedtestComponent,
-};
+      <div className="speedtest-foot">
+        <span className="speedtest-status">{status}</span>
+        <button
+          type="button"
+          className="speedtest-button"
+          onClick={() => void measure()}
+          disabled={running || !available}
+        >
+          <RefreshCw size="1.1em" className={running ? 'speedtest-spin' : undefined} aria-hidden="true" />
+          {running ? `${elapsed} s` : 'Jetzt messen'}
+        </button>
+      </div>
+    </div>
+  );
+}

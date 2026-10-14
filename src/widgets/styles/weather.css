@@ -1,0 +1,429 @@
+/*
+ * Weather widget. Sizes follow the widget body (size container «widget»);
+ * which sections are shown is decided in WeatherWidget.tsx from the same size.
+ */
+
+.weather {
+  --weather-temp-size: clamp(30px, min(30cqh, 15cqw), 72px);
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(6px, 2.5cqh, 14px);
+  overflow: hidden;
+  color: var(--text-primary);
+}
+
+@container widget (min-height: 190px) {
+  .weather {
+    --weather-temp-size: clamp(30px, min(17cqh, 12cqw), 84px);
+  }
+}
+
+@container widget (min-height: 300px) {
+  .weather {
+    --weather-temp-size: clamp(34px, min(15cqh, 12cqw), 112px);
+  }
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.weather-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  min-width: 0;
+  font-size: clamp(11px, calc(1.2cqmin + 8px), 15px);
+  color: var(--text-tertiary);
+}
+
+.weather-place {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.weather-place-icon,
+.weather-status-icon {
+  width: 1.1em;
+  height: 1.1em;
+  flex-shrink: 0;
+}
+
+.weather-place-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weather-badge {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  font-size: 0.8em;
+  line-height: 1.6;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.weather-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-status--stale {
+  color: var(--warning-color);
+}
+
+.weather-source {
+  opacity: 0.8;
+}
+
+@container widget (max-width: 380px) {
+  .weather-source {
+    display: none;
+  }
+}
+
+/* ── Current conditions ─────────────────────────────────────────────────── */
+
+.weather-now {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(8px, 3cqw, 28px);
+  overflow: hidden;
+}
+
+.weather-now-main {
+  display: flex;
+  align-items: center;
+  gap: clamp(8px, 2.5cqw, 20px);
+  min-width: 0;
+}
+
+.weather-now-icon {
+  width: calc(var(--weather-temp-size) * 1.2);
+  height: calc(var(--weather-temp-size) * 1.2);
+  flex-shrink: 0;
+}
+
+.weather-now-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.weather-now-temp {
+  font-size: var(--weather-temp-size);
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.weather-now-unit {
+  margin-left: 1px;
+  font-size: 0.42em;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  vertical-align: 1.05em;
+}
+
+.weather-now-condition {
+  font-size: clamp(12px, calc(1.6cqmin + 8px), 19px);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weather-now-range {
+  display: flex;
+  gap: 10px;
+  font-size: clamp(11px, calc(1.2cqmin + 8px), 16px);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.weather-details {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  align-content: center;
+  gap: 5px 16px;
+  overflow: hidden;
+  font-size: clamp(11px, calc(1.2cqmin + 8px), 16px);
+  color: var(--text-secondary);
+}
+
+.weather-detail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-detail svg {
+  width: 1.15em;
+  height: 1.15em;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.weather-detail--good svg,
+.weather-detail--fair svg {
+  color: var(--success-color);
+}
+
+.weather-detail--moderate svg {
+  color: var(--warning-color);
+}
+
+.weather-detail--bad,
+.weather-detail--bad svg {
+  color: var(--error-color);
+}
+
+@container widget (max-width: 560px) {
+  .weather-details {
+    grid-template-columns: max-content;
+  }
+}
+
+@container widget (max-width: 400px) {
+  .weather-details {
+    display: none;
+  }
+}
+
+/* ── Hourly strip and days ──────────────────────────────────────────────── */
+
+.weather-hours,
+.weather-days {
+  flex-shrink: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding-top: clamp(6px, 2cqh, 12px);
+  border-top: 1px solid var(--border-color);
+}
+
+.weather-hour,
+.weather-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-hour-time,
+.weather-day-name {
+  font-size: clamp(10px, calc(1cqmin + 8px), 14px);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.weather-day-name {
+  font-weight: var(--font-weight-bold);
+  color: var(--text-secondary);
+}
+
+.weather-day--today .weather-day-name {
+  color: var(--text-accent);
+}
+
+.weather-hour-icon,
+.weather-day-icon {
+  width: clamp(18px, calc(3cqmin + 10px), 34px);
+  height: clamp(18px, calc(3cqmin + 10px), 34px);
+}
+
+.weather-hour-temp,
+.weather-day-temps {
+  font-size: clamp(12px, calc(1.2cqmin + 9px), 18px);
+  white-space: nowrap;
+}
+
+.weather-hour-temp {
+  font-weight: var(--font-weight-medium);
+}
+
+.weather-day-temps {
+  display: flex;
+  gap: 5px;
+}
+
+.weather-day-max {
+  font-weight: var(--font-weight-bold);
+}
+
+.weather-day-min {
+  color: var(--text-tertiary);
+}
+
+.weather-rain {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: clamp(10px, calc(1cqmin + 7px), 14px);
+  color: var(--info-color);
+  white-space: nowrap;
+}
+
+.weather-rain svg {
+  width: 0.9em;
+  height: 0.9em;
+  flex-shrink: 0;
+}
+
+.weather-rain--low {
+  color: var(--text-tertiary);
+  opacity: 0.75;
+}
+
+/* ── Icon colours (theme tokens, work in dark and light) ────────────────── */
+
+.weather-tone-sun,
+.weather-tone-storm {
+  color: var(--warning-color);
+}
+
+.weather-tone-night,
+.weather-tone-cloud {
+  color: var(--text-secondary);
+}
+
+.weather-tone-rain {
+  color: var(--info-color);
+}
+
+.weather-tone-snow {
+  color: color-mix(in srgb, var(--info-color) 45%, var(--text-primary));
+}
+
+/* ── Loading / error ────────────────────────────────────────────────────── */
+
+.weather-message {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 var(--spacing-sm);
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.weather-message-icon {
+  width: clamp(24px, 12cqmin, 40px);
+  height: clamp(24px, 12cqmin, 40px);
+  flex-shrink: 0;
+}
+
+.weather-message-icon--pulse {
+  animation: weather-pulse 1.6s ease-in-out infinite;
+}
+
+.weather-message--error .weather-message-icon {
+  color: var(--warning-color);
+}
+
+.weather-message-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+
+.weather-message-detail {
+  max-width: 48ch;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.weather-message--error .weather-message-detail {
+  color: var(--error-color);
+}
+
+.weather-retry {
+  min-height: 40px;
+  margin-top: 4px;
+  padding: 0 var(--spacing-md);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.weather-retry:hover,
+.weather-retry:focus-visible {
+  border-color: var(--accent-color);
+}
+
+@container widget (max-height: 170px) {
+  .weather-message-icon {
+    display: none;
+  }
+
+  .weather-message-detail {
+    -webkit-line-clamp: 2;
+  }
+}
+
+@keyframes weather-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.weather-attribution-note {
+  margin-top: var(--spacing-sm);
+}
+
+.weather-lookup-retry {
+  margin-top: var(--spacing-sm);
+  min-height: 40px;
+}
+
+.weather-lookup-retry:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

@@ -39,8 +39,12 @@
   --font-weight-bold: 700;
 }
 
-/* Dark Theme (default) – inspired by Screenshot 1: dark grays, orange accents, neon charts */
+/* Dark Theme (default) – inspired by Screenshot 1: dark grays, orange accents, neon charts.
+   Also on :root, so the very first frame is styled before data-theme is set. */
+:root,
 [data-theme='dark'] {
+  color-scheme: dark;
+
   --bg-primary: #0d0d0f;
   --bg-secondary: #18181c;
   --bg-tertiary: #222228;
@@ -57,6 +61,7 @@
   --text-accent: var(--accent-color, #e8642b);
 
   --accent-color: #e8642b;
+  --accent-color-rgb: 232, 100, 43;
   --accent-color-light: #ff8a50;
   --accent-glow: rgba(232, 100, 43, 0.25);
 
@@ -64,6 +69,14 @@
   --warning: #ff9800;
   --error: #f44336;
   --info: #4a9eff;
+  --success-color: var(--success);
+  --warning-color: var(--warning);
+  --error-color: var(--error);
+  --info-color: var(--info);
+  --success-rgb: 76, 175, 80;
+  --warning-rgb: 255, 152, 0;
+  --error-rgb: 244, 67, 54;
+  --info-rgb: 74, 158, 255;
 
   --chart-line: #e8642b;
   --chart-area: rgba(232, 100, 43, 0.15);
@@ -77,6 +90,7 @@
 
 /* Light Theme – Teal-Hintergrund, weisse Widgets, dunkle Texte */
 [data-theme='light'] {
+  color-scheme: light;
   --bg-primary: #7ecbc4;
   --bg-secondary: #6bb8b1;
   --bg-tertiary: #5aa8a1;
@@ -93,6 +107,7 @@
   --text-accent: #0a6b67;
 
   --accent-color: #0a8a85;
+  --accent-color-rgb: 10, 138, 133;
   --accent-color-light: #0fada7;
   --accent-glow: rgba(10, 138, 133, 0.25);
 
@@ -100,6 +115,14 @@
   --warning: #d97706;
   --error: #dc2626;
   --info: #2563eb;
+  --success-color: var(--success);
+  --warning-color: var(--warning);
+  --error-color: var(--error);
+  --info-color: var(--info);
+  --success-rgb: 22, 163, 74;
+  --warning-rgb: 217, 119, 6;
+  --error-rgb: 220, 38, 38;
+  --info-rgb: 37, 99, 235;
 
   --chart-line: #0a8a85;
   --chart-area: rgba(10, 138, 133, 0.12);

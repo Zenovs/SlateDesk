@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "SlateDesk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.slatedesk.app",
   "build": {
     "frontendDist": "../dist",
@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "SlateDesk",
         "fullscreen": true,
         "maximized": true,
@@ -22,12 +23,14 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob: http:; media-src 'self' blob: mediastream:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://api.openweathermap.org https://newsapi.org https://api.open-meteo.com https://geocoding-api.open-meteo.com https://ipapi.co https://api.openai.com http://*"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: http: https:; media-src 'self' blob: mediastream: http: https:; connect-src 'self' ipc: http://ipc.localhost http: https: ws: wss:; frame-src 'none'"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
+    "targets": [
+      "deb"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -37,7 +40,10 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
       }
     }
   }

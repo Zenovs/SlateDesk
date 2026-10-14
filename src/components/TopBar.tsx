@@ -1,273 +1,170 @@
 /**
- * TopBar – Minimal toolbar with theme toggle, edit mode, widget picker, and updater.
+ * TopBar – Minimal toolbar with theme toggle, edit mode, widget picker,
+ * remote access info and updater.
+ *
+ * With kiosk.showTopBar off the bar is hidden; an invisible hot corner
+ * (top right, 48×48) reveals it for 30 s – longer while an update is being
+ * installed. In edit mode it is always shown. The updater state lives here,
+ * so it survives the bar hiding.
+ * Edit mode ends by itself after kiosk.editModeAutoExitMinutes without input.
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Sun, Moon, Settings, Plus, Check, RefreshCw, Download, AlertCircle } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
-import { useThemeStore } from '../store/themeStore';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Check, Moon, Plus, Settings, Smartphone, Sun } from 'lucide-react';
+import { useUpdater } from '../hooks/useUpdater';
+import { useAppState } from '../state/appState';
 import { useLayoutStore } from '../store/layoutStore';
-import { getAllWidgets } from '../utils/widgetRegistry';
-import { v4Style } from '../utils/uid';
+import { useThemeStore } from '../store/themeStore';
+import { isTauri } from '../utils/backend';
+import { RemoteInfoDialog } from './RemoteInfoDialog';
+import { UpdateButton } from './UpdateButton';
+import { WidgetPicker } from './WidgetPicker';
 
-type UpdateStatus = 'idle' | 'checking' | 'up-to-date' | 'available' | 'updating' | 'error';
+const REVEAL_MS = 30_000;
+const ACTIVITY_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'wheel'] as const;
 
-interface UpdateInfo {
-  available: boolean;
-  current_commit: string;
-  remote_commit: string;
-  short_current: string;
-  short_remote: string;
+/** Leaves edit mode after `minutes` without pointer/keyboard activity (0 = never). */
+function useEditModeAutoExit(editMode: boolean, minutes: number, exit: () => void): void {
+  useEffect(() => {
+    if (!editMode || !(minutes > 0)) return;
+    const timeout = minutes * 60_000;
+    let lastActivity = Date.now();
+    let timer: ReturnType<typeof setTimeout>;
+
+    const check = () => {
+      const idle = Date.now() - lastActivity;
+      if (idle >= timeout) exit();
+      else timer = setTimeout(check, timeout - idle);
+    };
+    const onActivity = () => {
+      lastActivity = Date.now();
+    };
+
+    const options: AddEventListenerOptions = { passive: true, capture: true };
+    for (const event of ACTIVITY_EVENTS) window.addEventListener(event, onActivity, options);
+    timer = setTimeout(check, timeout);
+    return () => {
+      for (const event of ACTIVITY_EVENTS) window.removeEventListener(event, onActivity, options);
+      clearTimeout(timer);
+    };
+  }, [editMode, minutes, exit]);
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  bar: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '8px 16px',
-    background: 'var(--bg-secondary)',
-    borderBottom: '1px solid var(--border-color)',
-    zIndex: 1000,
-    position: 'relative',
-    height: 48,
-    overflow: 'visible',
-  },
-  left: { display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 },
-  right: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
-  logo: {
-    fontSize: 18,
-    fontWeight: 700,
-    letterSpacing: 1.5,
-    color: 'var(--text-primary)',
-  },
-  btn: {
-    background: 'var(--bg-tertiary)',
-    border: '1px solid var(--border-color)',
-    color: 'var(--text-secondary)',
-    borderRadius: 8,
-    padding: '6px 10px',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    fontSize: 13,
-    whiteSpace: 'nowrap' as const,
-    transition: 'all 150ms ease',
-  },
-  activeBtn: {
-    background: 'var(--accent-color)',
-    color: '#fff',
-    borderColor: 'var(--accent-color)',
-  },
-  picker: {
-    position: 'absolute',
-    top: 48,
-    right: 16,
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border-color)',
-    borderRadius: 12,
-    padding: 12,
-    minWidth: 220,
-    zIndex: 2000,
-    boxShadow: 'var(--shadow-lg)',
-  },
-  pickerItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '8px 10px',
-    borderRadius: 8,
-    cursor: 'pointer',
-    fontSize: 13,
-    color: 'var(--text-primary)',
-    transition: 'background 150ms',
-  },
-};
-
 export const TopBar: React.FC = () => {
-  const { theme, toggleTheme } = useThemeStore();
-  const { editMode, toggleEditMode, addWidget } = useLayoutStore();
-  const [showPicker, setShowPicker] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [updateError, setUpdateError] = useState<string | null>(null);
-  const [updatePercent, setUpdatePercent] = useState(0);
-  const [updateMessage, setUpdateMessage] = useState('');
-  const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const theme = useThemeStore((s) => s.theme);
+  const toggleTheme = useThemeStore((s) => s.toggleTheme);
+  const editMode = useLayoutStore((s) => s.editMode);
+  const setEditMode = useLayoutStore((s) => s.setEditMode);
+  const showTopBar = useAppState((s) => s.state.kiosk.showTopBar);
+  const allowLocalEditing = useAppState((s) => s.state.kiosk.allowLocalEditing);
+  const autoExitMinutes = useAppState((s) => s.state.kiosk.editModeAutoExitMinutes);
+  const kioskName = useAppState((s) => s.state.kiosk.name);
+  const updater = useUpdater(isTauri());
+  const holdReveal = updater.holdsBar;
 
-  const checkForUpdates = useCallback(async () => {
-    setUpdateStatus('checking');
-    setUpdateError(null);
-    try {
-      const info = await invoke<UpdateInfo>('check_for_updates');
-      setUpdateInfo(info);
-      setUpdateStatus(info.available ? 'available' : 'up-to-date');
-    } catch (err) {
-      setUpdateError(err as string);
-      setUpdateStatus('error');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  /** > 0 while a hidden bar is revealed; bumping it restarts the 30 s. */
+  const [revealTick, setRevealTick] = useState(0);
+  const pickerButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Picker and remote dialog belong to an edit session: leaving edit mode
+  // (button, auto-exit, web UI) closes them for good.
+  const [editSession, setEditSession] = useState(editMode);
+  if (editSession !== editMode) {
+    setEditSession(editMode);
+    if (!editMode) {
+      setPickerOpen(false);
+      setRemoteOpen(false);
     }
-  }, []);
+  }
 
-  // Check on mount
-  useEffect(() => {
-    checkForUpdates();
-  }, [checkForUpdates]);
+  const exitEditMode = useCallback(() => setEditMode(false), [setEditMode]);
+  useEditModeAutoExit(editMode, autoExitMinutes, exitEditMode);
 
-  const handleUpdate = async () => {
-    setUpdateStatus('updating');
-    setUpdatePercent(2);
-    setUpdateMessage('Update gestartet…');
-    try {
-      await invoke('trigger_update');
-      // Fortschritt alle 3 Sekunden vom Log lesen
-      progressPollRef.current = setInterval(async () => {
-        try {
-          const p = await invoke<{ percent: number; message: string; done: boolean; error: boolean }>('get_update_progress');
-          setUpdatePercent(p.percent);
-          setUpdateMessage(p.message);
-          if (p.done) {
-            clearInterval(progressPollRef.current!);
-            setUpdateStatus('up-to-date');
-          } else if (p.error) {
-            clearInterval(progressPollRef.current!);
-            setUpdateError(p.message);
-            setUpdateStatus('error');
-          }
-        } catch { /* ignorieren */ }
-      }, 3000);
-    } catch (err) {
-      setUpdateError(err as string);
-      setUpdateStatus('error');
-    }
-  };
+  const closePicker = useCallback(() => setPickerOpen(false), []);
+  const closeRemote = useCallback(() => setRemoteOpen(false), []);
+
+  const inFlow = showTopBar || editMode;
+  const revealed = !inFlow && revealTick > 0;
 
   useEffect(() => {
-    return () => { if (progressPollRef.current) clearInterval(progressPollRef.current); };
-  }, []);
+    if (revealTick === 0 || inFlow || holdReveal) return;
+    const timer = setTimeout(() => setRevealTick(0), REVEAL_MS);
+    return () => clearTimeout(timer);
+  }, [revealTick, inFlow, holdReveal]);
 
-  const widgets = getAllWidgets();
+  if (!inFlow && !revealed) {
+    return (
+      <button
+        type="button"
+        className="topbar-hotcorner"
+        aria-label="Menüleiste einblenden"
+        onClick={() => setRevealTick((t) => t + 1)}
+      />
+    );
+  }
 
-  const handleAddWidget = (widgetId: string) => {
-    addWidget({
-      instanceId: `${widgetId}-${v4Style()}`,
-      widgetId,
-      x: 0,
-      y: Infinity, // place at bottom
-      w: 4,
-      h: 3,
-    });
-    setShowPicker(false);
-  };
+  const showPicker = pickerOpen && editMode;
+  const showRemote = remoteOpen && editMode;
+  const canEdit = allowLocalEditing || editMode;
+  const customName = kioskName && kioskName !== 'SlateDesk' ? kioskName : null;
 
   return (
-    <div style={styles.bar}>
-      <div style={styles.left}>
-        <span style={styles.logo}>SLATEDESK</span>
+    <div
+      className={`topbar${revealed ? ' overlay' : ''}`}
+      onPointerDown={revealed ? () => setRevealTick((t) => t + 1) : undefined}
+    >
+      <div className="topbar-left">
+        <span className="topbar-logo">SLATEDESK</span>
+        {customName && <span className="topbar-name">{customName}</span>}
       </div>
-      <div style={styles.right}>
-        {/* Update Button */}
-        {updateStatus === 'available' && (
-          <button
-            style={{ ...styles.btn, background: 'var(--accent-color)', color: '#fff', borderColor: 'var(--accent-color)' }}
-            onClick={handleUpdate}
-            title={`Update verfügbar: ${updateInfo?.short_current} → ${updateInfo?.short_remote}`}
-          >
-            <Download size={16} />
-            Update möglich
-          </button>
-        )}
-        {updateStatus === 'updating' && (
-          <span style={{ ...styles.btn, cursor: 'default', flexDirection: 'column', gap: 2, padding: '4px 10px', minWidth: 140 }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
-              <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
-              <span style={{ fontSize: 12, fontWeight: 600 }}>{updatePercent}%</span>
-              <span style={{ fontSize: 11, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{updateMessage}</span>
-            </span>
-            <div style={{ width: '100%', height: 3, background: 'var(--border-color)', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${updatePercent}%`, background: 'var(--accent-color)', borderRadius: 2, transition: 'width 1s ease' }} />
-            </div>
-          </span>
-        )}
-        {updateStatus === 'checking' && (
-          <span style={{ ...styles.btn, opacity: 0.5, cursor: 'default', fontSize: 12 }}>
-            <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
-          </span>
-        )}
-        {updateStatus === 'error' && (
-          <button
-            style={{ ...styles.btn, color: 'var(--error-color, #ef4444)' }}
-            onClick={checkForUpdates}
-            title={updateError ?? 'Update-Fehler – erneut versuchen'}
-          >
-            <AlertCircle size={16} />
-          </button>
-        )}
-        {updateStatus === 'up-to-date' && (
-          <button
-            style={{ ...styles.btn, opacity: 0.6 }}
-            onClick={checkForUpdates}
-            title={`Aktuell (${updateInfo?.short_current}) – erneut prüfen`}
-          >
-            <Check size={16} />
-          </button>
-        )}
-        {updateStatus === 'idle' && (
-          <button
-            style={{ ...styles.btn, opacity: 0.6 }}
-            onClick={checkForUpdates}
-            title="Auf Updates prüfen"
-          >
-            <RefreshCw size={16} />
-          </button>
-        )}
+      <div className="topbar-right">
+        {isTauri() && <UpdateButton updater={updater} />}
         <button
-          style={styles.btn}
+          type="button"
+          className="topbar-btn"
           onClick={toggleTheme}
-          title={`Theme: ${theme}`}
+          title={theme === 'dark' ? 'Helles Design' : 'Dunkles Design'}
+          aria-label={theme === 'dark' ? 'Helles Design einschalten' : 'Dunkles Design einschalten'}
         >
           {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
         </button>
-        <button
-          style={{ ...styles.btn, ...(editMode ? styles.activeBtn : {}) }}
-          onClick={toggleEditMode}
-          title="Layout bearbeiten"
-        >
-          {editMode ? <Check size={16} /> : <Settings size={16} />}
-          {editMode ? 'Fertig' : 'Bearbeiten'}
-        </button>
+        {editMode && isTauri() && (
+          <button type="button" className="topbar-btn" onClick={() => setRemoteOpen(true)} title="Fernsteuerung im Browser">
+            <Smartphone size={16} />
+            Fernsteuerung
+          </button>
+        )}
         {editMode && (
           <button
-            style={styles.btn}
-            onClick={() => setShowPicker(!showPicker)}
+            ref={pickerButtonRef}
+            type="button"
+            className={`topbar-btn${showPicker ? ' active' : ''}`}
+            onClick={() => setPickerOpen((open) => !open)}
+            aria-expanded={showPicker}
             title="Widget hinzufügen"
           >
             <Plus size={16} />
             Widget
           </button>
         )}
+        {canEdit && (
+          <button
+            type="button"
+            className={`topbar-btn${editMode ? ' active' : ''}`}
+            onClick={() => {
+              setPickerOpen(false);
+              setEditMode(!editMode);
+            }}
+            title="Layout bearbeiten"
+          >
+            {editMode ? <Check size={16} /> : <Settings size={16} />}
+            {editMode ? 'Fertig' : 'Bearbeiten'}
+          </button>
+        )}
       </div>
-      {showPicker && (
-        <div style={styles.picker}>
-          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            Widget hinzufügen
-          </div>
-          {widgets.map((w) => (
-            <div
-              key={w.manifest.id}
-              style={styles.pickerItem}
-              onClick={() => handleAddWidget(w.manifest.id)}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-tertiary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <Plus size={14} />
-              <div>
-                <div style={{ fontWeight: 500 }}>{w.manifest.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{w.manifest.description}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {showPicker && <WidgetPicker onClose={closePicker} anchorRef={pickerButtonRef} />}
+      {showRemote && <RemoteInfoDialog onClose={closeRemote} />}
     </div>
   );
 };

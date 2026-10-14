@@ -1,395 +1,727 @@
 /**
- * NAS Widget – Testet die Verbindung zum NAS (Ping/RTT).
- * Konfigurierbar: IP-Adresse, Messintervall.
- * Zeigt Latenz als Halbkreis-Gauge + Verlauf.
+ * Host-Monitor widget (id 'nas') – reachability and response time of NAS,
+ * servers and services via ping, TCP connect or HTTP.
+ *
+ * The backend checks all hosts concurrently (`net_check`). A host only counts
+ * as down after `failureThreshold` failed checks in a row; names that never
+ * resolved and invalid addresses are configuration errors, not outages – a
+ * DNS server that does not answer, or a name that resolved before, is an
+ * outage. The history is stored per instance and per check target (kind,
+ * host, port, path), so renaming a host keeps it and pointing it elsewhere
+ * starts over; it is written to localStorage every few minutes, not per check.
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import type { WidgetProps, WidgetDefinition } from '../types/widget';
-import { useWidgetSettingsStore } from '../store/widgetSettingsStore';
-import { WidgetSettingsDialog } from '../components/WidgetSettingsDialog';
-import { eventBus } from '../utils/eventBus';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, RefreshCw, ServerOff, Settings2 } from 'lucide-react';
+import type { WidgetProps } from '../types/widget';
+import { useAppState } from '../state/appState';
+import { widgetSettingsActions } from '../state/dataActions';
+import { useWidgetSettings } from '../hooks/useWidgetSettings';
+import { usePolling } from '../hooks/usePolling';
+import {
+  evaluate,
+  MAX_TARGETS,
+  toTarget,
+  type LiveResult,
+  type LiveResults,
+  type Target,
+} from '../services/hostCheck';
+import { isTauri, KIOSK_ONLY_MESSAGE, netCheck, type NetCheckTarget } from '../utils/backend';
+import { HOST_MONITOR_DEFAULT_SETTINGS, type HostMonitorSettings, type MonitoredHost } from './manifests/nas';
+import { ArcGauge, TimeSparkline, type ChartTone, type SparkPoint } from './shared/charts';
+import './styles/nas.css';
 
-interface NasResult {
-  reachable: boolean;
-  latency_ms: number;
-  packet_loss_pct: number;
-  timestamp: number;
-}
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
-interface NasSettings {
-  ip: string;
-  intervalMinutes: number;
-}
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
-const DEFAULT_SETTINGS: NasSettings = { ip: '', intervalMinutes: 60 };
+// ── History ──────────────────────────────────────────────────────────────────
 
-const STORAGE_KEY_NAS         = 'slatedesk:nas:last';
-const STORAGE_KEY_NAS_HISTORY = 'slatedesk:nas:history';
-const HISTORY_WINDOW_MS       = 12 * 60 * 60 * 1000; // 12 Stunden
+/** [unix seconds, latency ms]: -1 = failed, null = reachable without a time. */
+type Sample = [number, number | null];
+type HistoryStore = Record<string, Sample[]>;
 
-function pruneNasHistory(history: NasResult[]): NasResult[] {
-  const cutoff = (Date.now() - HISTORY_WINDOW_MS) / 1000;
-  return history.filter(r => r.timestamp >= cutoff);
-}
+const FAILED = -1;
+/** Largest `historyHours` option. */
+const HISTORY_KEEP_MS = 24 * 3_600_000;
+/** 24 h at 30 s are 2880 checks; a little more keeps the full window. */
+const MAX_SAMPLES = 3000;
+/**
+ * The history is written this often (and when the page goes away), not after
+ * every check: up to 32 hosts × 3000 samples are a few 100 KB to rewrite.
+ */
+const PERSIST_EVERY_MS = 5 * 60_000;
+const HISTORY_OPTIONS = [6, 12, 24];
+const INTERVAL_OPTIONS = [30, 60, 300, 900];
+const LEGACY_HISTORY_KEY = 'slatedesk:nas:history';
+const LEGACY_LAST_KEY = 'slatedesk:nas:last';
+const historyKey = (instanceId: string): string => `slatedesk:nas:${instanceId}:history`;
 
-const MAX_RETRIES   = 10;
-const RETRY_DELAY_S = 15; // Sekunden zwischen Retry-Versuchen
-
-const INTERVAL_OPTIONS = [
-  { value: 5,  label: '5 Minuten' },
-  { value: 10, label: '10 Minuten' },
-  { value: 30, label: '30 Minuten' },
-  { value: 60, label: '60 Minuten' },
-];
-
-function latencyColor(ms: number, maxMs: number, reachable: boolean): string {
-  if (!reachable) return '#ef4444';
-  const ratio = ms / maxMs;
-  if (ratio <= 0.35) return '#22c55e';
-  if (ratio <= 0.70) return '#f59e0b';
-  return '#ef4444';
-}
-
-// Halbkreis-Gauge (identisches Konzept wie SpeedtestWidget)
-function LatencyGauge({ ms, maxMs, reachable, size }: { ms: number; maxMs: number; reachable: boolean; size: number }) {
-  const r           = size * 0.38;
-  const cx          = size / 2;
-  const cy          = size * 0.54;
-  const circumference = Math.PI * r;
-  const pct         = reachable ? Math.min(ms / maxMs, 1) : 1;
-  const color       = latencyColor(ms, maxMs, reachable);
-  const trackColor  = 'var(--bg-tertiary, #2a2a35)';
-  const fontSize    = Math.max(size * 0.20, 12);
-  const unitSize    = Math.max(size * 0.08, 8);
-  const strokeWidth = Math.max(size * 0.07, 5);
-  const startX = cx - r, endX = cx + r;
-
-  return (
-    <svg width={size} height={cy + strokeWidth / 2 + 2} viewBox={`0 0 ${size} ${cy + strokeWidth / 2 + 2}`}>
-      {/* Track */}
-      <path
-        d={`M ${startX} ${cy} A ${r} ${r} 0 0 1 ${endX} ${cy}`}
-        fill="none" stroke={trackColor} strokeWidth={strokeWidth} strokeLinecap="round"
-      />
-      {/* Farbiger Bogen */}
-      <path
-        d={`M ${startX} ${cy} A ${r} ${r} 0 0 1 ${endX} ${cy}`}
-        fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={circumference * (1 - pct)}
-        style={{ transition: 'stroke-dashoffset 1s ease, stroke 0.5s ease' }}
-      />
-      {/* Hauptwert */}
-      <text
-        x={cx} y={cy - r * 0.18}
-        textAnchor="middle" fill={color} fontSize={fontSize} fontWeight="700"
-        fontFamily="var(--font-family)"
-        style={{ transition: 'fill 0.5s ease' }}
-      >
-        {reachable ? ms.toFixed(1) : '—'}
-      </text>
-      {/* Einheit */}
-      <text
-        x={cx} y={cy - r * 0.18 + unitSize + 2}
-        textAnchor="middle" fill="var(--text-tertiary)" fontSize={unitSize}
-        fontFamily="var(--font-family)"
-      >
-        ms
-      </text>
-    </svg>
+function parseSamples(raw: unknown): Sample[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (entry): entry is Sample =>
+      Array.isArray(entry) &&
+      entry.length === 2 &&
+      isFiniteNumber(entry[0]) &&
+      (entry[1] === null || (isFiniteNumber(entry[1]) && (entry[1] >= 0 || entry[1] === FAILED))),
   );
 }
 
-// Gefüllte Sparkline für Latenz-Verlauf – X-Achse = echte 12h-Zeitachse
-function LatencySparkline({ history, width }: { history: NasResult[]; width: number }) {
-  const reachable = history.filter(r => r.reachable);
-  if (reachable.length < 2) return null;
-  const h = 36, pad = 2;
-  const maxMs = Math.max(...reachable.map(r => r.latency_ms), 1);
-  const now = Date.now() / 1000;
-  const windowSec = 12 * 60 * 60;
-  const earliest = now - windowSec;
-  const pts = history.map(r => ({
-    x: pad + (Math.max(r.timestamp - earliest, 0) / windowSec) * (width - pad * 2),
-    y: r.reachable
-      ? h - pad - (r.latency_ms / maxMs) * (h - pad * 2 - 4)
-      : h - pad,
-  }));
-  const line = pts.map(p => `${p.x},${p.y}`).join(' ');
-  const area = `${pts[0].x},${h} ` + line + ` ${pts[pts.length - 1].x},${h}`;
-
-  return (
-    <svg width="100%" height={h} viewBox={`0 0 ${width} ${h}`} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="nasSparkGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--accent-color)" stopOpacity="0.3" />
-          <stop offset="100%" stopColor="var(--accent-color)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={area} fill="url(#nasSparkGrad)" />
-      <polyline points={line} fill="none" stroke="var(--accent-color)" strokeWidth="1.5" strokeLinejoin="round" />
-    </svg>
-  );
+/** Entries of the old global history: `{ reachable, latency_ms, timestamp }`. */
+function parseLegacySamples(raw: unknown): Sample[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry): Sample[] => {
+    if (!isRecord(entry) || !isFiniteNumber(entry.timestamp) || typeof entry.reachable !== 'boolean') return [];
+    if (!entry.reachable) return [[entry.timestamp, FAILED]];
+    return [[entry.timestamp, isFiniteNumber(entry.latency_ms) && entry.latency_ms > 0 ? entry.latency_ms : null]];
+  });
 }
 
-const NasComponent: React.FC<WidgetProps> = ({ instanceId }) => {
-  const [running, setRunning]             = useState(false);
-  const [latest, setLatest]               = useState<NasResult | null>(() => {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY_NAS) || 'null'); } catch { return null; }
-  });
-  const [history, setHistory]             = useState<NasResult[]>(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY_NAS_HISTORY) || '[]');
-      return pruneNasHistory(stored);
-    } catch { return []; }
-  });
-  const [error, setError]                 = useState<string | null>(null);
-  const [countdown, setCountdown]         = useState(0);
-  const [settingsOpen, setSettingsOpen]   = useState(false);
-  const [containerSize, setContainerSize] = useState({ w: 320, h: 220 });
-  const [retryCount, setRetryCount]       = useState(0);
-  const [offlineBanner, setOfflineBanner] = useState(false);
-  const containerRef  = useRef<HTMLDivElement>(null);
-  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const countRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+function pruneSamples(samples: Sample[], now: number): Sample[] {
+  const cutoff = (now - HISTORY_KEEP_MS) / 1000;
+  const kept = samples.filter(([t]) => t >= cutoff);
+  return kept.length > MAX_SAMPLES ? kept.slice(-MAX_SAMPLES) : kept;
+}
 
-  const { getSettings, updateSettings } = useWidgetSettingsStore();
-  const settings = getSettings<NasSettings>(instanceId, DEFAULT_SETTINGS);
+function readJson(key: string): unknown {
+  try {
+    const text = localStorage.getItem(key);
+    return text === null ? undefined : (JSON.parse(text) as unknown);
+  } catch {
+    return undefined;
+  }
+}
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const obs = new ResizeObserver(entries => {
-      const { width: w, height: h } = entries[0].contentRect;
-      setContainerSize({ w, h });
-    });
-    obs.observe(containerRef.current);
-    return () => obs.disconnect();
-  }, []);
+/** The old global keys go to the first instance without own history (only one may take them). */
+let legacyClaimedBy: string | null = null;
 
-  useEffect(() => {
-    const h = () => setSettingsOpen(true);
-    eventBus.on(`widget:openSettings:${instanceId}`, h);
-    return () => { eventBus.off(`widget:openSettings:${instanceId}`, h); };
-  }, [instanceId]);
+function loadHistory(instanceId: string, targets: Target[], now: number): { history: HistoryStore; fromLegacy: boolean } {
+  const own = readJson(historyKey(instanceId));
+  const history: HistoryStore = {};
+  if (isRecord(own) && isRecord(own.hosts)) {
+    for (const [key, samples] of Object.entries(own.hosts)) history[key] = pruneSamples(parseSamples(samples), now);
+    return { history, fromLegacy: false };
+  }
+  if (own !== undefined || (legacyClaimedBy !== null && legacyClaimedBy !== instanceId)) return { history, fromLegacy: false };
+  const legacy = readJson(LEGACY_HISTORY_KEY);
+  if (legacy === undefined && readJson(LEGACY_LAST_KEY) === undefined) return { history, fromLegacy: false };
+  legacyClaimedBy = instanceId;
+  // The old widget pinged exactly one host.
+  const target = targets.find((t) => t.kind === 'ping' && t.check !== null);
+  if (target) history[target.key] = pruneSamples(parseLegacySamples(legacy), now);
+  return { history, fromLegacy: true };
+}
 
-  const runTest = useCallback(async (isRetry = false) => {
-    if (!settings.ip.trim()) { setError('Bitte IP-Adresse in Einstellungen eintragen'); return; }
-    setRunning(true);
-    if (!isRetry) setError(null);
-    try {
-      const result = await invoke<NasResult>('test_nas_connection', { ip: settings.ip.trim() });
-      setLatest(result);
-      setHistory(prev => {
-        const updated = pruneNasHistory([...prev, result]);
-        localStorage.setItem(STORAGE_KEY_NAS_HISTORY, JSON.stringify(updated));
-        return updated;
-      });
-      localStorage.setItem(STORAGE_KEY_NAS, JSON.stringify(result));
+/** Whether the target ever answered within the kept history. */
+const answeredBefore = (samples: readonly Sample[] | undefined): boolean =>
+  samples !== undefined && samples.some(([, ms]) => ms !== FAILED);
 
-      if (result.reachable) {
-        // NAS wieder erreichbar – alles zurücksetzen
-        setRetryCount(0);
-        setOfflineBanner(false);
-        if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
-      } else {
-        // NAS nicht erreichbar – Retry planen
-        setRetryCount(prev => {
-          const next = prev + 1;
-          if (next >= MAX_RETRIES) {
-            setOfflineBanner(true);
-          } else {
-            retryTimerRef.current = setTimeout(() => runTest(true), RETRY_DELAY_S * 1000);
-          }
-          return next;
-        });
-      }
-    } catch (e) {
-      setError(e as string);
-    } finally {
-      setRunning(false);
+function recordSamples(prev: HistoryStore, live: LiveResults, keys: readonly string[], at: number): HistoryStore {
+  const next: HistoryStore = {};
+  const t = Math.round(at / 1000);
+  for (const key of keys) {
+    const samples = pruneSamples(prev[key] ?? [], at);
+    const result = live[key];
+    if (result && !result.configError) {
+      const latency = result.ok && result.latencyMs !== null ? Math.round(result.latencyMs * 10) / 10 : null;
+      samples.push([t, result.ok ? latency : FAILED]);
     }
-  }, [settings.ip]);
+    next[key] = samples;
+  }
+  return next;
+}
 
-  useEffect(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (countRef.current) clearInterval(countRef.current);
-    const intervalSec = settings.intervalMinutes * 60;
-    runTest();
-    setCountdown(intervalSec);
-    timerRef.current = setInterval(() => { runTest(); setCountdown(intervalSec); }, intervalSec * 1000);
-    countRef.current = setInterval(() => setCountdown(prev => prev > 0 ? prev - 1 : 0), 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (countRef.current) clearInterval(countRef.current);
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-    };
-  }, [runTest, settings.intervalMinutes]);
+// ── Status ───────────────────────────────────────────────────────────────────
 
-  const gaugeSize = Math.round(Math.min(containerSize.w * 0.55, containerSize.h * 0.62));
+type HostState = 'pending' | 'up' | 'unstable' | 'down' | 'config';
 
-  // Dynamische Skala: schlechtester (höchster) Ping aus History, mindestens 2 ms
-  const maxMs = Math.max(
-    ...history.filter(r => r.reachable).map(r => r.latency_ms),
-    latest?.reachable ? latest.latency_ms : 0,
-    2,
-  );
+interface HostStatus {
+  target: Target;
+  state: HostState;
+  latencyMs: number | null;
+  lossPct: number | null;
+  httpStatus: number | null;
+  /** Error to show (config error or why the host did not answer). */
+  message: string | null;
+  /** Start of the current up/down state; null when no change was observed. */
+  since: number | null;
+  failures: number;
+  uptimePct: number | null;
+  points: SparkPoint[];
+  marks: number[];
+}
 
-  const formatCountdown = (sec: number) => {
-    const m = Math.floor(sec / 60), s = sec % 60;
-    return m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}s`;
+/**
+ * Walks the history with the failure threshold: `down` after `threshold`
+ * failures in a row, `up` again with the first success. «seit» is only known
+ * for a down state or after an observed recovery.
+ */
+function analyse(samples: readonly Sample[], threshold: number) {
+  let state: 'up' | 'down' | null = null;
+  let since: number | null = null;
+  let failures = 0;
+  let streakStart: number | null = null;
+  for (const [t, ms] of samples) {
+    const at = t * 1000;
+    if (ms === FAILED) {
+      if (failures === 0) streakStart = at;
+      failures += 1;
+      if (failures >= threshold && state !== 'down') {
+        state = 'down';
+        since = streakStart;
+      }
+    } else {
+      if (state === 'down') since = at;
+      else if (state === null) since = null;
+      state = 'up';
+      failures = 0;
+      streakStart = null;
+    }
+  }
+  return { state, since, failures };
+}
+
+function hostStatus(
+  target: Target,
+  samples: readonly Sample[],
+  live: LiveResult | undefined,
+  threshold: number,
+  windowFrom: number,
+): HostStatus {
+  const inWindow = samples.filter(([t]) => t * 1000 >= windowFrom);
+  const okCount = inWindow.filter(([, ms]) => ms !== FAILED).length;
+  const last = samples.length > 0 ? samples[samples.length - 1] : null;
+  const { state, since, failures } = analyse(samples, threshold);
+  const status: HostStatus = {
+    target,
+    state: 'pending',
+    latencyMs: live ? (live.ok ? live.latencyMs : null) : last && last[1] !== FAILED ? last[1] : null,
+    lossPct: live?.lossPct ?? null,
+    httpStatus: live?.httpStatus ?? null,
+    message: null,
+    since,
+    failures,
+    uptimePct: inWindow.length > 0 ? (okCount / inWindow.length) * 100 : null,
+    points: inWindow.map(([t, ms]) => ({ t: t * 1000, v: ms === FAILED ? null : ms })),
+    marks: inWindow.filter(([, ms]) => ms === FAILED).map(([t]) => t * 1000),
   };
+  const configError = target.configError ?? live?.configError ?? null;
+  if (configError) return { ...status, state: 'config', message: configError, since: null };
+  if (state === 'down') return { ...status, state: 'down', message: live?.error ?? 'Keine Antwort' };
+  if (failures > 0) return { ...status, state: 'unstable', message: live?.error ?? 'Keine Antwort' };
+  if (state === 'up') return { ...status, state: 'up' };
+  return status;
+}
 
-  const formatTime = (ts: number) =>
-    new Date(ts * 1000).toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
+function latencyTone(ms: number | null, lossPct: number | null, warn: number, crit: number): ChartTone {
+  if (ms !== null && ms >= crit) return 'crit';
+  if ((ms !== null && ms >= warn) || (lossPct ?? 0) > 0) return 'warn';
+  return 'ok';
+}
+
+function statusTone(status: HostStatus, warn: number, crit: number): ChartTone {
+  switch (status.state) {
+    case 'down':
+      return 'crit';
+    case 'unstable':
+    case 'config':
+      return 'warn';
+    case 'pending':
+      return 'muted';
+    case 'up':
+      return latencyTone(status.latencyMs, status.lossPct, warn, crit);
+  }
+}
+
+const formatMs = (ms: number): string => (ms >= 100 ? ms.toFixed(0) : ms.toFixed(1));
+
+function formatPct(pct: number): string {
+  const rounded = Math.round(pct * 10) / 10;
+  // An availability with failures is never rounded up to 100 %.
+  const shown = pct < 100 && rounded >= 100 ? 99.9 : rounded;
+  return Number.isInteger(shown) ? String(shown) : shown.toFixed(1);
+}
+
+function formatClock(ms: number, now: number, withSeconds = false): string {
+  const date = new Date(ms);
+  const time = date.toLocaleTimeString('de-CH', {
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(withSeconds ? { second: '2-digit' } : {}),
+  });
+  if (new Date(now).toDateString() === date.toDateString()) return time;
+  return `${date.toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' })} ${time}`;
+}
+
+function stateLabel(status: HostStatus, threshold: number): string {
+  switch (status.state) {
+    case 'up':
+      return 'Online';
+    case 'down':
+      return 'Offline';
+    case 'unstable':
+      return `Instabil (${status.failures}/${threshold})`;
+    case 'config':
+      return 'Konfiguration prüfen';
+    case 'pending':
+      return 'Prüfe…';
+  }
+}
+
+function latencyText(status: HostStatus): string {
+  switch (status.state) {
+    case 'down':
+      return 'offline';
+    case 'pending':
+      return '…';
+    case 'config':
+    case 'unstable':
+      return '–';
+    case 'up':
+      // Reachable, but the check reported no time (e.g. ping without summary line).
+      return status.latencyMs !== null ? `${formatMs(status.latencyMs)} ms` : 'ok';
+  }
+}
+
+function kindCaption(status: HostStatus): string {
+  const { kind, port } = status.target;
+  if (kind === 'tcp') return `TCP ${port ?? ''} · Verbindungsaufbau`;
+  if (kind === 'http') return `HTTP${status.httpStatus !== null ? ` ${status.httpStatus}` : ''} · Antwortzeit`;
+  return 'Ping · Antwortzeit';
+}
+
+// ── Settings access ──────────────────────────────────────────────────────────
+
+const positive = (value: unknown, fallback: number): number => (isFiniteNumber(value) && value > 0 ? value : fallback);
+
+/** Before the Host-Monitor, the widget pinged one `ip`. */
+function legacyHost(stored: Record<string, unknown> | undefined): MonitoredHost | null {
+  if (!stored || stored.hosts !== undefined || typeof stored.ip !== 'string' || !stored.ip.trim()) return null;
+  return { name: 'NAS', host: stored.ip.trim(), kind: 'ping', port: 445, path: '/' };
+}
+
+function useHostMonitor(instanceId: string) {
+  const [settings] = useWidgetSettings<HostMonitorSettings>(instanceId, HOST_MONITOR_DEFAULT_SETTINGS);
+  const stored = useAppState((s) => s.state.widgetSettings[instanceId]);
+  const legacy = legacyHost(stored);
+  const hosts = legacy ? [legacy] : Array.isArray(settings.hosts) ? settings.hosts : [];
+  // Keyed by content: the settings object changes on every unrelated edit.
+  const hostsJson = JSON.stringify(hosts);
+  const targets = useMemo(
+    () => (JSON.parse(hostsJson) as unknown[]).slice(0, MAX_TARGETS).map(toTarget),
+    [hostsJson],
+  );
+  const warn = positive(settings.warnLatencyMs, HOST_MONITOR_DEFAULT_SETTINGS.warnLatencyMs);
+  return {
+    settings,
+    stored,
+    targets,
+    overflow: hosts.length > MAX_TARGETS,
+    intervalSeconds: INTERVAL_OPTIONS.includes(settings.intervalSeconds)
+      ? settings.intervalSeconds
+      : HOST_MONITOR_DEFAULT_SETTINGS.intervalSeconds,
+    warn,
+    crit: Math.max(warn, positive(settings.critLatencyMs, HOST_MONITOR_DEFAULT_SETTINGS.critLatencyMs)),
+    threshold: Math.min(10, Math.max(1, Math.round(positive(settings.failureThreshold, HOST_MONITOR_DEFAULT_SETTINGS.failureThreshold)))),
+    historyHours: HISTORY_OPTIONS.includes(settings.historyHours) ? settings.historyHours : HOST_MONITOR_DEFAULT_SETTINGS.historyHours,
+  };
+}
+
+/** Unique checks – the same target configured twice is checked once. */
+function uniqueChecks(targets: readonly Target[]): { key: string; host: string; check: NetCheckTarget }[] {
+  const seen = new Set<string>();
+  const checks: { key: string; host: string; check: NetCheckTarget }[] = [];
+  for (const target of targets) {
+    if (!target.check || seen.has(target.key)) continue;
+    seen.add(target.key);
+    checks.push({ key: target.key, host: target.check.host, check: target.check });
+  }
+  return checks;
+}
+
+// ── Views ────────────────────────────────────────────────────────────────────
+
+interface ViewProps {
+  statuses: HostStatus[];
+  warn: number;
+  crit: number;
+  threshold: number;
+  showSparkline: boolean;
+  windowFrom: number;
+  windowTo: number;
+  maxGapMs: number;
+  historyHours: number;
+  now: number;
+}
+
+function SingleHostView({ statuses, warn, crit, threshold, showSparkline, windowFrom, windowTo, maxGapMs, historyHours, now }: ViewProps) {
+  const status = statuses[0];
+  const tone = statusTone(status, warn, crit);
+  // Square-root scale up to 1.5 × «kritisch»: LAN pings below 1 ms stay visible,
+  // and the thresholds sit at fixed places on the arc.
+  const scaleMax = crit * 1.5;
+  const fraction = status.latencyMs !== null && status.state !== 'down' ? Math.sqrt(Math.min(status.latencyMs, scaleMax) / scaleMax) : 0;
+  const sparkMax = Math.max(warn, ...status.points.map((p) => p.v ?? 0)) * 1.1;
 
   return (
     <>
-      <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 6 }}>
+      <div className="hostmon-single-head">
+        <span className={`hostmon-pill chart-tone-${tone}`}>
+          <span className="hostmon-dot" />
+          {stateLabel(status, threshold)}
+        </span>
+        <span className="hostmon-address" title={status.target.address}>
+          {status.target.address}
+        </span>
+      </div>
 
-        {/* Offline-Banner */}
-        {offlineBanner && (
-          <div style={{
-            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)',
-            borderRadius: 6, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8,
-          }}>
-            <span style={{ fontSize: 18 }}>🔴</span>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#ef4444' }}>NAS nicht erreichbar!</div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 1 }}>
-                {settings.ip} · {MAX_RETRIES} Versuche fehlgeschlagen
-              </div>
-            </div>
+      <div className="hostmon-main">
+        {status.state === 'config' ? (
+          <div className="hostmon-config">
+            <Settings2 aria-hidden="true" />
+            <strong>{status.message}</strong>
+            <span>Adresse in den Einstellungen prüfen</span>
+          </div>
+        ) : (
+          <div className="hostmon-gauge">
+            <ArcGauge
+              fraction={fraction}
+              tone={status.state === 'down' ? 'crit' : status.state === 'pending' ? 'muted' : tone}
+              value={status.latencyMs !== null && status.state !== 'down' ? formatMs(status.latencyMs) : '—'}
+              unit={status.state === 'down' ? 'offline' : 'ms'}
+              label={`${status.target.name}: ${stateLabel(status, threshold)}`}
+            />
           </div>
         )}
 
-        {/* Retry-Hinweis */}
-        {!offlineBanner && retryCount > 0 && retryCount < MAX_RETRIES && (
-          <div style={{
-            background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)',
-            borderRadius: 6, padding: '6px 10px', fontSize: 11, color: '#f59e0b',
-          }}>
-            ⚠️ Kein Ping – Versuch {retryCount}/{MAX_RETRIES}, nächster in {RETRY_DELAY_S}s…
-          </div>
-        )}
+        <div className="hostmon-caption">
+          <strong>{status.target.name}</strong>
+          <span>{kindCaption(status)}</span>
+        </div>
 
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          {latest !== null ? (
-            <span style={{
-              fontSize: 11, fontWeight: 600, borderRadius: 4, padding: '2px 8px',
-              background: latest.reachable ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
-              color: latest.reachable ? '#22c55e' : '#ef4444',
-            }}>
-              {latest.reachable ? '● Online' : '● Offline'}
-              {latest.reachable && latest.packet_loss_pct > 0 && ` · ${latest.packet_loss_pct}% Verlust`}
+        <div className="hostmon-stats">
+          {status.uptimePct !== null && (
+            <span>
+              Verfügbar {formatPct(status.uptimePct)} % ({historyHours} h)
             </span>
-          ) : <span />}
-          {settings.ip && (
-            <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{settings.ip}</span>
           )}
-          {latest && (
-            <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{formatTime(latest.timestamp)}</span>
+          {status.target.kind === 'ping' && status.lossPct !== null && status.lossPct > 0 && status.state !== 'down' && (
+            <span className="is-warn">Verlust {formatPct(status.lossPct)} %</span>
           )}
-        </div>
-
-        {/* Gauge */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 4 }}>
-          {!settings.ip.trim() ? (
-            <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-tertiary)' }}>
-              ⚙️ NAS-IP in Einstellungen eintragen
-            </div>
-          ) : running ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, color: 'var(--text-tertiary)' }}>
-              <span style={{ fontSize: 28, animation: 'spin 1.5s linear infinite', display: 'inline-block' }}>⟳</span>
-              <span style={{ fontSize: 12 }}>Messe…</span>
-            </div>
-          ) : error ? (
-            <div style={{ textAlign: 'center', color: 'var(--error-color, #ef4444)', fontSize: 12 }}>⚠️ {error}</div>
-          ) : latest !== null ? (
-            <>
-              <LatencyGauge ms={latest.latency_ms} maxMs={maxMs} reachable={latest.reachable} size={gaugeSize} />
-              <span style={{ fontSize: Math.max(gaugeSize * 0.09, 9), color: 'var(--text-tertiary)', letterSpacing: 0.5 }}>
-                PING · ROUND TRIP
-              </span>
-            </>
-          ) : (
-            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Bereit…</span>
+          {status.since !== null && (status.state === 'up' || status.state === 'down') && (
+            <span>seit {formatClock(status.since, now)}</span>
           )}
-        </div>
-
-        {/* Sparkline */}
-        {history.length >= 2 && !running && (
-          <div style={{ paddingTop: 2 }}>
-            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Latenz-Verlauf
-            </div>
-            <LatencySparkline history={history} width={containerSize.w - 16} />
-          </div>
-        )}
-
-        {/* Footer */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: 5 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-            {running ? 'Messe…' : `Nächster Test: ${formatCountdown(countdown)}`}
-          </span>
-          {!running && settings.ip && (
-            <button onClick={() => runTest()} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--accent-color)', padding: 0 }}>
-              Jetzt messen
-            </button>
+          {(status.state === 'down' || status.state === 'unstable') && status.message && (
+            <span className="is-error">{status.message}</span>
           )}
         </div>
       </div>
 
-      <WidgetSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Einstellungen: NAS-Verbindung">
-        <div className="settings-section">
-          <div className="settings-section-title">NAS-Adresse</div>
-          <div className="settings-field">
-            <label className="settings-label">IP-Adresse</label>
-            <input
-              className="settings-input"
-              type="text"
-              placeholder="z.B. 192.168.1.100"
-              value={settings.ip}
-              onChange={(e) => updateSettings(instanceId, { ip: e.target.value })}
-            />
-          </div>
+      {showSparkline && status.points.length >= 2 && (
+        <div className="hostmon-spark">
+          <TimeSparkline
+            from={windowFrom}
+            to={windowTo}
+            maxGapMs={maxGapMs}
+            marks={status.marks}
+            series={[{ id: 'latency', points: status.points, max: sparkMax, tone: 'accent', fill: true }]}
+            label={`Antwortzeit der letzten ${historyHours} Stunden`}
+          />
         </div>
-        <div className="settings-section">
-          <div className="settings-section-title">Messintervall</div>
-          <div className="settings-field">
-            <label className="settings-label">Alle</label>
-            <select
-              className="settings-select"
-              value={settings.intervalMinutes}
-              onChange={(e) => updateSettings(instanceId, { intervalMinutes: parseInt(e.target.value) })}
-            >
-              {INTERVAL_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </div>
-        </div>
-        <div className="settings-info-box">
-          💡 Pingt das NAS 4× und zeigt die durchschnittliche Antwortzeit (RTT).
-        </div>
-      </WidgetSettingsDialog>
+      )}
     </>
   );
-};
+}
 
-export const nasWidgetDef: WidgetDefinition = {
-  manifest: {
-    id: 'nas',
-    name: 'NAS-Verbindung',
-    description: 'Ping-Latenz zum lokalen NAS',
-    version: '1.0.0',
-    author: 'SlateDesk',
-    minWidth: 2,
-    minHeight: 3,
-    defaultWidth: 3,
-    defaultHeight: 4,
-    permissions: ['network'],
-    hasSettings: true,
-  },
-  component: NasComponent,
-};
+function HostListView({ statuses, warn, crit, threshold, showSparkline, windowFrom, windowTo, maxGapMs, now }: ViewProps) {
+  return (
+    <ul className="hostmon-list">
+      {statuses.map((status, index) => {
+        const tone = statusTone(status, warn, crit);
+        const sparkMax = Math.max(warn, ...status.points.map((p) => p.v ?? 0)) * 1.1;
+        let detail = status.target.address;
+        if (status.state === 'config' || status.state === 'down' || status.state === 'unstable') {
+          detail = status.message ?? detail;
+        }
+        if (status.since !== null && (status.state === 'up' || status.state === 'down')) {
+          detail = `${detail} · seit ${formatClock(status.since, now)}`;
+        }
+        return (
+          <li key={`${status.target.key}#${index}`} className={`hostmon-row chart-tone-${tone} is-${status.state}`}>
+            <span className="hostmon-dot" title={stateLabel(status, threshold)} />
+            <div className="hostmon-row-main">
+              <span className="hostmon-row-name">{status.target.name}</span>
+              <span className="hostmon-row-detail">{detail}</span>
+            </div>
+            {showSparkline && status.points.length >= 2 && (
+              <div className="hostmon-row-spark">
+                <TimeSparkline
+                  from={windowFrom}
+                  to={windowTo}
+                  maxGapMs={maxGapMs}
+                  marks={status.marks}
+                  series={[{ id: 'latency', points: status.points, max: sparkMax, tone: 'accent' }]}
+                  label={`Antwortzeit ${status.target.name}`}
+                />
+              </div>
+            )}
+            <div className="hostmon-row-values">
+              <span className="hostmon-row-latency">{latencyText(status)}</span>
+              {status.uptimePct !== null && <span className="hostmon-row-uptime">{formatPct(status.uptimePct)} %</span>}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// ── Widget ───────────────────────────────────────────────────────────────────
+
+export function NasWidget({ instanceId }: WidgetProps) {
+  const monitor = useHostMonitor(instanceId);
+  const { settings, stored, targets, intervalSeconds, warn, crit, threshold, historyHours } = monitor;
+  const [initial] = useState(() => loadHistory(instanceId, targets, Date.now()));
+  const [history, setHistory] = useState<HistoryStore>(initial.history);
+  const [now, setNow] = useState(() => Date.now());
+  const available = isTauri();
+  const latestHistory = useRef(history);
+  /** History changed since it was last written. */
+  const unsaved = useRef(initial.fromLegacy);
+
+  // Old single-host settings become a host list once, so the web UI shows them too.
+  useEffect(() => {
+    const legacy = legacyHost(stored);
+    if (legacy) void widgetSettingsActions.update(instanceId, { hosts: [legacy], ip: undefined, intervalMinutes: undefined });
+  }, [instanceId, stored]);
+
+  useEffect(() => {
+    if (latestHistory.current === history) return;
+    latestHistory.current = history;
+    unsaved.current = true;
+  }, [history]);
+
+  useEffect(() => {
+    const save = () => {
+      if (!unsaved.current) return;
+      unsaved.current = false;
+      // A removed widget's storage was just deleted (instanceStorage) – don't write it back.
+      if (!useAppState.getState().state.layout.widgets.some((w) => w.instanceId === instanceId)) return;
+      try {
+        localStorage.setItem(historyKey(instanceId), JSON.stringify({ v: 1, hosts: latestHistory.current }));
+        if (initial.fromLegacy) {
+          localStorage.removeItem(LEGACY_HISTORY_KEY);
+          localStorage.removeItem(LEGACY_LAST_KEY);
+        }
+      } catch (err) {
+        console.warn('Host-Monitor-Verlauf konnte nicht gespeichert werden:', err);
+      }
+    };
+    const saveWhenHidden = () => {
+      if (document.visibilityState === 'hidden') save();
+    };
+    const timer = setInterval(save, PERSIST_EVERY_MS);
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', saveWhenHidden);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('pagehide', save);
+      document.removeEventListener('visibilitychange', saveWhenHidden);
+      save();
+    };
+  }, [instanceId, initial.fromLegacy]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const checks = useMemo(() => uniqueChecks(targets), [targets]);
+  const checksKey = checks.map((c) => c.key).join('\n');
+  const targetKeys = useMemo(() => [...new Set(targets.map((t) => t.key))], [targets]);
+
+  const polling = usePolling<LiveResults>(
+    async (signal) => {
+      const results = await netCheck(checks.map((c) => c.check));
+      if (signal.aborted) return {};
+      const at = Date.now();
+      const live: LiveResults = {};
+      results.forEach((result, i) => {
+        const check = checks[i];
+        if (check) live[check.key] = evaluate(result, check.host, answeredBefore(latestHistory.current[check.key]));
+      });
+      setHistory((prev) => recordSamples(prev, live, targetKeys, at));
+      setNow(at);
+      return live;
+    },
+    intervalSeconds * 1000,
+    [checksKey],
+    { enabled: available && checks.length > 0 },
+  );
+
+  const latestSample = useMemo(() => {
+    let latest = 0;
+    for (const samples of Object.values(history)) {
+      const last = samples[samples.length - 1];
+      if (last) latest = Math.max(latest, last[0] * 1000);
+    }
+    return latest;
+  }, [history]);
+
+  const windowTo = Math.max(now, latestSample);
+  const windowFrom = windowTo - historyHours * 3_600_000;
+  const live = polling.data;
+  const statuses = useMemo(
+    () => targets.map((target) => hostStatus(target, history[target.key] ?? [], live?.[target.key], threshold, windowFrom)),
+    [targets, history, live, threshold, windowFrom],
+  );
+
+  if (targets.length === 0) {
+    return (
+      <div className="hostmon">
+        <div className="hostmon-empty">
+          <ServerOff aria-hidden="true" />
+          <strong>Keine Hosts eingerichtet</strong>
+          <span>In den Einstellungen Hosts hinzufügen – z.B. NAS, Router oder Drucker.</span>
+        </div>
+      </div>
+    );
+  }
+
+  const down = statuses.filter((s) => s.state === 'down');
+  const firstDownSince = down.reduce<number | null>(
+    (min, s) => (s.since !== null && (min === null || s.since < min) ? s.since : min),
+    null,
+  );
+  const viewProps: ViewProps = {
+    statuses,
+    warn,
+    crit,
+    threshold,
+    showSparkline: settings.showSparkline !== false,
+    windowFrom,
+    windowTo,
+    // A missed check or two are no gap; longer pauses (app off) are.
+    maxGapMs: intervalSeconds * 1000 * 3.5,
+    historyHours,
+    now,
+  };
+
+  let footer: string;
+  if (!available) footer = KIOSK_ONLY_MESSAGE;
+  else if (polling.error) footer = `Prüfung fehlgeschlagen: ${polling.error}`;
+  else if (polling.lastUpdated !== null) footer = `Geprüft ${formatClock(polling.lastUpdated, now, true)}`;
+  else if (checks.length === 0) footer = 'Keine gültige Adresse';
+  else footer = 'Prüfe…';
+
+  return (
+    <div className={`hostmon${targets.length === 1 ? ' is-single' : ' is-list'}`}>
+      {down.length > 0 && (
+        <div className="hostmon-banner" role="alert">
+          <AlertTriangle className="hostmon-banner-icon" aria-hidden="true" />
+          <div className="hostmon-banner-text">
+            <strong>
+              {down.length === 1 ? `${down[0].target.name} nicht erreichbar` : `${down.length} Hosts nicht erreichbar`}
+            </strong>
+            <span>
+              {down.length > 1 ? `${down.map((s) => s.target.name).join(', ')}` : ''}
+              {down.length > 1 && firstDownSince !== null ? ' · ' : ''}
+              {firstDownSince !== null ? `seit ${formatClock(firstDownSince, now)}` : ''}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {targets.length === 1 ? <SingleHostView {...viewProps} /> : <HostListView {...viewProps} />}
+
+      <div className="hostmon-foot">
+        <span className={`hostmon-foot-status${polling.error ? ' is-error' : ''}`}>
+          {footer}
+          {monitor.overflow ? ` · nur die ersten ${MAX_TARGETS} Hosts` : ''}
+        </span>
+        <button
+          type="button"
+          className="hostmon-button"
+          onClick={polling.refresh}
+          disabled={!available || checks.length === 0 || polling.loading}
+          aria-label="Jetzt prüfen"
+        >
+          <RefreshCw size="1.1em" className={polling.loading ? 'hostmon-spin' : undefined} aria-hidden="true" />
+          <span className="hostmon-button-label">Jetzt prüfen</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Settings extra (kiosk dialog) ────────────────────────────────────────────
+
+interface TestRow {
+  name: string;
+  address: string;
+  ok: boolean;
+  text: string;
+}
+
+/** Checks the configured hosts once, right from the settings dialog. */
+export function NasSettingsExtra({ instanceId }: { instanceId: string }) {
+  const { targets } = useHostMonitor(instanceId);
+  const [rows, setRows] = useState<TestRow[] | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const test = async () => {
+    setTesting(true);
+    setError(null);
+    try {
+      const checks = uniqueChecks(targets);
+      const results = checks.length > 0 ? await netCheck(checks.map((c) => c.check)) : [];
+      const live: LiveResults = {};
+      results.forEach((result, i) => {
+        if (checks[i]) live[checks[i].key] = evaluate(result, checks[i].host);
+      });
+      setRows(
+        targets.map((target) => {
+          const result = live[target.key];
+          const configError = target.configError ?? result?.configError ?? null;
+          if (configError) return { name: target.name, address: target.address, ok: false, text: configError };
+          if (!result) return { name: target.name, address: target.address, ok: false, text: 'Nicht geprüft' };
+          if (!result.ok) return { name: target.name, address: target.address, ok: false, text: result.error ?? 'Keine Antwort' };
+          const latency = result.latencyMs !== null ? ` · ${formatMs(result.latencyMs)} ms` : '';
+          const http = result.httpStatus !== null ? ` · HTTP ${result.httpStatus}` : '';
+          return { name: target.name, address: target.address, ok: true, text: `Erreichbar${latency}${http}` };
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="hostmon-test">
+      <button type="button" className="settings-btn" onClick={() => void test()} disabled={testing || targets.length === 0}>
+        <RefreshCw size={16} className={testing ? 'hostmon-spin' : undefined} aria-hidden="true" />
+        {testing ? 'Prüfe…' : 'Alle Hosts jetzt prüfen'}
+      </button>
+      {targets.length === 0 && <div className="settings-description">Zuerst oben einen Host hinzufügen.</div>}
+      {error && <div className="settings-info-box error">{error}</div>}
+      {rows && (
+        <ul className="hostmon-test-list">
+          {rows.map((row, index) => (
+            <li key={index} className="settings-status">
+              <span className={`settings-status-dot hostmon-test-dot${row.ok ? ' is-ok' : ''}`} />
+              <span className="hostmon-test-name">{row.name}</span>
+              <span className="hostmon-test-text">
+                {row.text}
+                <small>{row.address}</small>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

@@ -1,14 +1,8 @@
 /**
- * Widget Registry
- * 
- * Central registry for all available widgets.
- * To add a new widget:
- * 1. Create a component in src/widgets/
- * 2. Create a WidgetDefinition with manifest + component
- * 3. Call registerWidget() in this file
- * 
- * The registry is used by the Dashboard to render widgets
- * and by the Widget Picker to display available widgets.
+ * Widget Registry – kiosk lookup of widget definitions (manifest + component).
+ *
+ * Filled once at startup by `initializeWidgets()` (src/widgets/index.ts).
+ * Code that only needs metadata (and the web UI) uses src/widgets/catalog.ts.
  */
 import type { WidgetDefinition } from '../types/widget';
 
@@ -21,14 +15,6 @@ export const registerWidget = (definition: WidgetDefinition): void => {
   registry.set(definition.manifest.id, definition);
 };
 
-export const getWidget = (id: string): WidgetDefinition | undefined => {
-  return registry.get(id);
-};
+export const getWidget = (id: string): WidgetDefinition | undefined => registry.get(id);
 
-export const getAllWidgets = (): WidgetDefinition[] => {
-  return Array.from(registry.values());
-};
-
-export const getWidgetIds = (): string[] => {
-  return Array.from(registry.keys());
-};
+export const getAllWidgets = (): WidgetDefinition[] => Array.from(registry.values());

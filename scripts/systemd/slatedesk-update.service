@@ -1,0 +1,16 @@
+# SlateDesk Update: git fetch → Build → Installation → Neustart → Health-Check.
+# Gestartet von slatedesk-update.timer oder über "Update" im Kiosk/Web-UI
+# (systemctl --user start --no-block slatedesk-update.service). Läuft als
+# eigene Unit, damit der Neustart der App das Update nicht mitbeendet.
+
+[Unit]
+Description=SlateDesk Update (Build und Installation)
+Documentation=https://github.com/Zenovs/SlateDesk/blob/main/docs/BETRIEB.md
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -l %h/SlateDesk/scripts/auto-update.sh
+Environment=SLATEDESK_HOME=%h/SlateDesk
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h

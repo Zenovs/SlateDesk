@@ -1,0 +1,468 @@
+/**
+ * Volumio widget. Narrow widgets stack cover and text, wide ones put the
+ * cover on the left. The cover cell is its own size container, so the cover
+ * is always the largest square that fits (100cqmin of the cell).
+ */
+
+.volumio,
+.volumio-logo {
+  --volumio-title: clamp(15px, 6.2cqmin, 36px);
+  --volumio-btn: clamp(40px, 12cqmin, 60px);
+}
+
+.volumio {
+  position: relative;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: clamp(8px, 3cqmin, 20px);
+  overflow: hidden;
+}
+
+/* ── Cover ── */
+
+.volumio-cover-cell {
+  container-type: size;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--transition-slow);
+}
+
+.volumio-cover {
+  position: relative;
+  width: 100cqmin;
+  height: 100cqmin;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-widget-header);
+  box-shadow: var(--shadow-md);
+}
+
+.volumio-cover-fallback {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 40%;
+  height: 40%;
+  color: var(--text-tertiary);
+}
+
+.volumio-cover img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: filter var(--transition-slow);
+}
+
+.volumio.is-pause .volumio-cover img {
+  filter: grayscale(0.5) brightness(0.7);
+}
+
+.volumio-badge {
+  position: absolute;
+  top: 6%;
+  left: 6%;
+  padding: 0.2em 0.7em;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: clamp(10px, 7cqmin, 15px);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.04em;
+}
+
+/* ── Text ── */
+
+.volumio-info {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(6px, 2.4cqmin, 16px);
+  transition: opacity var(--transition-slow);
+}
+
+.volumio-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  text-align: center;
+}
+
+.volumio.is-stop .volumio-cover-cell,
+.volumio.is-stop .volumio-text {
+  opacity: 0.55;
+}
+
+.volumio-title {
+  font-size: var(--volumio-title);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.2;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* The title is 20 % larger than the artist. */
+.volumio-artist {
+  font-size: calc(var(--volumio-title) / 1.2);
+  line-height: 1.25;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.volumio-album {
+  font-size: max(11px, calc(var(--volumio-title) * 0.55));
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.volumio-quality {
+  font-size: max(10px, calc(var(--volumio-title) * 0.45));
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.04em;
+  color: var(--text-accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Progress ── */
+
+.volumio-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  font-size: max(10px, calc(var(--volumio-title) * 0.45));
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.volumio-progress-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-color);
+  overflow: hidden;
+}
+
+.volumio-progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent-color);
+  transition: width 1s linear;
+}
+
+.volumio-progress-times {
+  display: flex;
+  justify-content: space-between;
+}
+
+.volumio-progress.is-live {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45em;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.volumio-live-dot {
+  width: 0.65em;
+  height: 0.65em;
+  border-radius: 50%;
+  background: var(--error-color);
+}
+
+.volumio.is-play .volumio-live-dot {
+  animation: volumio-live 2s ease-in-out infinite;
+}
+
+@keyframes volumio-live {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ── Controls ── */
+
+.volumio-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(6px, 2cqmin, 14px) clamp(12px, 4cqmin, 28px);
+}
+
+.volumio-transport,
+.volumio-volume {
+  display: flex;
+  align-items: center;
+  gap: clamp(4px, 1.5cqmin, 10px);
+}
+
+.volumio-btn {
+  flex-shrink: 0;
+  width: var(--volumio-btn);
+  height: var(--volumio-btn);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: var(--bg-widget-header);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.volumio-btn svg {
+  width: 45%;
+  height: 45%;
+}
+
+.volumio-btn:hover:not(:disabled) {
+  border-color: var(--accent-color);
+}
+
+.volumio-btn.is-main {
+  width: calc(var(--volumio-btn) * 1.25);
+  height: calc(var(--volumio-btn) * 1.25);
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #fff;
+}
+
+.volumio-btn.is-active {
+  color: var(--warning-color);
+  border-color: var(--warning-color);
+}
+
+.volumio-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.volumio-volume-value {
+  min-width: 2.2em;
+  text-align: center;
+  font-size: max(12px, calc(var(--volumio-title) * 0.55));
+  font-weight: var(--font-weight-bold);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.volumio-volume-value.is-muted {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+/* ── Offline / errors ── */
+
+.volumio.is-offline .volumio-cover-cell,
+.volumio.is-offline .volumio-info {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+.volumio-offline,
+.volumio-toast {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 16px);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.35em 0.9em;
+  border-radius: 999px;
+  font-size: clamp(11px, 3.4cqmin, 15px);
+  font-weight: var(--font-weight-bold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow-md);
+}
+
+.volumio-offline {
+  top: 0;
+  background: var(--bg-widget);
+  border: 1px solid rgba(var(--error-rgb), 0.5);
+  color: var(--error-color);
+}
+
+.volumio-offline svg {
+  flex-shrink: 0;
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.volumio-toast {
+  bottom: 0;
+  background: var(--error-color);
+  color: #fff;
+}
+
+/* ── Messages, idle logo ── */
+
+.volumio-message {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  padding: 0 0.5em;
+  text-align: center;
+  font-size: clamp(12px, 3.6cqmin, 16px);
+  color: var(--text-tertiary);
+}
+
+.volumio-message svg {
+  width: clamp(24px, 12cqmin, 48px);
+  height: clamp(24px, 12cqmin, 48px);
+}
+
+.volumio-message strong {
+  color: var(--text-secondary);
+}
+
+.volumio-message.is-error svg,
+.volumio-message.is-error strong {
+  color: var(--error-color);
+}
+
+.volumio-message span {
+  overflow-wrap: anywhere;
+}
+
+.volumio-blank {
+  height: 100%;
+}
+
+.volumio-logo {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(4px, 2cqmin, 12px);
+  text-align: center;
+  overflow: hidden;
+}
+
+.volumio-logo-mark {
+  width: clamp(44px, 26cqmin, 140px);
+  height: clamp(44px, 26cqmin, 140px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(var(--accent-color-rgb), 0.12);
+  color: var(--accent-color);
+}
+
+.volumio-logo-mark svg {
+  width: 50%;
+  height: 50%;
+}
+
+.volumio-logo-name {
+  font-size: clamp(16px, 8cqmin, 40px);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+}
+
+.volumio-logo-sub {
+  font-size: clamp(11px, 3.6cqmin, 16px);
+  color: var(--text-tertiary);
+}
+
+/* ── Settings dialog: connection test ── */
+
+.volumio-test {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
+.volumio-test .settings-info-box {
+  align-self: stretch;
+}
+
+/* ── Wide: cover on the left ── */
+
+@container widget (min-aspect-ratio: 5 / 4) {
+  .volumio {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .volumio-cover-cell {
+    width: min(46cqw, 100cqh);
+    height: 100%;
+  }
+
+  .volumio-text {
+    text-align: left;
+  }
+
+  .volumio-controls,
+  .volumio-progress.is-live {
+    justify-content: flex-start;
+  }
+}
+
+/* ── Small widgets ── */
+
+@container widget (max-height: 300px) {
+  .volumio-album,
+  .volumio-quality {
+    display: none;
+  }
+}
+
+@container widget (max-height: 260px) and (max-aspect-ratio: 5 / 4) {
+  .volumio-volume {
+    display: none;
+  }
+}
+
+@container widget (max-height: 200px) {
+  .volumio-volume,
+  .volumio-progress-times {
+    display: none;
+  }
+}
+
+@container widget (max-height: 220px) and (max-aspect-ratio: 5 / 4) {
+  .volumio {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .volumio-cover-cell {
+    display: none;
+  }
+}

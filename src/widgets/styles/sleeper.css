@@ -1,0 +1,213 @@
+/**
+ * Ruhemodus widget (id 'sleeper') and its full-screen veil. Sizes derive
+ * from the widget body (size container "widget").
+ */
+
+.sleeper {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(4px, 3cqh, 12px);
+  overflow: hidden;
+  text-align: center;
+}
+
+/* Rendered (so the stream keeps playing for the detection) but never visible */
+.sleeper-video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sleeper-icon {
+  width: clamp(24px, 26cqmin, 88px);
+  height: clamp(24px, 26cqmin, 88px);
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: color var(--transition-normal);
+}
+
+.sleeper-aktiv .sleeper-icon {
+  color: var(--success-color);
+}
+
+.sleeper-startet .sleeper-icon {
+  color: var(--accent-color);
+  animation: sleeperPulse 1.6s ease-in-out infinite;
+}
+
+.sleeper-dimmt .sleeper-icon,
+.sleeper-schlaeft .sleeper-icon {
+  color: var(--info-color);
+}
+
+.sleeper-fehler .sleeper-icon {
+  color: var(--error-color);
+}
+
+@keyframes sleeperPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.sleeper-title {
+  max-width: 100%;
+  font-size: clamp(13px, 7.5cqmin, 26px);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+.sleeper-detail {
+  max-width: 100%;
+  font-size: clamp(11px, 5cqmin, 16px);
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.sleeper-detail.warning {
+  color: var(--warning-color);
+}
+
+.sleeper-detail.error {
+  color: var(--error-color);
+}
+
+.sleeper-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  margin-top: clamp(0px, 2cqh, 8px);
+}
+
+.sleeper-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 var(--spacing-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.sleeper-button:hover {
+  border-color: var(--border-color-hover);
+}
+
+.sleeper-button.primary {
+  border-color: var(--accent-color);
+  background: var(--accent-color);
+  color: #fff;
+}
+
+.sleeper-button.primary:hover {
+  background: var(--accent-color-light);
+}
+
+/* Small widgets: title and button first */
+@container widget (max-height: 150px) {
+  .sleeper-icon {
+    display: none;
+  }
+}
+
+@container widget (max-height: 100px) {
+  .sleeper-detail {
+    display: none;
+  }
+}
+
+/* Full-screen veil – above everything, also above the display schedule's blackout */
+.sleeper-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 var(--spacing-lg) 48px;
+  text-align: center;
+  animation: sleeperVeilIn 1.2s ease both;
+  transition: background-color 1s ease;
+}
+
+.sleeper-veil.dim {
+  background: rgba(0, 0, 0, 0.82);
+}
+
+.sleeper-veil.black {
+  background: #000;
+  cursor: none;
+}
+
+.sleeper-veil.clear {
+  background: transparent;
+}
+
+.sleeper-veil-hint {
+  color: rgba(255, 255, 255, 0.6);
+  font-family: var(--font-family);
+  font-size: 15px;
+  letter-spacing: 0.03em;
+}
+
+.sleeper-veil.black .sleeper-veil-hint {
+  color: rgba(255, 255, 255, 0.18);
+}
+
+@keyframes sleeperVeilIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Settings extra (kiosk dialog) */
+.settings-status-dot.sleeper-status-aus,
+.settings-status-dot.sleeper-status-zeitplan {
+  background: var(--text-tertiary);
+}
+
+.settings-status-dot.sleeper-status-startet {
+  background: var(--warning-color);
+}
+
+.settings-status-dot.sleeper-status-aktiv {
+  background: var(--success-color);
+}
+
+.settings-status-dot.sleeper-status-dimmt,
+.settings-status-dot.sleeper-status-schlaeft {
+  background: var(--info-color);
+}
+
+.settings-status-dot.sleeper-status-fehler {
+  background: var(--error-color);
+}
+
+.sleeper-extra-info {
+  margin-top: var(--spacing-sm);
+}
+
+.sleeper-extra-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.sleeper-extra-actions .settings-btn {
+  min-height: 40px;
+}

@@ -1,7 +1,8 @@
 /**
  * SlateDesk Global Styles
+ * Lato is self-hosted (@fontsource/lato, imported in main.tsx) – the kiosk
+ * must not depend on Google Fonts being reachable.
  */
-@import url('https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap');
 @import './tokens.css';
 
 * {
@@ -36,7 +37,10 @@ html, body, #root {
 }
 
 .react-grid-item {
-  transition: all var(--transition-normal) ease;
+  transition:
+    transform var(--transition-normal),
+    width var(--transition-normal),
+    height var(--transition-normal);
 }
 
 .react-grid-item.react-draggable-dragging {
@@ -50,30 +54,36 @@ html, body, #root {
   z-index: 100;
 }
 
+/* Resize handle: only rendered in edit mode, always visible and touch-sized (≥ 40px) there */
 .react-grid-item > .react-resizable-handle {
   position: absolute;
-  width: 20px;
-  height: 20px;
+  width: 44px;
+  height: 44px;
   bottom: 0;
   right: 0;
   cursor: se-resize;
-  opacity: 0;
+  opacity: 0.85;
+  z-index: 2;
+  touch-action: none;
+  background: none;
   transition: opacity var(--transition-fast);
 }
 
-.react-grid-item:hover > .react-resizable-handle {
-  opacity: 0.5;
+.react-grid-item:hover > .react-resizable-handle,
+.react-grid-item.resizing > .react-resizable-handle {
+  opacity: 1;
 }
 
 .react-grid-item > .react-resizable-handle::after {
   content: '';
   position: absolute;
-  right: 4px;
-  bottom: 4px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid var(--text-tertiary);
-  border-bottom: 2px solid var(--text-tertiary);
+  right: 6px;
+  bottom: 6px;
+  width: 14px;
+  height: 14px;
+  border-right: 3px solid var(--accent-color);
+  border-bottom: 3px solid var(--accent-color);
+  border-bottom-right-radius: 4px;
 }
 
 /* Placeholder when dragging */
@@ -82,12 +92,6 @@ html, body, #root {
   opacity: 0.15 !important;
   border-radius: var(--radius-md) !important;
   border: 2px dashed var(--accent-color) !important;
-}
-
-/* Cursor auto-hide after inactivity */
-body.cursor-hidden,
-body.cursor-hidden * {
-  cursor: none !important;
 }
 
 /* Scrollbar */
@@ -113,8 +117,11 @@ body.cursor-hidden * {
 
 /* ── Globales Select/Input Styling ─────────────────────────────────────────
    Stellt sicher dass alle Dropdowns in der App korrekte Farben haben,
-   unabhängig von OS-Defaults (wichtig für WebKitGTK auf Linux).          */
-select, input, textarea {
+   unabhängig von OS-Defaults (wichtig für WebKitGTK auf Linux).
+   Nur Textfelder: Checkboxen ohne native Darstellung zeigen kein Häkchen,
+   und die Farbe würde die Spur der Schieberegler verdecken. :where() hält
+   die Spezifität bei 0,0,1, damit Klassen-Regeln weiterhin gewinnen.      */
+select, input:where(:not([type='checkbox'], [type='radio'], [type='range'])), textarea {
   -webkit-appearance: none;
   appearance: none;
   background-color: var(--bg-secondary);
@@ -130,7 +137,7 @@ select option {
   color: var(--text-primary);
 }
 
-select:focus, input:focus, textarea:focus {
+select:focus, input:where(:not([type='checkbox'], [type='radio'], [type='range'])):focus, textarea:focus {
   outline: none;
   border-color: var(--accent-color);
 }
@@ -142,7 +149,7 @@ select:focus, input:focus, textarea:focus {
   color: #1a2e2d;
 }
 
-[data-theme='light'] input,
+[data-theme='light'] input:where(:not([type='checkbox'], [type='radio'], [type='range'])),
 [data-theme='light'] textarea {
   background-color: #f0faf9;
   color: #1a2e2d;
@@ -155,7 +162,7 @@ select:focus, input:focus, textarea:focus {
   color: #e8e8ec;
 }
 
-[data-theme='dark'] input,
+[data-theme='dark'] input:where(:not([type='checkbox'], [type='radio'], [type='range'])),
 [data-theme='dark'] textarea {
   background-color: #18181c;
   color: #e8e8ec;

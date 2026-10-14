@@ -1,0 +1,413 @@
+/**
+ * Pinnwand (messages) – type scales with the widget (container `widget`):
+ * the card's font-size is the title size, everything inside is sized in em.
+ */
+
+.pinnwand {
+  --pw-title: clamp(15px, calc(2.6cqw + 2.4cqh), 36px);
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-family);
+}
+
+.pinnwand--rotation {
+  --pw-title: clamp(18px, calc(4.5cqw + 5cqh), 64px);
+}
+
+/* ── Header (optional title) ─────────────────────────────────────────────── */
+
+.pinnwand-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  min-width: 0;
+  margin-bottom: 0.6em;
+  font-size: max(12px, calc(var(--pw-title) * 0.62));
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-accent);
+}
+
+.pinnwand--rotation .pinnwand-header {
+  font-size: max(12px, calc(var(--pw-title) * 0.42));
+}
+
+.pinnwand-header svg {
+  width: 1.15em;
+  height: 1.15em;
+  flex-shrink: 0;
+}
+
+.pinnwand-header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
+
+.pinnwand-card {
+  --pw-level: var(--info-color);
+  --pw-level-rgb: var(--info-rgb);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.2em 0.55em;
+  padding: 0.5em 0.65em;
+  border-left: 4px solid var(--pw-level);
+  border-radius: var(--radius-md);
+  background: rgba(var(--pw-level-rgb), 0.08);
+  font-size: var(--pw-title);
+  line-height: 1.25;
+}
+
+.pinnwand-card--wichtig {
+  --pw-level: var(--error-color);
+  --pw-level-rgb: var(--error-rgb);
+  background: rgba(var(--pw-level-rgb), 0.12);
+}
+
+.pinnwand-card--erfolg {
+  --pw-level: var(--success-color);
+  --pw-level-rgb: var(--success-rgb);
+}
+
+.pinnwand-card-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  height: 1.25em;
+  color: var(--pw-level);
+}
+
+.pinnwand-card-icon svg {
+  width: 1em;
+  height: 1em;
+}
+
+.pinnwand-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.pinnwand-card-title {
+  margin: 0;
+  font-size: 1em;
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.pinnwand-pin {
+  width: 0.7em;
+  height: 0.7em;
+  margin-left: 0.35em;
+  vertical-align: baseline;
+  color: var(--text-tertiary);
+  transform: rotate(30deg);
+}
+
+.pinnwand-card-text {
+  margin: 0.25em 0 0;
+  font-size: max(13px, 0.78em);
+  line-height: 1.4;
+  color: var(--text-secondary);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+.pinnwand-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 0.35em;
+  font-size: max(11px, 0.58em);
+  color: var(--text-tertiary);
+}
+
+.pinnwand-card-meta > span + span::before {
+  content: '·';
+  margin: 0 0.4em;
+}
+
+/* ── Delete (edit mode) ──────────────────────────────────────────────────── */
+
+.pinnwand-delete {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  margin: -0.25em -0.35em -0.25em 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-md);
+  background: rgba(var(--error-rgb), 0.14);
+  color: var(--error-color);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.pinnwand-delete:hover {
+  background: rgba(var(--error-rgb), 0.24);
+}
+
+.pinnwand-delete svg {
+  width: 20px;
+  height: 20px;
+}
+
+.pinnwand-confirm {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin-top: 0.3em;
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid rgba(var(--error-rgb), 0.35);
+  font-size: var(--font-size-md);
+}
+
+.pinnwand-confirm-text {
+  font-weight: var(--font-weight-bold);
+  color: var(--error-color);
+}
+
+.pinnwand-confirm-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.pinnwand-confirm-button {
+  min-height: 44px;
+  padding: 0 var(--spacing-md);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+}
+
+.pinnwand-confirm-button.danger {
+  border-color: var(--error-color);
+  background: var(--error-color);
+  color: #fff;
+}
+
+.pinnwand-confirm-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── List ────────────────────────────────────────────────────────────────── */
+
+.pinnwand-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(6px, 1.8cqh, 14px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.pinnwand-list > li {
+  flex-shrink: 0;
+}
+
+.pinnwand-more {
+  flex-shrink: 0;
+  padding-top: var(--spacing-sm);
+  font-size: max(11px, calc(var(--pw-title) * 0.55));
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* ── Rotation ────────────────────────────────────────────────────────────── */
+
+.pinnwand-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pinnwand-stage--long {
+  --pw-title: clamp(16px, calc(3.6cqw + 4cqh), 50px);
+}
+
+.pinnwand-stage--xlong {
+  --pw-title: clamp(15px, calc(2.8cqw + 3cqh), 38px);
+}
+
+.pinnwand-stage--browsable {
+  cursor: pointer;
+}
+
+.pinnwand-stage-item {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  animation: pinnwand-enter 450ms ease both;
+}
+
+.pinnwand-stage .pinnwand-card {
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  align-content: center;
+  padding: 0.45em 0.6em;
+  border-left-width: 6px;
+  overflow: hidden;
+}
+
+.pinnwand-stage .pinnwand-card-icon {
+  align-self: flex-start;
+}
+
+.pinnwand-stage .pinnwand-card-body {
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.pinnwand-stage .pinnwand-card-text {
+  font-size: max(14px, 0.72em);
+  -webkit-line-clamp: 7;
+}
+
+.pinnwand-pager {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 18px;
+  padding-top: var(--spacing-sm);
+}
+
+.pinnwand-pager-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-color-hover);
+  transition: background var(--transition-normal), transform var(--transition-normal);
+}
+
+.pinnwand-pager-dot.active {
+  background: var(--accent-color);
+  transform: scale(1.35);
+}
+
+.pinnwand-pager-count {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes pinnwand-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+.pinnwand-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35em;
+  padding: var(--spacing-sm);
+  overflow: hidden;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.pinnwand-empty-icon {
+  width: clamp(24px, 14cqmin, 56px);
+  height: clamp(24px, 14cqmin, 56px);
+  margin-bottom: 0.2em;
+  opacity: 0.6;
+}
+
+.pinnwand-empty-title {
+  font-size: clamp(15px, calc(2cqw + 3cqh), 26px);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-secondary);
+}
+
+.pinnwand-empty-hint {
+  max-width: 32em;
+  font-size: clamp(12px, calc(1.2cqw + 1.6cqh), 16px);
+  line-height: 1.4;
+}
+
+/* ── Size adaptations ────────────────────────────────────────────────────── */
+
+@container widget (max-width: 260px) {
+  .pinnwand-card-icon {
+    display: none;
+  }
+}
+
+/* Later (smaller) breakpoints override the earlier ones. */
+@container widget (max-height: 400px) {
+  .pinnwand-stage .pinnwand-card-text {
+    -webkit-line-clamp: 5;
+  }
+}
+
+@container widget (max-height: 260px) {
+  .pinnwand-stage .pinnwand-card-text {
+    -webkit-line-clamp: 3;
+  }
+}
+
+@container widget (max-height: 150px) {
+  .pinnwand-empty-icon {
+    display: none;
+  }
+
+  .pinnwand-card-text,
+  .pinnwand-stage .pinnwand-card-text,
+  .pinnwand-stage .pinnwand-card-title {
+    -webkit-line-clamp: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pinnwand-stage-item {
+    animation: none;
+  }
+}
