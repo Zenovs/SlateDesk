@@ -250,8 +250,19 @@ purge_data() {
     ok "Dashboard-Daten, PIN und WebKit-Daten gelöscht."
 }
 
+# Nur ein von setup.sh angelegtes Konto (Kommentar «SlateDesk Kiosk») darf gelöscht werden –
+# läuft SlateDesk im persönlichen Konto (z. B. unter zenOS), bleibt das Konto samt Home stehen.
+created_by_setup() {
+    [ "$(getent passwd "$SD_USER" | cut -d : -f 5)" = "SlateDesk Kiosk" ]
+}
+
 purge_user() {
     local i
+    if ! created_by_setup; then
+        purge_data
+        warn "Benutzer $SD_USER wurde nicht von setup.sh angelegt und bleibt erhalten (nur SlateDesk-Daten gelöscht)."
+        return 0
+    fi
     remove_autologin
     loginctl disable-linger "$SD_USER" 2>/dev/null || true
     loginctl terminate-user "$SD_USER" 2>/dev/null || true
@@ -281,8 +292,10 @@ main() {
     fi
     if [ "$OPT_PURGE" -eq 1 ] && [ "$USER_EXISTS" -eq 1 ]; then
         info "--purge: ~/.config/com.slatedesk.app (Dashboard, PIN), WebKit-Daten samt Sicherung und Cache löschen"
-        if [ "$IS_ROOT" -eq 1 ]; then
+        if [ "$IS_ROOT" -eq 1 ] && created_by_setup; then
             info "--purge: Benutzer $SD_USER mit Home-Verzeichnis $SD_HOME (inkl. Git-Checkout) löschen"
+        elif [ "$IS_ROOT" -eq 1 ]; then
+            info "--purge: Benutzer $SD_USER bleibt erhalten (nicht von setup.sh angelegt)"
         fi
     else
         info "Erhalten bleiben: ~/.config/com.slatedesk.app (Dashboard-Zustand, PIN), ~/.local/state/slatedesk/backup und ~/SlateDesk"

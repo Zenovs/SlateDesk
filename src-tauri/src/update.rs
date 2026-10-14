@@ -1,4 +1,5 @@
-//! Self-update: compares the running build with origin/main, starts the update unit and
+//! Self-update: compares the running build with the update branch (`origin/<branch>`, see
+//! [`update_branch`]), starts the update unit and
 //! reports progress from the status file the update script writes
 //! (`~/.local/state/slatedesk/update-status.json`, see scripts/auto-update.sh).
 
@@ -124,6 +125,30 @@ async fn git(dir: &Path, args: &[&str], limit: Duration) -> Result<String, Strin
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Simplified `git check-ref-format`: no option-like start, no `..`, no `.lock` suffix.
+fn valid_branch(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+        && !name.contains("..")
+        && !name.ends_with(".lock")
+        && !name.ends_with('/')
+}
+
+/// Update branch, resolved like scripts/auto-update.sh: `SLATEDESK_BRANCH`, else
+/// `git config slatedesk.branch` in the checkout (set by `setup.sh --branch`), else `main`.
+async fn update_branch(dir: &Path) -> String {
+    let configured = match std::env::var("SLATEDESK_BRANCH") {
+        Ok(env) if !env.trim().is_empty() => Some(env.trim().to_string()),
+        _ => git(dir, &["config", "--get", "slatedesk.branch"], GIT_TIMEOUT)
+            .await
+            .ok(),
+    };
+    configured
+        .filter(|b| valid_branch(b))
+        .unwrap_or_else(|| "main".to_string())
+}
+
 async fn resolve_commit(dir: &Path, rev: &str) -> Option<String> {
     git(
         dir,
@@ -160,17 +185,20 @@ async fn run_check() -> Result<UpdateInfo, String> {
             dir.display()
         ));
     }
+    let branch = update_branch(&dir).await;
+    let remote_ref = format!("origin/{branch}");
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote_ref}");
     git(
         &dir,
-        &["fetch", "--quiet", "origin", "main"],
+        &["fetch", "--quiet", "origin", &refspec],
         GIT_FETCH_TIMEOUT,
     )
     .await?;
-    let remote = resolve_commit(&dir, "origin/main")
+    let remote = resolve_commit(&dir, &remote_ref)
         .await
-        .ok_or_else(|| "origin/main nicht gefunden".to_string())?;
+        .ok_or_else(|| format!("{remote_ref} nicht gefunden"))?;
 
-    // The running binary counts, not HEAD: after a failed build HEAD already is origin/main.
+    // The running binary counts, not HEAD: after a failed build HEAD already is the remote head.
     let build = crate::system::commit();
     let build_full = match build {
         Some(hash) => resolve_commit(&dir, hash).await,
@@ -555,6 +583,52 @@ pub async fn get_update_progress() -> UpdateProgress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn branch_names_are_validated_like_the_update_script() {
+        for ok in ["main", "grosses-update", "feature/x", "v0.2.1", "a_b"] {
+            assert!(valid_branch(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "-evil",
+            "--upload-pack=x",
+            "a..b",
+            "x.lock",
+            "x/",
+            "/x",
+            "a b",
+            "ä",
+        ] {
+            assert!(!valid_branch(bad), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn update_branch_reads_the_checkout_config() {
+        let dir = std::env::temp_dir().join(format!("sd-branch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        };
+        run(&["init", "-q"]);
+        // SLATEDESK_BRANCH would override the checkout; the test relies on it being unset.
+        if std::env::var_os("SLATEDESK_BRANCH").is_none() {
+            assert_eq!(update_branch(&dir).await, "main");
+            run(&["config", "slatedesk.branch", "grosses-update"]);
+            assert_eq!(update_branch(&dir).await, "grosses-update");
+            run(&["config", "slatedesk.branch", "-evil"]);
+            assert_eq!(update_branch(&dir).await, "main");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn status(json: &str) -> StatusFile {
         serde_json::from_str(json).unwrap()

@@ -34,6 +34,9 @@ Optionen:
   --user NAME         Kiosk-Benutzer (Standard: slatedesk)
   --repo URL          Git-Repository für einen neuen Checkout
                       (Standard: https://github.com/Zenovs/SlateDesk.git)
+  --branch NAME       Update-Branch, z. B. für einen Testrechner (Standard:
+                      der bisher gespeicherte, sonst main). Wird im Checkout
+                      gespeichert und von jedem späteren Update verwendet.
   --autologin         Automatische Anmeldung des Kiosk-Benutzers einrichten
                       (GDM oder LightDM)
   --ufw               Firewall-Regel für die Fernsteuerung (Port 7380, nur
@@ -55,6 +58,7 @@ init_globals() {
     SD_USER="slatedesk"
     REPO_URL="https://github.com/Zenovs/SlateDesk.git"
     BRANCH="main"
+    OPT_BRANCH=""
     REMOTE_PORT=7380
     OPT_AUTOLOGIN=0
     OPT_UFW=0
@@ -100,6 +104,8 @@ parse_args() {
             --user=*) SD_USER=${1#*=} ;;
             --repo) REPO_URL=${2:?--repo braucht eine URL}; shift ;;
             --repo=*) REPO_URL=${1#*=} ;;
+            --branch) OPT_BRANCH=${2:?--branch braucht einen Namen}; shift ;;
+            --branch=*) OPT_BRANCH=${1#*=} ;;
             --autologin) OPT_AUTOLOGIN=1 ;;
             --ufw) OPT_UFW=1 ;;
             --ufw-subnet) OPT_UFW=1; UFW_SUBNET=${2:?--ufw-subnet braucht ein Subnetz}; shift ;;
@@ -381,8 +387,29 @@ seed_legacy_installed_commit() {
     fi
 }
 
+# Gültiger Branch-Name (git check-ref-format, vereinfacht): kein Optionsstart, keine «..».
+valid_branch() {
+    [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && $1 != *..* && $1 != *.lock && $1 != */ ]]
+}
+
+# Update-Branch: --branch, sonst der im Checkout gespeicherte (git config slatedesk.branch,
+# liest auch auto-update.sh und die App), sonst main.
+resolve_branch() {
+    local stored=""
+    if [ -n "$OPT_BRANCH" ]; then
+        valid_branch "$OPT_BRANCH" || die "Ungültiger Branch-Name: $OPT_BRANCH"
+        BRANCH=$OPT_BRANCH
+        return
+    fi
+    if [ -d "$REPO_DIR/.git" ]; then
+        stored=$(as_user git -C "$REPO_DIR" config --get slatedesk.branch 2>/dev/null || true)
+    fi
+    if [ -n "$stored" ] && valid_branch "$stored"; then BRANCH=$stored; fi
+}
+
 sync_repo() {
     local foreign origin
+    resolve_branch
     if [ -d "$REPO_DIR/.git" ]; then
         # Reste von Läufen als root (target/, node_modules/) blockieren den Build
         foreign=$(find "$REPO_DIR" -xdev ! -user "$SD_USER" -print -quit 2>/dev/null || true)
@@ -404,7 +431,8 @@ sync_repo() {
         as_user git clone --branch "$BRANCH" "$REPO_URL" "$REPO_DIR" || die "git clone fehlgeschlagen."
     fi
     [ -f "$AUTO_UPDATE" ] || die "$AUTO_UPDATE fehlt – ist $REPO_DIR das SlateDesk-Repository?"
-    ok "Repository auf $(as_user git -C "$REPO_DIR" rev-parse --short HEAD)."
+    as_user git -C "$REPO_DIR" config --replace-all slatedesk.branch "$BRANCH" || warn "Update-Branch konnte nicht gespeichert werden."
+    ok "Repository auf $(as_user git -C "$REPO_DIR" rev-parse --short HEAD) (Update-Branch: $BRANCH)."
 }
 
 # Läuft gerade eine ältere Kopie dieses Scripts, die neue aus dem Repository starten.

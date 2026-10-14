@@ -6,7 +6,7 @@
 # 01:00 und 3 Minuten nach dem Systemstart, oder ausgelöst über "Update" im
 # Kiosk bzw. in der Fernsteuerung. Ablauf:
 #
-#   git fetch → git reset --hard origin/main → npm ci (nur bei Bedarf)
+#   git fetch → git reset --hard origin/<Update-Branch> → npm ci (nur bei Bedarf)
 #   → npx tauri build --no-bundle → ~/.local/opt/slatedesk/releases/<commit>/
 #   → Symlink "current" atomar umstellen → Neustart → Health-Check
 #   → bei Fehlschlag: Symlink zurück auf die vorherige Version (Rollback)
@@ -38,7 +38,9 @@ usage() {
     cat <<'EOF'
 Verwendung: auto-update.sh [Optionen]
 
-Prüft origin/main auf eine neue Version, baut SlateDesk und installiert es.
+Prüft den Update-Branch (Standard main) auf eine neue Version, baut SlateDesk
+und installiert es. Der Branch kommt aus SLATEDESK_BRANCH, sonst aus
+«git config slatedesk.branch» im Checkout (setzt setup.sh --branch).
 Wird normalerweise von slatedesk-update.service ausgeführt.
 
 Optionen:
@@ -59,8 +61,22 @@ EOF
 }
 
 # ─── Konfiguration ───────────────────────────────────────────────────────────
+# Gültiger Branch-Name (git check-ref-format, vereinfacht): kein Optionsstart, keine «..».
+valid_branch() {
+    [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && $1 != *..* && $1 != *.lock && $1 != */ ]]
+}
+
+# Update-Branch: SLATEDESK_BRANCH, sonst «git config slatedesk.branch» im Checkout
+# (setzt setup.sh --branch; überlebt git reset), sonst main. Die App liest dieselbe Quelle.
+resolve_branch() {
+    local b="${SLATEDESK_BRANCH:-}"
+    if [ -z "$b" ]; then
+        b=$(git -C "$SLATEDESK_HOME" config --get slatedesk.branch 2>/dev/null || true)
+    fi
+    if [ -n "$b" ] && valid_branch "$b"; then printf '%s' "$b"; else printf 'main'; fi
+}
+
 init_globals() {
-    BRANCH="main"
     KEEP_RELEASES=3
     HEALTH_TIMEOUT=60
     DEFAULT_PORT=7380
@@ -70,6 +86,7 @@ init_globals() {
 
     SLATEDESK_HOME="${SLATEDESK_HOME:-$HOME/SlateDesk}"
     SLATEDESK_HOME="${SLATEDESK_HOME%/}"
+    BRANCH=$(resolve_branch)
     TARGET_DIR="${CARGO_TARGET_DIR:-$SLATEDESK_HOME/src-tauri/target}"
     STATE_DIR="$HOME/.local/state/slatedesk"
     LOG_FILE="$STATE_DIR/update.log"

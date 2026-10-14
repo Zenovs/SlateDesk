@@ -42,7 +42,8 @@ Liegt der Checkout schon auf dem Gerät, geht auch `sudo bash /home/slatedesk/Sl
 Das Script
 
 1. installiert `git`, `curl` und `ca-certificates`, legt den Benutzer `slatedesk` an (ohne Passwort,
-   ohne sudo) und klont bzw. aktualisiert `~slatedesk/SlateDesk` auf `origin/main`; ist die `setup.sh`
+   ohne sudo) und klont bzw. aktualisiert `~slatedesk/SlateDesk` auf den Update-Branch (Standard `main`,
+   siehe `--branch`); ist die `setup.sh`
    im Repository neuer als die laufende, macht es mit dieser weiter,
 2. installiert die Pakete: Build-Abhängigkeiten von Tauri/WebKitGTK, `iputils-ping`, `iproute2` und –
    soweit in den Paketquellen vorhanden – `x11-xserver-utils`, `wlr-randr` und `libglib2.0-bin` für
@@ -70,6 +71,7 @@ Das Script
 | `--rebuild` | neu bauen, auch wenn die Version aktuell ist |
 | `--user NAME`, `--repo URL` | anderer Kiosk-Benutzer bzw. anderes Repository |
 | `--skip-apt` | Paketinstallation überspringen |
+| `--branch NAME` | Update-Branch, z. B. `grosses-update` für einen Testrechner; bleibt gespeichert (siehe [Update-Branch](#update-branch)) |
 | `-y` | Rückfragen mit Ja beantworten |
 
 Ohne `--autologin` bzw. `--ufw` fragt das Script im Terminal nach. Danach das Gerät neu starten:
@@ -230,9 +232,9 @@ Ablauf von `scripts/auto-update.sh` (läuft als `slatedesk-update.service`):
 
 1. Sperre (`flock` in `$XDG_RUNTIME_DIR`) – ein zweiter Lauf beendet sich sofort.
 2. Verbindung zu GitHub per `git ls-remote` prüfen: bis zu 30 Versuche im Abstand von 10 s.
-3. `git fetch`; ist `origin/main` gleich der **installierten** Version, endet der Lauf („aktuell“).
+3. `git fetch`; ist `origin/<Update-Branch>` gleich der **installierten** Version, endet der Lauf („aktuell“).
    Ist es die Version, die zuletzt nicht startete, endet er ebenfalls („übersprungen“).
-4. `git checkout`/`git reset --hard origin/main` und `git clean` (`node_modules`, Build-Cache,
+4. `git checkout`/`git reset --hard origin/<Update-Branch>` und `git clean` (`node_modules`, Build-Cache,
    `Cargo.lock` und `.env` bleiben).
 5. Speicherplatz prüfen – unter 3 GB frei wird der Build-Cache `src-tauri/target` gelöscht, unter
    1,5 GB bricht der Lauf ab –, dann `npm ci`, aber nur, wenn sich `package-lock.json` oder die
@@ -288,6 +290,37 @@ sudo systemctl --user -M slatedesk@ restart slatedesk.service
 
 Das nächste Update geht wieder auf `main`. Um auf einer Version zu bleiben, den Update-Timer
 anhalten: `sudo systemctl --user -M slatedesk@ disable --now slatedesk-update.timer`.
+
+### Update-Branch
+
+Standardmässig folgt der Kiosk `main`. Ein Testrechner kann einem anderen Branch folgen:
+
+```bash
+sudo bash ~/SlateDesk/scripts/setup.sh --user "$USER" --branch grosses-update
+```
+
+Der Branch steht danach in der Git-Konfiguration des Checkouts (`git config slatedesk.branch`) und
+übersteht jedes Update. Das nächtliche Update, der Knopf „Update möglich“ und die Fernsteuerung
+verwenden ihn alle. Zurück auf `main`: `setup.sh --branch main` (oder
+`git -C ~/SlateDesk config slatedesk.branch main`). Für einen einzelnen Lauf überschreibt die
+Umgebungsvariable `SLATEDESK_BRANCH` die Einstellung.
+
+## zenOS (labwc)
+
+SlateDesk läuft auch unter zenOS (Ubuntu 26.04 Server mit labwc). Zu beachten:
+
+* **Benutzer:** zenOS meldet über greetd an, ohne Autologin. Am einfachsten läuft SlateDesk im
+  eigenen zenOS-Benutzer: `sudo bash ~/SlateDesk/scripts/setup.sh --user "$USER" --ufw`
+  (ohne `--autologin` – greetd wird nicht verändert).
+* **Start:** zenOS startet `zenos-sitzung.target`, das `graphical-session.target` mitzieht. Damit
+  startet `slatedesk.service` nach der Anmeldung von selbst; der XDG-Autostart-Eintrag wird unter
+  labwc nicht gebraucht.
+* **Sperre:** Die automatische Sperre von zenOS (swayidle, 1–15 Minuten) legt sich über das
+  Dashboard. Für eine Wandanzeige braucht zenOS dafür eine Ausnahme – das ist eine Einstellung in
+  zenOS, nicht in SlateDesk.
+* **Bildschirm aus/an:** über `wlr-randr` (installiert `setup.sh`, falls verfügbar).
+* **Firewall:** zenOS blockiert eingehende Verbindungen; `--ufw` erlaubt Port 7380 aus dem
+  lokalen Subnetz.
 
 ## Fernsteuerung
 
@@ -462,6 +495,9 @@ aktive Sitzung am Gerät haben (Autologin); für Kameras unter WebKitGTK wird
 **lagra, planbar und andere Datenquellen:** Meldungen und Abhilfe in [API_SETUP.md](../API_SETUP.md).
 
 ## Deinstallation
+
+`--purge` löscht den Benutzer nur, wenn `setup.sh` ihn angelegt hat (Kommentar «SlateDesk Kiosk»).
+Läuft SlateDesk im persönlichen Konto (z. B. unter zenOS), werden nur die SlateDesk-Daten entfernt.
 
 ```bash
 # App, Dienste, Timer (samt Drop-ins), installierte Versionen, Update-Protokoll,
