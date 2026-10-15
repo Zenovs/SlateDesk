@@ -2,7 +2,8 @@
 
 Dashboard-Kiosk für das Büro – Tauri 2, React 19 und Rust, mit Fernsteuerung per Handy im LAN.
 
-SlateDesk läuft rund um die Uhr im Vollbild auf einem Bildschirm-PC (Ubuntu GNOME, Wayland, WebKitGTK)
+SlateDesk läuft rund um die Uhr im Vollbild auf einem Bildschirm-PC (Ubuntu mit GNOME, zenOS mit labwc
+oder Raspberry Pi OS; Wayland oder X11, WebKitGTK)
 und zeigt Widgets in einem frei einteilbaren Raster: Uhr, Kalender, Wetter, Nachrichten, Aufgaben,
 Netzwerk-Status, KI-Assistent und die Arbeitsdaten aus **lagra** und **planbar**. Bedient wird der Kiosk
 über die **Fernsteuerung**, eine Web-Oberfläche, die die App selbst im Büro-LAN bereitstellt (Port 7380,
@@ -10,6 +11,38 @@ Anmeldung mit PIN).
 
 Den Zustand (Layout, Widget-Einstellungen, Inhalte, Zugangsdaten) verwaltet das Rust-Backend in einer
 Datei auf dem Gerät. Kiosk und Fernsteuerung zeigen Änderungen sofort gegenseitig an.
+
+## Installation
+
+Ein Befehl im Terminal genügt – auf Ubuntu, Debian, Raspberry Pi OS und zenOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/install.sh | sudo bash
+```
+
+Das Script holt SlateDesk von GitHub, installiert alles Nötige, baut die App (beim ersten Mal
+10–30 Minuten) und startet sie im Vollbild – sofort oder nach der nächsten Anmeldung. Danach
+aktualisiert sich SlateDesk jede Nacht selbst und kehrt bei einem Fehlstart automatisch zur
+vorherigen Version zurück. Root-Rechte braucht es nur für diese Installation.
+
+Optionen werden angehängt, z. B. automatische Anmeldung und Freigabe der Fernsteuerung im lokalen Netz:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/install.sh | sudo bash -s -- --autologin --ufw
+```
+
+| Option | Wirkung |
+|---|---|
+| `--ufw` | Port 7380 der Fernsteuerung nur im lokalen Netz freigeben |
+| `--autologin` | Kiosk-Benutzer meldet sich automatisch an (GDM/LightDM; unter zenOS regelt das zenOS) |
+| `--user NAME` | Kiosk-Benutzer (Standard `slatedesk`; unter zenOS das Anzeige-Konto `anzeige` bzw. der eigene Benutzer) |
+| `--branch NAME` | aus einem anderen Branch installieren und aktualisieren, z. B. auf einem Testrechner |
+| `--dry-run` | nur anzeigen, was passieren würde |
+
+Nach der Installation zeigt der Kiosk unter **Bearbeiten → Fernsteuerung** Adresse, QR-Code und PIN –
+alles Weitere lässt sich vom Handy aus einrichten. Updates, Rollback, Logs, Datensicherung und Fehlersuche:
+**[docs/BETRIEB.md](docs/BETRIEB.md)**. Läuft auf einem Gerät noch das alte `.deb`-Setup, vorher dort den
+Abschnitt «Migration vom alten Setup» lesen.
 
 ## Funktionen
 
@@ -113,31 +146,6 @@ cd src-tauri && cargo test && cargo clippy
 
 `src/widgets/catalog.test.ts` prüft die Widget-Manifeste (Icons, Einstellungen, Geheimnis-Felder) –
 Details in [docs/WIDGET_DEVELOPMENT.md](docs/WIDGET_DEVELOPMENT.md).
-
-## Installation auf dem Kiosk
-
-Der Kiosk baut SlateDesk selbst aus diesem Repository und läuft als Benutzer `slatedesk` mit
-systemd-User-Diensten – ohne Root-Rechte und ohne `.deb`-Paket:
-
-Ein Befehl im Terminal genügt (Ubuntu, Debian, Raspberry Pi OS, zenOS):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/install.sh | sudo bash
-```
-
-Mit Optionen, z. B. automatischer Anmeldung und Firewall-Regel für die Fernsteuerung:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/install.sh | sudo bash -s -- --autologin --ufw
-```
-
-`install.sh` lädt `scripts/setup.sh` des gewählten Branches (`--branch NAME`, Standard `main`) und
-startet es; Rückfragen kommen über das Terminal. Unter zenOS wird automatisch für das Anzeige-Konto
-`anzeige` installiert, sonst für den aufrufenden Benutzer. Vorschau ohne Änderung: `--dry-run`.
-
-Installation, Migration vom alten `.deb`-Setup, Updates, Rollback, Logs, Datensicherung und Fehlersuche:
-**[docs/BETRIEB.md](docs/BETRIEB.md)**. Vor der ersten Migration eines bestehenden Kiosks dort den
-Abschnitt «Migration vom alten Setup» lesen.
 
 ## Konfiguration
 
