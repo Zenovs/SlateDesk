@@ -42,7 +42,8 @@ const byLabel = (a: ProviderOption, b: ProviderOption): number => a.label.locale
 export function memberOptions(members: readonly PlanbarMember[]): ProviderOption[] {
   return members
     .map((member) => {
-      const teams = member.teams.map((team) => team.name).filter(Boolean);
+      // planbar ohne SlateDesk-Erweiterung liefert keine Teams.
+      const teams = (member.teams ?? []).map((team) => team.name).filter(Boolean);
       const option: ProviderOption = { value: member.id, label: planbarMemberName(member) };
       if (teams.length > 0) option.hint = teams.join(', ');
       return option;

@@ -17,6 +17,7 @@ import { SystemPage } from '../pages/SystemPage';
 import { WidgetDetailPage } from '../pages/WidgetDetailPage';
 import { WidgetsPage } from '../pages/WidgetsPage';
 import { DEFAULT_ROUTE, href, navigate, useRoute, type Route } from '../router';
+import { ErrorBoundary } from '../ui';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { LogoutButton } from './LogoutButton';
 import { ThemeChooser, ThemeToggle } from './ThemeControls';
@@ -129,7 +130,11 @@ export function Shell() {
           </div>
         </header>
         <main id="r-main" ref={mainRef} className="r-content" tabIndex={-1}>
-          {route && <RoutePage route={route} />}
+          {route && (
+            <ErrorBoundary key={[route.name, ...route.params].join('/')} variant="page">
+              <RoutePage route={route} />
+            </ErrorBoundary>
+          )}
         </main>
       </div>
 

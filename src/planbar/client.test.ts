@@ -6,7 +6,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAppState } from '../state/appState';
 import { withDefaults } from '../state/defaults';
-import { completeItem, fetchArbeitsliste, fetchProjektuebersicht, planbarErrorText, planbarGet, PlanbarError } from './client';
+import { completeItem, fetchArbeitsliste, fetchMitglieder, fetchProjektuebersicht, planbarErrorText, planbarGet, PlanbarError } from './client';
+import { memberOptions } from './options';
 
 const backend = vi.hoisted(() => ({
   isTauri: vi.fn(() => false),
@@ -64,6 +65,31 @@ afterEach(() => {
 });
 
 describe('web UI (proxy)', () => {
+  it('brings the members of a planbar without the SlateDesk extension into full shape (no teams)', async () => {
+    // Exactly what production planbar answers before branch slatedesk-dashboard: no «teams», name may be null.
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: [
+          { id: 'u1', name: 'Anna Muster', email: 'anna@example.com', role: 'org_admin' },
+          { id: 'u2', name: null, email: 'ben@example.com', role: 'member' },
+          { name: 'ohne id' },
+          { id: 'u3', name: 'Cara', email: 'c@example.com', role: 'member', teams: [{ id: 't1', name: 'Design', color: '#123456' }, null] },
+        ],
+      }),
+    );
+    const list = await fetchMitglieder();
+    expect(list.data).toEqual([
+      { id: 'u1', name: 'Anna Muster', email: 'anna@example.com', role: 'org_admin', teams: [] },
+      { id: 'u2', name: '', email: 'ben@example.com', role: 'member', teams: [] },
+      { id: 'u3', name: 'Cara', email: 'c@example.com', role: 'member', teams: [{ id: 't1', name: 'Design', color: '#123456' }] },
+    ]);
+    expect(memberOptions(list.data).map((o) => [o.label, o.hint])).toEqual([
+      ['Anna Muster', undefined],
+      ['ben@example.com', undefined],
+      ['Cara', 'Design'],
+    ]);
+  });
+
   it('reads through /api/planbar with the session cookie and planbar list parameters', async () => {
     fetchMock.mockResolvedValueOnce(json({ data: [], total: 0, limit: 5, today: '2026-10-13' }));
     const list = await fetchArbeitsliste({ benutzer: ['u1', ' ', 'u2'], typ: 'aufgabe', limit: 5, bis: '' });

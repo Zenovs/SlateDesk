@@ -416,6 +416,12 @@ html.r-scroll-locked {
   right: max(8px, var(--r-safe-right));
 }
 
+.r-page-error {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0;
+}
+
 .r-status-card {
   display: flex;
   flex-direction: column;

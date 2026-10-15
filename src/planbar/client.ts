@@ -18,6 +18,7 @@ import type {
   PlanbarNewsQuery,
   PlanbarProjectPage,
   PlanbarProjectQuery,
+  PlanbarTeam,
   PlanbarTimeQuery,
   PlanbarTimeSummary,
   PlanbarWorkItemPatchResult,
@@ -312,9 +313,33 @@ export async function completeItem(
 export const planbarMemberName = (member: Pick<PlanbarMember, 'name' | 'email'>): string =>
   member.name.trim() || member.email;
 
+const text = (value: unknown): string => (typeof value === 'string' ? value : '');
+
+/**
+ * planbar without the SlateDesk extension (branch slatedesk-dashboard) answers /mitglieder too, but
+ * without `teams` – so every member is brought into the full shape here, before anything renders it.
+ */
+function normalizeMember(raw: unknown): PlanbarMember | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const id = text(m.id);
+  if (!id) return null;
+  const teams: PlanbarTeam[] = Array.isArray(m.teams)
+    ? m.teams.flatMap((team: unknown) => {
+        if (typeof team !== 'object' || team === null) return [];
+        const t = team as Record<string, unknown>;
+        return text(t.id) ? [{ id: text(t.id), name: text(t.name), color: text(t.color) }] : [];
+      })
+    : [];
+  return { id, name: text(m.name), email: text(m.email), role: text(m.role), teams };
+}
+
 /** GET /api/v1/mitglieder – the people of the organisation (picker). */
-export const fetchMitglieder = (options?: PlanbarRequestOptions): Promise<PlanbarMemberList> =>
-  planbarGet<PlanbarMemberList>('/api/v1/mitglieder', undefined, options);
+export async function fetchMitglieder(options?: PlanbarRequestOptions): Promise<PlanbarMemberList> {
+  const list = await planbarGet<{ data?: unknown }>('/api/v1/mitglieder', undefined, options);
+  const rows = Array.isArray(list?.data) ? list.data : [];
+  return { data: rows.map(normalizeMember).filter((m): m is PlanbarMember => m !== null) };
+}
 
 /** GET /api/v1/arbeitsliste – tasks and projects of the given people, sorted by due day and priority. */
 export async function fetchArbeitsliste(
