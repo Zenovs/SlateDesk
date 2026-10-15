@@ -114,6 +114,12 @@ Felds oder mit der Eingabetaste.
 - **lagra- und planbar-Widgets** melden oben, wenn die Verbindung noch nicht eingerichtet ist, mit Link zur
   passenden Seite. Die Auswahl von Personen und Projekten (planbar) lädt erst, wenn die Verbindung steht, und
   folgt der Auswahl **Unternehmen** darüber.
+- **lagra Übersicht → Anordnung → Kacheln:** Standard ist *Automatisch* (die Bereiche ordnen sich nach der
+  Grösse des Widgets). *Eigene Anordnung* zeigt die eingeschalteten Bereiche als Kacheln auf einem kleinen
+  Raster – ziehen zum Verschieben, Ecke unten rechts für die Grösse, oder Kachel antippen und die Knöpfe
+  (Pfeile, Breite, Höhe) nutzen; *Spalten* ± ändert das Raster. Die Zeilen teilen sich die Höhe des Widgets;
+  eine kleine Kachel zeigt nur noch die wichtigste Zahl. Neu eingeschaltete Bereiche kommen auf den ersten
+  freien Platz. *Automatisch* stellt die eigene Anordnung wieder ab.
 - **Darstellung → Schriftgrösse** (jedes Widget, 60–300 %): zoomt Text und Inhalt dieses Widgets, die Änderung
   erscheint sofort am Kiosk. Bei grösserer Schrift zeigen Listen entsprechend weniger Einträge. Uhr und
   QR-Code füllen ihre Fläche schon ganz und lassen sich nur verkleinern – grösser werden sie, wenn man das

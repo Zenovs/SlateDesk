@@ -66,6 +66,17 @@ export type SettingsField =
   /** number[] 0..6 (0 = Sonntag), shown as Mo–So chips */
   | (Base & { type: 'days' })
   | (Base & { type: 'stringList'; placeholder?: string; addLabel?: string })
+  /**
+   * Own arrangement of the widget's tiles, edited like the dashboard layout:
+   * a TileLayout (src/utils/tileLayout.ts), or null = automatic. `tiles`
+   * names every tile; `activeTiles` returns the ones shown for the current
+   * values (e.g. the switched-on sections) – only those are arranged.
+   */
+  | (Base & {
+      type: 'tileLayout';
+      tiles: SettingsChoice[];
+      activeTiles?: (values: Record<string, unknown>) => string[];
+    })
   | (Base & {
       type: 'list';
       itemFields: SettingsField[];

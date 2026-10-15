@@ -7,6 +7,9 @@
  * Kennt lagra die Übersicht noch nicht (404), zeigt die Kachel wenigstens den
  * Virenscanner aus GET /api/v1/pruefen – höchstens alle 10 min abgefragt, weil
  * lagra jeden dieser Aufrufe protokolliert.
+ *
+ * Die Kacheln fliessen nach der Grösse des Widgets – oder stehen an den
+ * Plätzen der eigenen Anordnung aus den Einstellungen (src/utils/tileLayout.ts).
  */
 import { useMemo, type ReactNode } from 'react';
 import {
@@ -47,6 +50,7 @@ import type {
   LagraViren,
 } from '../lagra/types';
 import type { WidgetProps } from '../types/widget';
+import { parseTileLayout, resolveTileLayout, tileRows, type TileLayout } from '../utils/tileLayout';
 import {
   LAGRA_STATUS_DEFAULTS,
   LAGRA_STATUS_LABELS,
@@ -545,6 +549,48 @@ function requestFinding(kind: LagraErrorKind | null): Finding {
 
 const TONE_ORDER: Tone[] = ['error', 'warn', 'ok', 'accent', 'neutral'];
 
+// ── Own arrangement ──────────────────────────────────────────────────────────
+
+interface ArrangedTilesProps {
+  layout: TileLayout;
+  /** Switched-on sections – the ones the editor arranges. */
+  active: LagraStatusSection[];
+  nodes: ReadonlyMap<LagraStatusSection, ReactNode>;
+  stale: boolean;
+}
+
+/**
+ * The tiles at the places set in the settings (Anordnung): rows share the
+ * widget's height, each cell is a size container so its tile drops details
+ * by its own size. A section without data leaves its place empty.
+ */
+function ArrangedTiles({ layout, active, nodes, stale }: ArrangedTilesProps) {
+  const items = resolveTileLayout(layout, active);
+  return (
+    <div
+      className={`ls-tiles ls-tiles-custom${stale ? ' ls-tiles-stale' : ''}`}
+      style={{
+        gridTemplateColumns: `repeat(${layout.columns}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${tileRows(items)}, minmax(0, 1fr))`,
+      }}
+    >
+      {items.map((item) => {
+        const node = nodes.get(item.id as LagraStatusSection);
+        if (node === undefined) return null;
+        return (
+          <div
+            key={item.id}
+            className={`ls-cell${Array.isArray(node) && node.length > 1 ? ' ls-cell-multi' : ''}`}
+            style={{ gridColumn: `${item.x + 1} / span ${item.w}`, gridRow: `${item.y + 1} / span ${item.h}` }}
+          >
+            {node}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Widget ───────────────────────────────────────────────────────────────────
 
 export function LagraStatusWidget({ instanceId }: WidgetProps) {
@@ -620,35 +666,41 @@ export function LagraStatusWidget({ instanceId }: WidgetProps) {
   findings.sort((a, b) => TONE_ORDER.indexOf(a.tone) - TONE_ORDER.indexOf(b.tone));
   const level = findings.reduce<Tone>((worst, finding) => worseTone(worst, finding.tone), 'ok');
 
-  const tiles: ReactNode[] = [];
+  // One entry per section (NAS: one tile per NAS), in lagra's order.
+  const nodes = new Map<LagraStatusSection, ReactNode>();
+  const put = (section: LagraStatusSection, node: ReactNode): void => {
+    if (node === null || node === undefined || (Array.isArray(node) && node.length === 0)) return;
+    nodes.set(section, node);
+  };
   if (uebersicht) {
-    if (sections.server) tiles.push(sectionTile('server', uebersicht.server, (data) => <ServerTile key="server" server={data} />));
-    if (sections.jobs) tiles.push(sectionTile('jobs', uebersicht.jobs, (data) => <JobsTile key="jobs" jobs={data} now={now} />));
-    if (sections.viren) tiles.push(sectionTile('viren', uebersicht.viren, (data) => <VirenTile key="viren" viren={data} now={now} />));
-    if (sections.dam) tiles.push(sectionTile('dam', uebersicht.dam, (data) => <DamTile key="dam" dam={data} now={now} />));
+    if (sections.server) put('server', sectionTile('server', uebersicht.server, (data) => <ServerTile key="server" server={data} />));
+    if (sections.jobs) put('jobs', sectionTile('jobs', uebersicht.jobs, (data) => <JobsTile key="jobs" jobs={data} now={now} />));
+    if (sections.viren) put('viren', sectionTile('viren', uebersicht.viren, (data) => <VirenTile key="viren" viren={data} now={now} />));
+    if (sections.dam) put('dam', sectionTile('dam', uebersicht.dam, (data) => <DamTile key="dam" dam={data} now={now} />));
     if (sections.archiv) {
-      tiles.push(sectionTile('archiv', uebersicht.archiv, (data) => <ArchivTile key="archiv" archiv={data} now={now} />));
+      put('archiv', sectionTile('archiv', uebersicht.archiv, (data) => <ArchivTile key="archiv" archiv={data} now={now} />));
     }
     if (sections.feedback) {
-      tiles.push(sectionTile('feedback', uebersicht.feedback, (data) => <FeedbackTile key="feedback" feedback={data} />));
+      put('feedback', sectionTile('feedback', uebersicht.feedback, (data) => <FeedbackTile key="feedback" feedback={data} />));
     }
     if (sections.potentiale) {
-      tiles.push(
-        sectionTile('potentiale', uebersicht.potentiale, (data) => (
-          <PotentialeTile key="potentiale" potentiale={data} now={now} />
-        )),
+      put(
+        'potentiale',
+        sectionTile('potentiale', uebersicht.potentiale, (data) => <PotentialeTile key="potentiale" potentiale={data} now={now} />),
       );
     }
-    if (sections.api) tiles.push(sectionTile('api', uebersicht.api, (data) => <ApiTile key="api" api={data} now={now} />));
+    if (sections.api) put('api', sectionTile('api', uebersicht.api, (data) => <ApiTile key="api" api={data} now={now} />));
   }
-  if (fallback?.pruefen) tiles.push(<PruefenTile key="pruefen" pruefen={fallback.pruefen} now={now} />);
+  if (fallback?.pruefen) put('viren', <PruefenTile key="pruefen" pruefen={fallback.pruefen} now={now} />);
   if (showNas) {
     if (nasSection !== undefined) {
-      tiles.push(sectionTile('nas', nasSection, (list) => list.map((entry) => <NasTile key={`nas-${entry.name}`} nas={entry} />)));
+      put('nas', sectionTile('nas', nasSection, (list) => list.map((entry) => <NasTile key={`nas-${entry.name}`} nas={entry} />)));
     } else if (nas.error !== null) {
-      tiles.push(<MissingTile key="nas" section="nas" />);
+      put('nas', <MissingTile key="nas" section="nas" />);
     }
   }
+  // The own arrangement needs /uebersicht – the fallback shows just one tile.
+  const arrangement = fallback === null ? parseTileLayout(raw.anordnung) : null;
 
   const stale = lead.error !== null;
   const levelText = LEVEL_TEXT[level] ?? '';
@@ -682,7 +734,17 @@ export function LagraStatusWidget({ instanceId }: WidgetProps) {
           lagra-Update nötig – diese Version liefert nur den Virenscanner
         </WidgetBanner>
       )}
-      {tiles.length > 0 && <div className={`ls-tiles${stale ? ' ls-tiles-stale' : ''}`}>{tiles}</div>}
+      {nodes.size > 0 &&
+        (arrangement ? (
+          <ArrangedTiles
+            layout={arrangement}
+            active={LAGRA_STATUS_SECTIONS.filter((section) => sections[section])}
+            nodes={nodes}
+            stale={stale}
+          />
+        ) : (
+          <div className={`ls-tiles ls-tiles-auto${stale ? ' ls-tiles-stale' : ''}`}>{[...nodes.values()]}</div>
+        ))}
     </div>
   );
 }

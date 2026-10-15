@@ -1,6 +1,7 @@
 import type { LagraTeil } from '../../lagra/types';
 import type { SettingsField } from '../../types/settings';
 import type { WidgetManifest } from '../../types/widget';
+import type { TileLayout } from '../../utils/tileLayout';
 
 /** Sections the tile can show, in lagra's order («neu» has its own widget). */
 export const LAGRA_STATUS_SECTIONS = [
@@ -20,6 +21,8 @@ export type LagraStatusSection = (typeof LAGRA_STATUS_SECTIONS)[number];
 export type LagraStatusSettings = Record<LagraStatusSection, boolean> & {
   /** Seconds between two requests. */
   refreshSeconds: number;
+  /** Own arrangement of the tiles; null = automatic (they flow by the widget's size). */
+  anordnung: TileLayout | null;
 };
 
 export const LAGRA_STATUS_LABELS: Record<LagraStatusSection, string> = {
@@ -57,7 +60,16 @@ export const LAGRA_STATUS_DEFAULTS: LagraStatusSettings = {
   api: false,
   nas: false,
   refreshSeconds: 30,
+  anordnung: null,
 };
+
+/** Switched-on sections, in lagra's order (defaults for missing values). */
+export function activeLagraSections(values: Record<string, unknown>): LagraStatusSection[] {
+  return LAGRA_STATUS_SECTIONS.filter((section) => {
+    const value = values[section];
+    return typeof value === 'boolean' ? value : LAGRA_STATUS_DEFAULTS[section];
+  });
+}
 
 const settingsSchema: SettingsField[] = [
   {
@@ -73,6 +85,15 @@ const settingsSchema: SettingsField[] = [
       description: SECTION_DESCRIPTIONS[section],
     }),
   ),
+  { type: 'section', label: 'Anordnung' },
+  {
+    type: 'tileLayout',
+    key: 'anordnung',
+    label: 'Kacheln',
+    description: 'Wo welcher Bereich steht und wie gross er ist – wie beim Layout des Dashboards.',
+    tiles: LAGRA_STATUS_SECTIONS.map((section) => ({ value: section, label: LAGRA_STATUS_LABELS[section] })),
+    activeTiles: activeLagraSections,
+  },
   { type: 'section', label: 'Aktualisierung' },
   {
     type: 'number',

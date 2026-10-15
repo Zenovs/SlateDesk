@@ -23,6 +23,7 @@ import {
   toggleSelection,
 } from './multiselect';
 import { type ProviderDeps, useProviderOptions, type ProviderOptionsState } from './optionProviders';
+import { TileLayoutControl } from './TileLayoutControl';
 import './settings.css';
 
 export interface SettingsFormProps {
@@ -1026,6 +1027,8 @@ function FieldControl(props: ControlProps<ValueField>) {
       return <StringListControl {...props} field={field} />;
     case 'list':
       return <ListControl {...props} field={field} />;
+    case 'tileLayout':
+      return <TileLayoutControl {...props} field={field} />;
   }
 }
 

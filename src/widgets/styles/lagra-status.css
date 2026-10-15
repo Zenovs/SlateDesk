@@ -1,4 +1,5 @@
-/* lagra Übersicht (LagraStatusWidget) – tiles reflow with the widget size. */
+/* lagra Übersicht (LagraStatusWidget) – tiles reflow with the widget size
+   (.ls-tiles-auto) or sit at the places of the own arrangement (.ls-tiles-custom). */
 
 .ls {
   height: 100%;
@@ -75,6 +76,48 @@
 
 .ls-tiles-stale {
   opacity: 0.6;
+}
+
+/* Own arrangement: columns and rows come inline; the rows share the height. */
+.ls-tiles-custom {
+  grid-auto-flow: row;
+  align-content: stretch;
+  overflow: hidden;
+}
+
+/* Each place is a size container: its tile drops details by its own size. */
+.ls-cell {
+  container: ls-cell / size;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ls-cell > .ls-tile {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Lines that don't fit wrap into a second column outside the tile – they
+   disappear whole instead of being cut in half. */
+.ls-cell .ls-more {
+  flex: 1 1 0;
+  min-height: 0;
+  flex-flow: column wrap;
+  align-content: flex-start;
+  column-gap: 24px;
+  overflow: hidden;
+}
+
+.ls-cell .ls-more > * {
+  width: 100%;
+}
+
+/* Several NAS in one place: side by side as far as they fit. */
+.ls-cell-multi {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: var(--spacing-sm);
 }
 
 .ls-tile {
@@ -258,23 +301,57 @@
   color: var(--text-secondary);
 }
 
-/* ── Smaller widgets: secondary lines go first, then everything but the key value ── */
+/* ── Smaller widgets (automatic flow): secondary lines go first, then everything but the key value ── */
 
 @container widget (max-height: 300px) {
-  .ls-details {
+  .ls-tiles-auto .ls-details {
     display: none;
   }
 }
 
 @container widget (max-height: 190px) {
-  .ls-more,
-  .ls-tile .ls-details,
+  .ls-tiles-auto .ls-more,
+  .ls-tiles-auto .ls-details,
   .ls-head-time {
     display: none;
   }
 
-  .ls-tiles {
+  .ls-tiles-auto {
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
+  }
+
+  .ls-tiles-auto .ls-tile {
+    padding: 6px 10px;
+    gap: 4px;
+  }
+
+  /* Only the first (most relevant) count, with its label. */
+  .ls-tiles-auto .ls-counts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ls-tiles-auto .ls-count:not(:first-child) {
+    display: none;
+  }
+}
+
+@container widget (max-height: 110px) {
+  .ls-tiles {
+    display: none;
+  }
+}
+
+/* ── Own arrangement: the same steps by the size of each place ──────────── */
+
+@container ls-cell (max-height: 210px) {
+  .ls-details {
+    display: none;
+  }
+}
+
+@container ls-cell (max-height: 130px) {
+  .ls-more {
+    display: none;
   }
 
   .ls-tile {
@@ -282,18 +359,11 @@
     gap: 4px;
   }
 
-  /* Only the first (most relevant) count, with its label. */
   .ls-counts {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .ls-count:not(:first-child) {
-    display: none;
-  }
-}
-
-@container widget (max-height: 110px) {
-  .ls-tiles {
     display: none;
   }
 }

@@ -1013,3 +1013,184 @@
     max-width: none;
   }
 }
+
+/* ── Tile arrangement (TileLayoutControl) ─────────────────────────────── */
+
+.settings-tiles-auto,
+.settings-tiles-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.settings-tiles-toolbar {
+  margin-bottom: var(--spacing-sm);
+}
+
+.settings-tiles-note {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.settings-tiles-columns {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.settings-tiles-count {
+  min-width: 2ch;
+  text-align: center;
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-tiles-frame {
+  padding: 6px;
+  border: 1px dashed var(--border-color-hover);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.settings-tiles-frame + .settings-description {
+  margin-top: 6px;
+}
+
+.settings-tiles-grid .react-grid-item {
+  container-type: size;
+}
+
+.settings-tiles-grid .react-grid-item.react-grid-placeholder {
+  border-radius: var(--radius-md);
+  background: var(--accent-color);
+  opacity: 0.22;
+}
+
+.settings-tiles-grid .react-grid-item.react-draggable-dragging {
+  z-index: 10;
+}
+
+.settings-tiles-tile {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color-hover);
+  border-radius: var(--radius-md);
+  background: var(--bg-widget);
+  color: var(--text-primary);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.settings-tiles-tile:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+
+.settings-tiles-tile.is-selected {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(var(--accent-color-rgb), 0.35);
+}
+
+.settings-tiles-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+}
+
+.settings-tiles-size {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-tiles-grid .react-grid-item > .react-resizable-handle {
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  background: none;
+  opacity: 1;
+  touch-action: none;
+}
+
+.settings-tiles-grid .react-grid-item > .react-resizable-handle::after {
+  right: 5px;
+  bottom: 5px;
+  width: 9px;
+  height: 9px;
+  border-right: 2.5px solid var(--text-tertiary);
+  border-bottom: 2.5px solid var(--text-tertiary);
+  border-radius: 0 0 3px 0;
+}
+
+.settings-tiles-grid .react-grid-item > .react-resizable-handle:hover::after,
+.settings-tiles-grid .react-grid-item.resizing > .react-resizable-handle::after {
+  border-color: var(--accent-color);
+}
+
+/* Touch: a swipe over a tile scrolls the form – only the selected tile moves. */
+@media (pointer: coarse) {
+  .settings-tiles-grid .react-grid-item:not(.is-selected) .settings-tiles-tile {
+    touch-action: auto;
+    cursor: pointer;
+  }
+
+  .settings-tiles-grid .react-grid-item:not(.is-selected) > .react-resizable-handle {
+    display: none;
+  }
+
+  .settings-tiles-grid .react-grid-item > .react-resizable-handle {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+.settings-tiles-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-widget);
+}
+
+.settings-tiles-panel-name {
+  flex: 1 1 100%;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+}
+
+.settings-tiles-panel-buttons {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-tiles-panel-label {
+  margin-left: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}

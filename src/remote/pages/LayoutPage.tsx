@@ -11,13 +11,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import {
   GridLayout,
-  cloneLayout,
-  moveElement,
   useContainerWidth,
   verticalCompactor,
   type EventCallback,
   type Layout,
-  type LayoutItem,
 } from 'react-grid-layout';
 import type { DragConfig, GridConfig, ResizeConfig } from 'react-grid-layout/core';
 import {
@@ -41,6 +38,7 @@ import { MAX_WIDGET_ROWS } from '../../state/defaults';
 import type { WidgetInstance } from '../../state/types';
 import { GRID_CONTAINER_PADDING, GRID_MARGIN } from '../../types/grid';
 import type { WidgetManifest } from '../../types/widget';
+import { availableMoves, moveItem, resizeItem, type Direction, type Moves } from '../../utils/gridMoves';
 import { getManifest } from '../../widgets/catalog';
 import { WidgetCatalogSheet } from '../components/WidgetCatalogSheet';
 import { useDisplayedWidgets } from '../hooks/useDisplayedWidgets';
@@ -87,84 +85,6 @@ function persistLayout(items: Layout, message: string): void {
       },
     },
   });
-}
-
-// ── Layout operations for the selection panel ──────────────────────────────
-// The kiosk grid compacts vertically, so «one row down» would snap right
-// back. Up/down therefore swap with the nearest widget above/below (same
-// columns); everything ends with the same compaction the grid applies.
-
-type Direction = 'left' | 'right' | 'up' | 'down';
-
-interface Moves {
-  left: boolean;
-  right: boolean;
-  up: boolean;
-  down: boolean;
-  narrower: boolean;
-  wider: boolean;
-  lower: boolean;
-  taller: boolean;
-}
-
-const sharesColumns = (a: LayoutItem, b: LayoutItem): boolean => a.x < b.x + b.w && b.x < a.x + a.w;
-
-/** Nearest widget directly above/below `item` that shares a column with it. */
-function neighbour(layout: Layout, item: LayoutItem, direction: 'up' | 'down'): LayoutItem | null {
-  let best: LayoutItem | null = null;
-  for (const other of layout) {
-    if (other.i === item.i || !sharesColumns(item, other)) continue;
-    if (direction === 'down' && other.y >= item.y + item.h && (!best || other.y < best.y)) best = other;
-    if (direction === 'up' && other.y + other.h <= item.y && (!best || other.y + other.h > best.y + best.h)) best = other;
-  }
-  return best;
-}
-
-function availableMoves(layout: Layout, id: string, cols: number): Moves | null {
-  const item = layout.find((l) => l.i === id);
-  if (!item) return null;
-  return {
-    left: item.x > 0,
-    right: item.x + item.w < cols,
-    up: neighbour(layout, item, 'up') !== null,
-    down: neighbour(layout, item, 'down') !== null,
-    narrower: item.w > Math.max(1, item.minW ?? 1),
-    wider: item.w < Math.min(item.maxW ?? cols, cols - item.x),
-    lower: item.h > Math.max(1, item.minH ?? 1),
-    taller: item.h < MAX_WIDGET_ROWS,
-  };
-}
-
-/** `layout` must be compacted (what the kiosk shows). */
-function moveItem(layout: Layout, id: string, direction: Direction, cols: number): Layout | null {
-  const items = cloneLayout(layout);
-  const item = items.find((l) => l.i === id);
-  if (!item) return null;
-  let { x, y } = item;
-  if (direction === 'left') x -= 1;
-  if (direction === 'right') x += 1;
-  if (direction === 'up' || direction === 'down') {
-    const other = neighbour(items, item, direction);
-    if (!other) return null;
-    // Up: take the neighbour's row (it is pushed below). Down: go below the
-    // neighbour; compaction lifts it into the freed space.
-    y = direction === 'up' ? other.y : other.y + other.h;
-  }
-  x = clamp(x, 0, Math.max(0, cols - item.w));
-  if (x === item.x && y === item.y) return null;
-  return verticalCompactor.compact(moveElement(items, item, x, y, false, false, 'vertical', cols), cols);
-}
-
-function resizeItem(layout: Layout, id: string, dw: number, dh: number, cols: number): Layout | null {
-  const item = layout.find((l) => l.i === id);
-  if (!item) return null;
-  const w = clamp(item.w + dw, Math.min(Math.max(1, item.minW ?? 1), cols - item.x), Math.min(item.maxW ?? cols, cols - item.x));
-  const h = clamp(item.h + dh, Math.max(1, item.minH ?? 1), MAX_WIDGET_ROWS);
-  if (w === item.w && h === item.h) return null;
-  return verticalCompactor.compact(
-    layout.map((l) => (l.i === id ? { ...l, w, h } : l)),
-    cols,
-  );
 }
 
 // ── Tile ─────────────────────────────────────────────────────────────────────
@@ -549,7 +469,7 @@ export function LayoutPage() {
     fitRows > 0 ? `${fitRows} Zeilen eingepasst` : `Zeilenhöhe ${rowHeightSetting} px`
   }`;
   const selectedManifest = selected ? getManifest(selected.widgetId) : undefined;
-  const selectedMoves = selected ? availableMoves(shownLayout, selected.instanceId, cols) : null;
+  const selectedMoves = selected ? availableMoves(shownLayout, selected.instanceId, cols, MAX_WIDGET_ROWS) : null;
 
   return (
     <div className="r-page r-page-wide">
@@ -638,7 +558,7 @@ export function LayoutPage() {
           canDuplicate={!selectedManifest?.singleton}
           moves={selectedMoves}
           onMove={(direction) => applyLayout(moveItem(shownLayout, selected.instanceId, direction, cols))}
-          onResize={(dw, dh) => applyLayout(resizeItem(shownLayout, selected.instanceId, dw, dh, cols))}
+          onResize={(dw, dh) => applyLayout(resizeItem(shownLayout, selected.instanceId, dw, dh, cols, MAX_WIDGET_ROWS))}
           onDuplicate={() => duplicate(selected)}
           onRemove={() => setRemoveTarget(selected)}
           onClose={() => setSelectedId(null)}
