@@ -277,54 +277,117 @@ fn is_endpoint_key(key: &str) -> bool {
 
 /// A stored secret must not follow a new endpoint chosen over HTTP – otherwise anyone with
 /// the PIN could point e.g. `lagra.url` at their own server and receive the token. When an
-/// endpoint key changed and the secret next to it was not re-entered in the same request,
-/// the secret is cleared.
+/// endpoint key changed, every secret in the object holding it – at any depth, e.g. all
+/// `planbar.unternehmen.<id>.apiKey` below `planbar.url` – is cleared unless the same
+/// request entered it anew.
 fn clear_redirected_secrets(
-    old: &Value,
+    old: Option<&Value>,
     new: &mut Value,
+    redirected: bool,
     path: &mut KeyPath,
     fresh: &HashSet<KeyPath>,
 ) {
-    match (old, new) {
-        (Value::Object(old_map), Value::Object(new_map)) => {
-            let endpoint_changed = new_map
-                .iter()
-                .any(|(k, v)| is_endpoint_key(k) && old_map.get(k) != Some(v))
-                || old_map
-                    .keys()
-                    .any(|k| is_endpoint_key(k) && !new_map.contains_key(k));
+    match new {
+        Value::Object(new_map) => {
+            let old_map = old.and_then(Value::as_object);
+            let endpoint_changed = old_map.is_some_and(|old_map| {
+                new_map
+                    .iter()
+                    .any(|(k, v)| is_endpoint_key(k) && old_map.get(k) != Some(v))
+                    || old_map
+                        .keys()
+                        .any(|k| is_endpoint_key(k) && !new_map.contains_key(k))
+            });
+            let redirected = redirected || endpoint_changed;
             for (key, value) in new_map.iter_mut() {
                 path.push(key.clone());
                 if is_secret_key(key) {
-                    let unchanged = old_map.get(key) == Some(&*value);
-                    if endpoint_changed
-                        && unchanged
-                        && !is_empty_value(value)
-                        && !fresh.contains(path)
-                    {
+                    // Secrets that were not entered with this request are stored ones (restored
+                    // from a placeholder or untouched).
+                    if redirected && !is_empty_value(value) && !fresh.contains(path) {
                         log::warn!(
                             "Geheimnis bei {} zurückgesetzt: Adresse wurde geändert",
                             path.join(".")
                         );
                         *value = Value::String(String::new());
                     }
-                } else if let Some(old_child) = old_map.get(key) {
-                    clear_redirected_secrets(old_child, value, path, fresh);
+                } else {
+                    let old_child = old_map.and_then(|m| m.get(key));
+                    clear_redirected_secrets(old_child, value, redirected, path, fresh);
                 }
                 path.pop();
             }
         }
-        (Value::Array(old_items), Value::Array(new_items)) => {
+        Value::Array(new_items) => {
+            let old_items = old.and_then(Value::as_array);
             for (i, value) in new_items.iter_mut().enumerate() {
-                if let Some(old_child) = old_items.get(i) {
-                    path.push(i.to_string());
-                    clear_redirected_secrets(old_child, value, path, fresh);
-                    path.pop();
-                }
+                path.push(i.to_string());
+                let old_child = old_items.and_then(|a| a.get(i));
+                clear_redirected_secrets(old_child, value, redirected, path, fresh);
+                path.pop();
             }
         }
         _ => {}
     }
+}
+
+// ---------------------------------------------------------------------------
+// Migrations
+// ---------------------------------------------------------------------------
+
+/// Unternehmen that takes over the single API key of a SlateDesk before multi-org planbar.
+pub const LEGACY_PLANBAR_ORG_ID: &str = "standard";
+pub const LEGACY_PLANBAR_ORG_NAME: &str = "planbar";
+
+/// Moves the single `planbar.apiKey` of older versions into
+/// `planbar.unternehmen.standard` (only when no Unternehmen exists yet) and drops the old key.
+/// A placeholder moves along, so an imported old export finds the stored key at its new place.
+/// Returns whether `state` changed.
+pub fn migrate_legacy_planbar(state: &mut Value) -> bool {
+    let Some(planbar) = state.get_mut("planbar").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let Some(legacy) = planbar.remove("apiKey") else {
+        return false;
+    };
+    let has_orgs = planbar
+        .get("unternehmen")
+        .and_then(Value::as_object)
+        .is_some_and(|orgs| !orgs.is_empty());
+    if let Some(key) = legacy.as_str().filter(|key| !key.trim().is_empty()) {
+        if !has_orgs {
+            let mut org = Map::new();
+            org.insert(
+                "name".to_string(),
+                Value::String(LEGACY_PLANBAR_ORG_NAME.to_string()),
+            );
+            org.insert("apiKey".to_string(), Value::String(key.to_string()));
+            let mut orgs = Map::new();
+            orgs.insert(LEGACY_PLANBAR_ORG_ID.to_string(), Value::Object(org));
+            planbar.insert("unternehmen".to_string(), Value::Object(orgs));
+        }
+    }
+    true
+}
+
+/// [`apply_ops_to`] plus the migrations a write can need: an imported state (and an
+/// outdated client still writing `planbar.apiKey`) is brought to the current shape.
+pub fn apply_ops_migrating(
+    state: &Value,
+    mut ops: Vec<StateOp>,
+    via_http: bool,
+) -> Result<Value, StateError> {
+    for op in &mut ops {
+        if let StateOp::Set { path, value } = op {
+            // Before the secrets are restored: their placeholders must sit at the new place.
+            if path.is_empty() {
+                migrate_legacy_planbar(value);
+            }
+        }
+    }
+    let mut next = apply_ops_to(state, ops, via_http)?;
+    migrate_legacy_planbar(&mut next);
+    Ok(next)
 }
 
 // ---------------------------------------------------------------------------
@@ -624,7 +687,7 @@ pub fn apply_ops_to(state: &Value, ops: Vec<StateOp>, via_http: bool) -> Result<
     // Before anything walks the new state recursively.
     ensure_depth(&next)?;
     if via_http {
-        clear_redirected_secrets(state, &mut next, &mut Vec::new(), &fresh);
+        clear_redirected_secrets(Some(state), &mut next, false, &mut Vec::new(), &fresh);
     }
     validate_state(&next)?;
     ensure_size(&next)?;
@@ -768,7 +831,7 @@ impl StateStore {
     /// backup is used instead; without either the store starts empty (rev 0).
     pub fn load(dir: PathBuf) -> Self {
         let main = dir.join(STATE_FILE);
-        let (rev, state) = match read_state_file(&main) {
+        let (mut rev, mut state) = match read_state_file(&main) {
             Ok(Some(file)) => (file.rev, file.state),
             Ok(None) => (0, Value::Object(Map::new())),
             Err(e) => {
@@ -787,6 +850,17 @@ impl StateStore {
                 }
             }
         };
+        if migrate_legacy_planbar(&mut state) {
+            rev += 1;
+            let written = serde_json::to_vec_pretty(&StateFileRef { rev, state: &state })
+                .map_err(io::Error::other)
+                .and_then(|bytes| persist(&dir, &bytes));
+            match written {
+                Ok(()) => log::info!("state.json: planbar-Schlüssel ins Unternehmen «{LEGACY_PLANBAR_ORG_ID}» übernommen"),
+                // Stays migrated in memory; the next write persists it.
+                Err(e) => log::warn!("state.json: planbar-Umstellung nicht gespeichert: {e}"),
+            }
+        }
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         StateStore {
             dir,
@@ -828,7 +902,7 @@ impl StateStore {
         if ops.is_empty() {
             return Ok(current.rev);
         }
-        let next_state = apply_ops_to(&current.state, ops, via_http)?;
+        let next_state = apply_ops_migrating(&current.state, ops, via_http)?;
         let next_rev = current.rev + 1;
 
         let bytes = serde_json::to_vec_pretty(&StateFileRef {
@@ -1356,37 +1430,276 @@ pub(crate) mod tests {
         );
     }
 
+    fn planbar_with_two_orgs() -> Value {
+        json!({
+            "lagra": { "url": "https://lagra.example.ch", "token": "lagra-real" },
+            "planbar": {
+                "enabled": true,
+                "url": "https://planbar.dev",
+                "unternehmen": {
+                    "wireon": { "name": "wireon", "apiKey": "pk_live_w" },
+                    "sw": { "name": "Schnyder Werbung", "apiKey": "pk_live_s" },
+                    "neu": { "name": "Noch ohne Schlüssel", "apiKey": "" }
+                }
+            }
+        })
+    }
+
     #[test]
-    fn planbar_section_keeps_its_api_key_secret() {
-        let stored = apply(
-            json!({}),
-            json!([{ "op": "set", "path": ["planbar"], "value": { "enabled": true, "url": "https://planbar.dev", "apiKey": "pk_live_x" } }]),
-        )
-        .unwrap();
+    fn planbar_keys_of_every_unternehmen_stay_secret() {
+        let stored = planbar_with_two_orgs();
         assert!(validate_state(&stored).is_ok());
-        assert_eq!(
-            redact(&stored)["planbar"]["apiKey"],
-            json!(SECRET_PLACEHOLDER)
-        );
+        let redacted = redact(&stored);
+        let orgs = &redacted["planbar"]["unternehmen"];
+        assert_eq!(orgs["wireon"]["apiKey"], json!(SECRET_PLACEHOLDER));
+        assert_eq!(orgs["sw"]["apiKey"], json!(SECRET_PLACEHOLDER));
+        assert_eq!(orgs["neu"]["apiKey"], json!(""));
+        assert_eq!(orgs["sw"]["name"], json!("Schnyder Werbung"));
+        assert!(!serde_json::to_string(&redacted)
+            .unwrap()
+            .contains("pk_live"));
         assert!(apply(
             json!({}),
             json!([{ "op": "set", "path": ["planbar"], "value": "an" }])
         )
         .is_err());
 
-        let untouched = ops(
-            json!([{ "op": "merge", "path": ["planbar"], "value": { "enabled": false, "apiKey": SECRET_PLACEHOLDER } }]),
+        // The web UI edits one Unternehmen at its object path; the others keep their keys.
+        let rename = ops(json!([
+            { "op": "merge", "path": ["planbar", "unternehmen", "wireon"], "value": { "name": "wireon AG", "apiKey": SECRET_PLACEHOLDER }, "create": false },
+            { "op": "set", "path": ["planbar", "enabled"], "value": false }
+        ]));
+        let next = apply_ops_to(&stored, rename, true).unwrap();
+        assert_eq!(
+            next["planbar"]["unternehmen"]["wireon"],
+            json!({ "name": "wireon AG", "apiKey": "pk_live_w" })
         );
         assert_eq!(
-            apply_ops_to(&stored, untouched, true).unwrap()["planbar"]["apiKey"],
-            json!("pk_live_x")
+            next["planbar"]["unternehmen"]["sw"]["apiKey"],
+            json!("pk_live_s")
         );
+
+        // A whole new section over HTTP (import, old web UI): placeholders come back from the
+        // same Unternehmen only.
+        let mut section = redact(&stored)["planbar"].clone();
+        section["unternehmen"]["fremd"] = json!({ "name": "x", "apiKey": SECRET_PLACEHOLDER });
+        let replaced = apply_ops_to(
+            &stored,
+            vec![StateOp::Set {
+                path: vec![PathSeg::Key("planbar".into())],
+                value: section,
+            }],
+            true,
+        )
+        .unwrap();
+        let mut expected = stored["planbar"].clone();
+        expected["unternehmen"]["fremd"] = json!({ "name": "x", "apiKey": "" });
+        assert_eq!(replaced["planbar"], expected);
+    }
+
+    #[test]
+    fn new_planbar_address_clears_the_keys_of_all_unternehmen() {
+        let stored = planbar_with_two_orgs();
         let redirect = ops(
             json!([{ "op": "set", "path": ["planbar", "url"], "value": "https://evil.example" }]),
         );
+        let next = apply_ops_to(&stored, redirect, true).unwrap();
+        let orgs = &next["planbar"]["unternehmen"];
+        assert_eq!(orgs["wireon"]["apiKey"], json!(""));
+        assert_eq!(orgs["sw"]["apiKey"], json!(""));
+        assert_eq!(orgs["sw"]["name"], json!("Schnyder Werbung"));
+        // Other sections are not below the changed address.
+        assert_eq!(next["lagra"]["token"], json!("lagra-real"));
+
+        // Placeholders sent along do not count as re-entered.
+        let with_placeholders = ops(json!([
+            { "op": "set", "path": ["planbar", "url"], "value": "https://evil.example" },
+            { "op": "merge", "path": ["planbar", "unternehmen", "sw"], "value": { "apiKey": SECRET_PLACEHOLDER } }
+        ]));
+        let next = apply_ops_to(&stored, with_placeholders, true).unwrap();
+        assert_eq!(next["planbar"]["unternehmen"]["sw"]["apiKey"], json!(""));
+
+        // A key entered in the same request belongs to the new address and stays.
+        let reentered = ops(json!([
+            { "op": "merge", "path": ["planbar"], "value": { "url": "https://planbar.example.ch" } },
+            { "op": "set", "path": ["planbar", "unternehmen", "sw", "apiKey"], "value": "pk_live_neu" },
+            { "op": "set", "path": ["planbar", "unternehmen", "zwei"], "value": { "name": "Zwei", "apiKey": "pk_live_2" } }
+        ]));
+        let next = apply_ops_to(&stored, reentered, true).unwrap();
+        let orgs = &next["planbar"]["unternehmen"];
+        assert_eq!(orgs["sw"]["apiKey"], json!("pk_live_neu"));
+        assert_eq!(orgs["zwei"]["apiKey"], json!("pk_live_2"));
+        assert_eq!(orgs["wireon"]["apiKey"], json!(""));
+
+        // Removing the address (back to the default) is a change too.
+        let removed = ops(json!([{ "op": "delete", "path": ["planbar", "url"] }]));
+        let next = apply_ops_to(&stored, removed, true).unwrap();
         assert_eq!(
-            apply_ops_to(&stored, redirect, true).unwrap()["planbar"]["apiKey"],
+            next["planbar"]["unternehmen"]["wireon"]["apiKey"],
             json!("")
+        );
+
+        // Unrelated changes and the kiosk keep every key.
+        let unrelated = ops(json!([
+            { "op": "set", "path": ["planbar", "enabled"], "value": false },
+            { "op": "delete", "path": ["planbar", "unternehmen", "neu"] }
+        ]));
+        assert_eq!(
+            apply_ops_to(&stored, unrelated, true).unwrap()["planbar"]["unternehmen"]["sw"]
+                ["apiKey"],
+            json!("pk_live_s")
+        );
+        let kiosk = ops(
+            json!([{ "op": "set", "path": ["planbar", "url"], "value": "https://neu.example.ch" }]),
+        );
+        assert_eq!(
+            apply_ops_to(&stored, kiosk, false).unwrap()["planbar"]["unternehmen"]["sw"]["apiKey"],
+            json!("pk_live_s")
+        );
+    }
+
+    #[test]
+    fn changed_endpoint_clears_secrets_at_any_depth_below_it() {
+        let stored = json!({
+            "widgetSettings": {
+                "w": {
+                    "baseUrl": "https://a.example",
+                    "token": "t0",
+                    "auth": { "inner": { "password": "pw" } },
+                    "list": [{ "apiKey": "k0" }],
+                    "other": { "host": "h", "secret": "s" }
+                },
+                "nebenan": { "token": "bleibt" }
+            }
+        });
+        let redirect = ops(
+            json!([{ "op": "merge", "path": ["widgetSettings", "w"], "value": { "baseUrl": "https://b.example" } }]),
+        );
+        let next = apply_ops_to(&stored, redirect, true).unwrap();
+        let w = &next["widgetSettings"]["w"];
+        assert_eq!(w["token"], json!(""));
+        assert_eq!(w["auth"]["inner"]["password"], json!(""));
+        assert_eq!(w["list"][0]["apiKey"], json!(""));
+        assert_eq!(w["other"]["secret"], json!(""));
+        assert_eq!(next["widgetSettings"]["nebenan"]["token"], json!("bleibt"));
+
+        // A nested address only affects its own subtree.
+        let nested = ops(
+            json!([{ "op": "set", "path": ["widgetSettings", "w", "other", "host"], "value": "x" }]),
+        );
+        let next = apply_ops_to(&stored, nested, true).unwrap();
+        let w = &next["widgetSettings"]["w"];
+        assert_eq!(w["other"]["secret"], json!(""));
+        assert_eq!(w["token"], json!("t0"));
+        assert_eq!(w["auth"]["inner"]["password"], json!("pw"));
+    }
+
+    #[test]
+    fn legacy_planbar_key_moves_into_an_unternehmen() {
+        let mut legacy = json!({ "planbar": { "enabled": true, "url": "https://planbar.dev", "apiKey": "pk_live_alt" } });
+        assert!(migrate_legacy_planbar(&mut legacy));
+        assert_eq!(
+            legacy,
+            json!({ "planbar": { "enabled": true, "url": "https://planbar.dev", "unternehmen": {
+                "standard": { "name": "planbar", "apiKey": "pk_live_alt" }
+            } } })
+        );
+        // Already migrated: nothing to do.
+        assert!(!migrate_legacy_planbar(&mut legacy));
+        assert!(!migrate_legacy_planbar(&mut json!({})));
+        assert!(!migrate_legacy_planbar(&mut json!({ "planbar": 3 })));
+
+        // Existing Unternehmen win; an empty old key just goes away.
+        let mut both = json!({ "planbar": { "apiKey": "pk_live_alt", "unternehmen": { "a": { "name": "A", "apiKey": "k" } } } });
+        assert!(migrate_legacy_planbar(&mut both));
+        assert_eq!(
+            both,
+            json!({ "planbar": { "unternehmen": { "a": { "name": "A", "apiKey": "k" } } } })
+        );
+        let mut empty = json!({ "planbar": { "apiKey": "  ", "unternehmen": {} } });
+        assert!(migrate_legacy_planbar(&mut empty));
+        assert_eq!(empty, json!({ "planbar": { "unternehmen": {} } }));
+        let mut odd = json!({ "planbar": { "apiKey": "k", "unternehmen": [] } });
+        assert!(migrate_legacy_planbar(&mut odd));
+        assert_eq!(
+            odd["planbar"]["unternehmen"]["standard"]["apiKey"],
+            json!("k")
+        );
+    }
+
+    #[test]
+    fn import_of_an_old_export_keeps_the_planbar_key() {
+        let mut current =
+            json!({ "planbar": { "url": "https://planbar.dev", "apiKey": "pk_live_alt" } });
+        migrate_legacy_planbar(&mut current);
+        // Exported before the update: the key sat at `planbar.apiKey`, redacted.
+        let old_export = json!({ "planbar": { "enabled": true, "url": "https://planbar.dev", "apiKey": SECRET_PLACEHOLDER } });
+        let import = vec![StateOp::Set {
+            path: vec![],
+            value: old_export,
+        }];
+        let next = apply_ops_migrating(&current, import, true).unwrap();
+        assert_eq!(
+            next["planbar"],
+            json!({ "enabled": true, "url": "https://planbar.dev", "unternehmen": {
+                "standard": { "name": "planbar", "apiKey": "pk_live_alt" }
+            } })
+        );
+
+        // An outdated client writing the old key: moved as well.
+        let stale = ops(
+            json!([{ "op": "merge", "path": ["planbar"], "value": { "apiKey": "pk_live_neu" } }]),
+        );
+        let next =
+            apply_ops_migrating(&json!({ "planbar": { "enabled": true } }), stale, true).unwrap();
+        assert_eq!(
+            next["planbar"]["unternehmen"]["standard"]["apiKey"],
+            json!("pk_live_neu")
+        );
+        assert!(next["planbar"].get("apiKey").is_none());
+    }
+
+    #[tokio::test]
+    async fn load_moves_the_legacy_planbar_key_and_persists_it() {
+        let dir = TestDir::new("planbar-legacy");
+        fs::write(
+            dir.0.join(STATE_FILE),
+            serde_json::to_vec(&json!({ "rev": 4, "state": { "planbar": { "enabled": true, "apiKey": "pk_live_alt" } } })).unwrap(),
+        )
+        .unwrap();
+        let store = StateStore::load(dir.0.clone());
+        let snap = store.snapshot();
+        assert_eq!(snap.rev, 5);
+        assert_eq!(
+            snap.state["planbar"],
+            json!({ "enabled": true, "unternehmen": { "standard": { "name": "planbar", "apiKey": "pk_live_alt" } } })
+        );
+        let on_disk: Value =
+            serde_json::from_slice(&fs::read(dir.0.join(STATE_FILE)).unwrap()).unwrap();
+        assert_eq!(on_disk["rev"], json!(5));
+        assert_eq!(on_disk["state"], snap.state);
+        let mode = fs::metadata(dir.0.join(STATE_FILE))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+
+        // Reloading changes nothing more.
+        assert_eq!(StateStore::load(dir.0.clone()).snapshot().rev, 5);
+
+        // An import through the store is migrated too.
+        store
+            .apply_ops(
+                ops(json!([{ "op": "set", "path": [], "value": { "planbar": { "apiKey": "pk_live_imp" } } }])),
+                "remote",
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.snapshot().state["planbar"],
+            json!({ "unternehmen": { "standard": { "name": "planbar", "apiKey": "pk_live_imp" } } })
         );
     }
 

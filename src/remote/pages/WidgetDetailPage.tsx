@@ -8,6 +8,7 @@ import { useCallback, useMemo } from 'react';
 import { LayoutGrid, Puzzle, RotateCcw, SlidersHorizontal, Trash2, Wrench } from 'lucide-react';
 import { SettingsForm } from '../../components/settings/SettingsForm';
 import { WidgetIcon } from '../../components/settings/WidgetIcon';
+import { configuredOrgs } from '../../planbar/orgs';
 import { useAppState } from '../../state/appState';
 import { widgetSettingsActions } from '../../state/dataActions';
 import type { AppStateData } from '../../state/types';
@@ -37,7 +38,7 @@ const SERVICES: Partial<Record<WidgetCategory, Service>> = {
   lagra: { route: 'lagra', ready: (state) => state.lagra.enabled && isSecretSet(state.lagra.token) },
   planbar: {
     route: 'planbar',
-    ready: (state) => state.planbar.enabled && isSecretSet(state.planbar.apiKey),
+    ready: (state) => state.planbar.enabled && configuredOrgs(state.planbar).length > 0,
     pickers: true,
   },
 };

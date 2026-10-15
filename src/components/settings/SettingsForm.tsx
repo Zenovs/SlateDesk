@@ -6,7 +6,8 @@
  * commit on blur / Enter or after a short pause, never per keystroke (each
  * commit is a backend write and may trigger a widget refetch). Addresses
  * commit on blur / Enter only (see `isEndpointField`). Choices commit per
- * click; `optionsProvider` fields load theirs via optionProviders.ts.
+ * click; `optionsProvider` fields load theirs via optionProviders.ts – with the
+ * current values of the keys in `optionsDependsOn`.
  */
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Plus, RefreshCw, Trash2, X } from 'lucide-react';
@@ -21,7 +22,7 @@ import {
   selectionChips,
   toggleSelection,
 } from './multiselect';
-import { useProviderOptions, type ProviderOptionsState } from './optionProviders';
+import { type ProviderDeps, useProviderOptions, type ProviderOptionsState } from './optionProviders';
 import './settings.css';
 
 export interface SettingsFormProps {
@@ -56,8 +57,8 @@ const MULTI_SEARCH_MIN_CHOICES = 6;
 /**
  * Addresses wait for blur / Enter instead of a typing pause: a half-typed
  * address would be fetched by the widget, and over HTTP the backend clears
- * the sibling secret whenever a key ending in «url» or «host» changes – a
- * pause in typing must not cost the stored password or token.
+ * the secrets next to (and below) a key ending in «url» or «host» whenever it
+ * changes – a pause in typing must not cost the stored password or token.
  */
 const isEndpointField = (field: ValueField): boolean => field.type === 'url' || /(url|host)$/i.test(field.key);
 const SECRET_SET_PLACEHOLDER = 'gesetzt – zum Ändern neu eingeben';
@@ -244,6 +245,16 @@ interface ControlProps<F extends ValueField> {
   value: unknown;
   set: (value: unknown) => void;
   context: SettingsContext;
+  /** All values of the form (for `optionsDependsOn`). */
+  values: Record<string, unknown>;
+}
+
+const NO_DEPS: ProviderDeps = {};
+
+/** The values a provider field depends on – only those, so other edits keep its cache. */
+function providerDeps(keys: readonly string[] | undefined, values: Record<string, unknown>): ProviderDeps {
+  if (!keys || keys.length === 0) return NO_DEPS;
+  return Object.fromEntries(keys.map((key) => [key, values[key] ?? null]));
 }
 
 function TextControl({ id, field, value, set }: ControlProps<FieldOf<'text' | 'url' | 'textarea'>>) {
@@ -407,8 +418,11 @@ function BooleanControl({ id, field, value, set }: ControlProps<FieldOf<'boolean
   );
 }
 
-/** Loading hint and load error (with «Neu laden») of a field with an options provider. */
+/** Loading hint, load error (with «Neu laden») or note of a field with an options provider. */
 function ProviderStatus({ provider }: { provider: ProviderOptionsState }) {
+  if (provider.warning && !provider.error) {
+    return <div className="settings-provider-status warning">{provider.warning}</div>;
+  }
   if (provider.error) {
     return (
       <div className="settings-provider-status error" role="alert">
@@ -432,8 +446,8 @@ interface SelectEntry {
   group?: string;
 }
 
-function SelectControl({ id, field, value, set }: ControlProps<FieldOf<'select'>>) {
-  const provider = useProviderOptions(field.optionsProvider);
+function SelectControl({ id, field, value, set, values }: ControlProps<FieldOf<'select'>>) {
+  const provider = useProviderOptions(field.optionsProvider, providerDeps(field.optionsDependsOn, values));
   const entries = useMemo<SelectEntry[]>(() => {
     const fixed = new Set(field.options.map((option) => String(option.value)));
     return [...field.options, ...provider.options.filter((option) => !fixed.has(option.value))];
@@ -661,14 +675,14 @@ function moveItem<T>(items: readonly T[], from: number, to: number): T[] {
   return next;
 }
 
-function MultiSelectControl({ id, field, value, set }: ControlProps<FieldOf<'multiselect'>>) {
+function MultiSelectControl({ id, field, value, set, values }: ControlProps<FieldOf<'multiselect'>>) {
   const selection = useMemo(() => normalizeSelection(value), [value]);
   // Latest committed list – two quick clicks run before the next render.
   const current = useRef(selection);
   useLayoutEffect(() => {
     current.current = selection;
   }, [selection]);
-  const provider = useProviderOptions(field.optionsProvider);
+  const provider = useProviderOptions(field.optionsProvider, providerDeps(field.optionsDependsOn, values));
   const choices = useMemo(() => mergeChoices(field.options, provider.options), [field.options, provider.options]);
   const byValue = useMemo(() => new Map(choices.map((choice) => [choice.value, choice])), [choices]);
   const selected = useMemo(() => new Set(selection), [selection]);
@@ -796,7 +810,7 @@ function MultiSelectControl({ id, field, value, set }: ControlProps<FieldOf<'mul
           ))}
           {emptyText && <div className="settings-list-empty">{emptyText}</div>}
         </div>
-        {provider.error && <ProviderStatus provider={provider} />}
+        {(provider.error || provider.warning) && <ProviderStatus provider={provider} />}
       </div>
     </FieldShell>
   );
@@ -1027,6 +1041,7 @@ export function SettingsForm({ schema, values, onChange, context }: SettingsForm
       value={values[field.key]}
       set={(value) => onChange({ [field.key]: value })}
       context={context}
+      values={values}
     />
   );
 

@@ -108,6 +108,24 @@ describe('web UI (proxy)', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/planbar/projektuebersicht?status=open%2Cin_progress');
   });
 
+  it('names the Unternehmen in a header – never in the URL', async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: [] }));
+    fetchMock.mockResolvedValueOnce(json({ data: { id: 'a1', done: true }, nextInstanceId: null }));
+    await fetchMitglieder({ org: 'wireon' });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/planbar/mitglieder');
+    expect(init.headers).toMatchObject({ 'X-SlateDesk-Planbar-Org': 'wireon' });
+    await completeItem('a1', true, { org: 'sw' });
+    expect((fetchMock.mock.calls[1] as [string, RequestInit])[1].headers).toMatchObject({
+      'X-SlateDesk-Planbar-Org': 'sw',
+      'X-SlateDesk': '1',
+    });
+    // Without an Unternehmen no header (the kiosk takes its only one).
+    fetchMock.mockResolvedValueOnce(json({ data: [] }));
+    await fetchMitglieder();
+    expect((fetchMock.mock.calls[2] as [string, RequestInit])[1].headers).not.toHaveProperty('X-SlateDesk-Planbar-Org');
+  });
+
   it('ticks off a task with PATCH, JSON body and the CSRF header', async () => {
     fetchMock.mockResolvedValueOnce(json({ data: { id: 'a1', done: true }, nextInstanceId: 'a2' }));
     const result = await completeItem('a1');
@@ -244,10 +262,29 @@ describe('kiosk (Rust commands)', () => {
     backend.planbarPatch.mockResolvedValueOnce({ data: { id: 'a1' }, nextInstanceId: null });
 
     await fetchArbeitsliste({ benutzer: ['u1', 'u2'], projekte: [], status: 'alle' });
-    expect(backend.planbarGet).toHaveBeenCalledWith('/api/v1/arbeitsliste', { benutzer: 'u1,u2', status: 'alle' });
+    expect(backend.planbarGet).toHaveBeenCalledWith('/api/v1/arbeitsliste', { benutzer: 'u1,u2', status: 'alle' }, undefined);
     await completeItem('a1', false);
-    expect(backend.planbarPatch).toHaveBeenCalledWith('/api/v1/arbeitsliste/a1', { completed: false });
+    expect(backend.planbarPatch).toHaveBeenCalledWith('/api/v1/arbeitsliste/a1', { completed: false }, undefined);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('names the Unternehmen as command argument', async () => {
+    backend.planbarGet.mockResolvedValueOnce({ data: [] });
+    backend.planbarPatch.mockResolvedValueOnce({ data: { id: 'a1' }, nextInstanceId: null });
+    await fetchMitglieder({ org: 'wireon' });
+    expect(backend.planbarGet).toHaveBeenCalledWith('/api/v1/mitglieder', undefined, 'wireon');
+    await completeItem('a1', true, { org: 'sw' });
+    expect(backend.planbarPatch).toHaveBeenCalledWith('/api/v1/arbeitsliste/a1', { completed: true }, 'sw');
+  });
+
+  it.each([
+    ['planbar: bitte ein Unternehmen wählen', 'invalidRequest', 400],
+    ['planbar: Unternehmen «wireon» ist nicht eingerichtet', 'notConfigured', 0],
+  ] as const)('maps the Unternehmen error «%s» to %s', async (message, kind, status) => {
+    backend.planbarGet.mockRejectedValueOnce(new Error(message));
+    const err = await rejection(planbarGet('/api/v1/news'));
+    expect(err.kind).toBe(kind);
+    expect(err.status).toBe(status);
   });
 
   it.each([

@@ -1,4 +1,4 @@
-import { PLANBAR_MEMBERS_PROVIDER, PLANBAR_PROJECTS_PROVIDER } from '../../planbar/options';
+import { DEPENDS_ON_ORGS, PLANBAR_MEMBERS_PROVIDER, PLANBAR_PROJECTS_PROVIDER, planbarOrgField } from '../../planbar/options';
 import type { PlanbarWorkStatus, PlanbarWorkType } from '../../planbar/types';
 import type { SettingsField } from '../../types/settings';
 import type { WidgetManifest } from '../../types/widget';
@@ -10,10 +10,12 @@ export const PLANBAR_AUFGABEN_TYPEN = ['alle', 'aufgabe', 'projekt'] as const sa
 export const PLANBAR_ZEITRAEUME = ['heute', 'woche', 'zwei-wochen', 'alle'] as const;
 export type PlanbarZeitraum = (typeof PLANBAR_ZEITRAEUME)[number];
 
-export const PLANBAR_GRUPPIERUNGEN = ['faelligkeit', 'person', 'projekt'] as const;
+export const PLANBAR_GRUPPIERUNGEN = ['faelligkeit', 'person', 'projekt', 'unternehmen'] as const;
 export type PlanbarGruppierung = (typeof PLANBAR_GRUPPIERUNGEN)[number];
 
 export type PlanbarAufgabenSettings = {
+  /** Ids in `planbar.unternehmen`; empty = every Unternehmen with an API key. */
+  unternehmen: string[];
   /** planbar user ids (planbar.mitglieder), in the chosen order. Empty = nothing to show yet. */
   benutzer: string[];
   /** Optional filter: project (ticket) ids. Empty = all projects. */
@@ -33,6 +35,7 @@ export type PlanbarAufgabenSettings = {
 };
 
 export const PLANBAR_AUFGABEN_DEFAULTS: PlanbarAufgabenSettings = {
+  unternehmen: [],
   benutzer: [],
   projekte: [],
   status: 'offen',
@@ -48,12 +51,15 @@ export const PLANBAR_AUFGABEN_DEFAULTS: PlanbarAufgabenSettings = {
 
 const settingsSchema: SettingsField[] = [
   { type: 'section', label: 'Wessen Arbeit' },
+  planbarOrgField(),
   {
     type: 'multiselect',
     key: 'benutzer',
     label: 'Personen',
-    description: 'Wie «Meine Aufgaben» in planbar: Aufgaben, bei denen die Person zuständig ist oder mitarbeitet.',
+    description:
+      'Wie «Meine Aufgaben» in planbar: Aufgaben, bei denen die Person zuständig ist oder mitarbeitet – in allen gewählten Unternehmen.',
     optionsProvider: PLANBAR_MEMBERS_PROVIDER,
+    optionsDependsOn: DEPENDS_ON_ORGS,
     placeholder: 'Person suchen',
   },
   {
@@ -62,6 +68,7 @@ const settingsSchema: SettingsField[] = [
     label: 'Nur diese Projekte (optional)',
     description: 'Leer = alle Projekte.',
     optionsProvider: PLANBAR_PROJECTS_PROVIDER,
+    optionsDependsOn: DEPENDS_ON_ORGS,
     placeholder: 'Projekt suchen',
   },
   { type: 'section', label: 'Auswahl' },
@@ -107,6 +114,7 @@ const settingsSchema: SettingsField[] = [
       { value: 'faelligkeit', label: 'Nach Fälligkeit' },
       { value: 'person', label: 'Nach Person' },
       { value: 'projekt', label: 'Nach Projekt' },
+      { value: 'unternehmen', label: 'Nach Unternehmen' },
     ],
   },
   { type: 'boolean', key: 'showProject', label: 'Projekt und Kunde anzeigen' },
@@ -122,7 +130,7 @@ const settingsSchema: SettingsField[] = [
     key: 'allowComplete',
     label: 'Abhaken erlauben',
     description:
-      'Antippen des Kreises hakt die Aufgabe in planbar ab – 5 Sekunden lang lässt es sich rückgängig machen. Der API-Schlüssel braucht dafür bei «Aufgaben & Zeiten» das Recht «Schreiben».',
+      'Antippen des Kreises hakt die Aufgabe in planbar ab – 5 Sekunden lang lässt es sich rückgängig machen. Der API-Schlüssel des Unternehmens braucht dafür bei «Aufgaben & Zeiten» das Recht «Schreiben».',
   },
   { type: 'number', key: 'refreshSeconds', label: 'Aktualisieren alle', min: 30, max: 600, step: 10, unit: 's' },
 ];
@@ -130,7 +138,8 @@ const settingsSchema: SettingsField[] = [
 export const planbarAufgabenManifest: WidgetManifest = {
   id: 'planbar-aufgaben',
   name: 'planbar Aufgaben',
-  description: 'Arbeitsliste aus planbar: offene Aufgaben und Projekte ausgewählter Personen, nach Fälligkeit gruppiert',
+  description:
+    'Arbeitsliste aus planbar: offene Aufgaben und Projekte ausgewählter Personen, nach Fälligkeit gruppiert – auch aus mehreren Unternehmen',
   version: '1.0.0',
   author: 'SlateDesk',
   category: 'planbar',

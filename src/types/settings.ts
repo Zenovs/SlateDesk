@@ -41,8 +41,10 @@ export type SettingsField =
    * `optionsProvider` names choices loaded at runtime
    * (src/components/settings/optionProviders.ts); they follow the static
    * `options` (e.g. `[{ value: '', label: 'Niemand' }]`). Provider values are strings.
+   * `optionsDependsOn` lists keys of the same form whose values the provider
+   * receives (e.g. the selected Unternehmen) – other values, other choices.
    */
-  | (Base & { type: 'select'; options: SettingsOption[]; optionsProvider?: string })
+  | (Base & { type: 'select'; options: SettingsOption[]; optionsProvider?: string; optionsDependsOn?: string[] })
   /**
    * string[] – static `options` and/or choices of `optionsProvider`. `ordered`
    * keeps the user's order and lets them change it (e.g. projects in display order).
@@ -51,6 +53,8 @@ export type SettingsField =
       type: 'multiselect';
       options?: SettingsChoice[];
       optionsProvider?: string;
+      /** Keys of the same form passed to the provider (see `select`). */
+      optionsDependsOn?: string[];
       ordered?: boolean;
       /** Search field placeholder. */
       placeholder?: string;

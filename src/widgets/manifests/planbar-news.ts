@@ -1,3 +1,4 @@
+import { planbarOrgField } from '../../planbar/options';
 import type { PlanbarVisibility } from '../../planbar/types';
 import type { SettingsField } from '../../types/settings';
 import type { WidgetManifest } from '../../types/widget';
@@ -13,7 +14,9 @@ export const PLANBAR_NEWS_SICHTBARKEIT = [
 ] as const satisfies readonly PlanbarVisibility[];
 
 export type PlanbarNewsSettings = {
-  /** 1–20 posts */
+  /** Ids in `planbar.unternehmen`; empty = every Unternehmen with an API key. */
+  unternehmen: string[];
+  /** 1–20 posts (over all Unternehmen) */
   anzahl: number;
   mode: PlanbarNewsMode;
   rotateSeconds: number;
@@ -26,6 +29,7 @@ export type PlanbarNewsSettings = {
 };
 
 export const PLANBAR_NEWS_DEFAULTS: PlanbarNewsSettings = {
+  unternehmen: [],
   anzahl: 6,
   mode: 'liste',
   rotateSeconds: 15,
@@ -38,7 +42,17 @@ export const PLANBAR_NEWS_DEFAULTS: PlanbarNewsSettings = {
 
 const settingsSchema: SettingsField[] = [
   { type: 'section', label: 'Beiträge' },
-  { type: 'number', key: 'anzahl', label: 'Anzahl', min: 1, max: 20, step: 1, unit: 'Beiträge' },
+  planbarOrgField(),
+  {
+    type: 'number',
+    key: 'anzahl',
+    label: 'Anzahl',
+    description: 'Die neusten Beiträge aller gewählten Unternehmen zusammen.',
+    min: 1,
+    max: 20,
+    step: 1,
+    unit: 'Beiträge',
+  },
   {
     type: 'select',
     key: 'sichtbarkeit',

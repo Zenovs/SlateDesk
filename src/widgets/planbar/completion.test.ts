@@ -41,7 +41,7 @@ describe('CompletionQueue', () => {
     vi.advanceTimersByTime(UNDO_MS - 1);
     expect(send).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
-    expect(send).toHaveBeenCalledWith('a', true);
+    expect(send).toHaveBeenCalledWith('a', true, undefined);
     expect(queue.getSnapshot().get('a')?.phase).toBe('sending');
     expect(latestWaiting(queue.getSnapshot())).toBeNull();
 
@@ -123,7 +123,7 @@ describe('CompletionQueue', () => {
 
     queue.toggle(TASK);
     vi.advanceTimersByTime(UNDO_MS);
-    expect(send).toHaveBeenLastCalledWith('a', false);
+    expect(send).toHaveBeenLastCalledWith('a', false, undefined);
     outcomes[1].reject(new Error('planbar nicht erreichbar'));
     await settlePromises();
     expect(queue.getSnapshot().get('a')).toBe(sent);
@@ -160,8 +160,8 @@ describe('CompletionQueue', () => {
     queue.toggle({ id: 'b', title: 'Korrektur lesen', done: true });
     queue.flush();
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send).toHaveBeenCalledWith('a', true);
-    expect(send).toHaveBeenCalledWith('b', false);
+    expect(send).toHaveBeenCalledWith('a', true, undefined);
+    expect(send).toHaveBeenCalledWith('b', false, undefined);
 
     vi.advanceTimersByTime(UNDO_MS);
     expect(send).toHaveBeenCalledTimes(2);
@@ -195,5 +195,17 @@ describe('CompletionQueue', () => {
     await settlePromises();
     expect(queue.getSnapshot().get('a')?.phase).toBe('sent');
     expect(onSent).not.toHaveBeenCalled();
+  });
+
+  it('ticks off with the key of the task’s own Unternehmen', async () => {
+    const send = vi.fn(() => Promise.resolve({}));
+    const queue = new CompletionQueue(send);
+    queue.toggle({ ...TASK, org: 'wireon' });
+    queue.toggle({ id: 'b', title: 'Offerte', done: true, org: 'sw' });
+    expect(queue.getSnapshot().get('a')?.org).toBe('wireon');
+    vi.advanceTimersByTime(UNDO_MS);
+    expect(send).toHaveBeenCalledWith('a', true, 'wireon');
+    expect(send).toHaveBeenCalledWith('b', false, 'sw');
+    await settlePromises();
   });
 });

@@ -1,12 +1,13 @@
 /**
  * planbar's Arbeitsliste as the Aufgaben widget shows it: local tick-offs
- * applied, sorted like planbar, grouped by due day, person or project.
- * Days are Europe/Zurich calendar days (see ./days).
+ * applied, sorted like planbar, grouped by due day, person, project or
+ * Unternehmen. Days are Europe/Zurich calendar days (see ./days).
  */
-import type { PlanbarPerson, PlanbarWorkItem } from '../../planbar/types';
+import type { PlanbarOrgRef, PlanbarPerson, PlanbarWorkItem } from '../../planbar/types';
 import type { PlanbarGruppierung, PlanbarZeitraum } from '../manifests/planbar-aufgaben';
 import type { ChangeMap } from './completion';
-import { addDays, dayNumber, daysBetween, endOfWeek } from './days';
+import { compareWorkItems, priorityRank } from '../../planbar/order';
+import { addDays, daysBetween, endOfWeek } from './days';
 
 export type DueGroup = 'ueberfaellig' | 'heute' | 'morgen' | 'woche' | 'spaeter' | 'ohne' | 'erledigt';
 
@@ -50,35 +51,13 @@ export function dueGroupOf(dueDay: string | null, done: boolean, today: string):
   return diff <= toSunday ? 'woche' : 'spaeter';
 }
 
-const PRIORITY_RANK: Readonly<Record<string, number>> = { critical: 0, high: 1, medium: 2, low: 3 };
+export { compareWorkItems, priorityRank };
 
-/** critical 0 … low 3, none or unknown 4. */
-export const priorityRank = (priority: string | null): number =>
-  priority !== null && Object.hasOwn(PRIORITY_RANK, priority) ? PRIORITY_RANK[priority] : 4;
-
-type SortKey = Pick<PlanbarWorkItem, 'done' | 'dueDay' | 'priority' | 'type' | 'updatedAt'>;
-
-/**
- * planbar's own order (planbar-api §3): open before done → due day, items
- * without one last → priority → tasks before projects → most recently updated.
- */
-export function compareWorkItems(a: SortKey, b: SortKey): number {
-  if (a.done !== b.done) return a.done ? 1 : -1;
-  const dueA = dayNumber(a.dueDay);
-  const dueB = dayNumber(b.dueDay);
-  if (dueA !== dueB) {
-    if (dueA === null) return 1;
-    if (dueB === null) return -1;
-    return dueA - dueB;
-  }
-  const byPriority = priorityRank(a.priority) - priorityRank(b.priority);
-  if (byPriority !== 0) return byPriority;
-  if (a.type !== b.type) return a.type === 'aufgabe' ? -1 : 1;
-  return (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0);
-}
+/** An item of the Arbeitsliste; `org` = the Unternehmen it came from (several asked). */
+export type WorkItem = PlanbarWorkItem & { org?: PlanbarOrgRef };
 
 export interface WorkRow {
-  item: PlanbarWorkItem;
+  item: WorkItem;
   /** Shown as done – a tap counts at once. */
   done: boolean;
   /** Done state that decides the place: planbar's, until planbar confirmed a change. */
@@ -92,7 +71,7 @@ export interface WorkRow {
 
 /** Rows with the local changes applied, in planbar's order. */
 export function buildRows(
-  items: readonly PlanbarWorkItem[],
+  items: readonly WorkItem[],
   changes: ChangeMap,
   today: string,
   onlyOpen: boolean,
@@ -126,6 +105,8 @@ export interface WorkGroup {
   due: DueGroup | null;
   /** Set when grouped by person. */
   person: PlanbarPerson | null;
+  /** Set when grouped by Unternehmen. */
+  org?: PlanbarOrgRef | null;
   rows: WorkRow[];
 }
 
@@ -195,11 +176,44 @@ function projectGroups(rows: readonly WorkRow[]): WorkGroup[] {
   return [...groups.values()];
 }
 
+/** Heading of entries without Unternehmen (not expected – every answer is tagged). */
+export const OTHER_ORGS_LABEL = 'Ohne Unternehmen';
+
+/** One group per Unternehmen, in the order they were asked; within, planbar's order. */
+function orgGroups(rows: readonly WorkRow[], orgs: readonly PlanbarOrgRef[]): WorkGroup[] {
+  const byOrg = new Map<string, WorkRow[]>();
+  const others: WorkRow[] = [];
+  for (const row of rows) {
+    const id = row.item.org?.id;
+    if (id === undefined) {
+      others.push(row);
+      continue;
+    }
+    const list = byOrg.get(id);
+    if (list) list.push(row);
+    else byOrg.set(id, [row]);
+  }
+  const known = new Map(orgs.map((org) => [org.id, org]));
+  for (const row of rows) if (row.item.org && !known.has(row.item.org.id)) known.set(row.item.org.id, row.item.org);
+  const groups = [...known.values()].flatMap((org): WorkGroup[] => {
+    const list = byOrg.get(org.id);
+    return list
+      ? [{ key: `unternehmen:${org.id}`, label: org.name, detail: null, due: null, person: null, org, rows: list }]
+      : [];
+  });
+  if (others.length > 0) {
+    const label = OTHER_ORGS_LABEL;
+    groups.push({ key: 'unternehmen:ohne', label, detail: null, due: null, person: null, org: null, rows: others });
+  }
+  return groups;
+}
+
 export function groupRows(
   rows: readonly WorkRow[],
   gruppierung: PlanbarGruppierung,
   today: string,
   benutzer: readonly string[],
+  orgs: readonly PlanbarOrgRef[] = [],
 ): WorkGroup[] {
   switch (gruppierung) {
     case 'faelligkeit':
@@ -208,5 +222,7 @@ export function groupRows(
       return personGroups(rows, benutzer);
     case 'projekt':
       return projectGroups(rows);
+    case 'unternehmen':
+      return orgGroups(rows, orgs);
   }
 }

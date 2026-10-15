@@ -68,7 +68,18 @@ export interface LagraConfig {
 export interface PlanbarConfig {
   enabled: boolean;
   url: string;
-  /** Secret (`pk_live_…`) – redacted over HTTP; a new `url` over HTTP clears it. */
+  /**
+   * A planbar API key belongs to exactly one organisation («Unternehmen»), so
+   * there is one key per Unternehmen. Keyed by id (`^[A-Za-z0-9_-]{1,40}$`) –
+   * object paths keep the secret restore of the backend working.
+   */
+  unternehmen: Record<string, PlanbarOrgConfig>;
+}
+
+export interface PlanbarOrgConfig {
+  /** Shown in the widgets (≤ 60 characters), may be empty. */
+  name: string;
+  /** Secret (`pk_live_…`) – redacted over HTTP; a new `planbar.url` over HTTP clears every key. */
   apiKey: string;
 }
 

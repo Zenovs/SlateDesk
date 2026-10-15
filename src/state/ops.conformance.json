@@ -100,8 +100,18 @@
     {
       "name": "planbar is a known top-level section",
       "state": {},
-      "ops": [{ "op": "merge", "path": ["planbar"], "value": { "enabled": true, "apiKey": "pk_live_x" } }],
-      "expect": { "planbar": { "enabled": true, "apiKey": "pk_live_x" } }
+      "ops": [{ "op": "merge", "path": ["planbar"], "value": { "enabled": true, "unternehmen": { "a1": { "name": "wireon", "apiKey": "pk_live_x" } } } }],
+      "expect": { "planbar": { "enabled": true, "unternehmen": { "a1": { "name": "wireon", "apiKey": "pk_live_x" } } } }
+    },
+    {
+      "name": "planbar Unternehmen are edited at their object path",
+      "state": { "planbar": { "unternehmen": { "a1": { "name": "wireon", "apiKey": "k1" }, "b2": { "name": "SW", "apiKey": "k2" } } } },
+      "ops": [
+        { "op": "merge", "path": ["planbar", "unternehmen", "a1"], "value": { "name": "wireon AG" }, "create": false },
+        { "op": "merge", "path": ["planbar", "unternehmen", "zz"], "value": { "name": "weg" }, "create": false },
+        { "op": "delete", "path": ["planbar", "unternehmen", "b2"] }
+      ],
+      "expect": { "planbar": { "unternehmen": { "a1": { "name": "wireon AG", "apiKey": "k1" } } } }
     },
     {
       "name": "merge needs an object value",

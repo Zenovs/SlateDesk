@@ -1,9 +1,11 @@
-import { PLANBAR_MEMBERS_PROVIDER } from '../../planbar/options';
+import { DEPENDS_ON_ORGS, PLANBAR_MEMBERS_PROVIDER, planbarOrgField } from '../../planbar/options';
 import type { SettingsField } from '../../types/settings';
 import type { WidgetManifest } from '../../types/widget';
 
 export type PlanbarZeitSettings = {
-  /** planbar user ids in display order; empty = everyone in the organisation. */
+  /** Ids in `planbar.unternehmen`; empty = every Unternehmen with an API key. */
+  unternehmen: string[];
+  /** planbar user ids in display order; empty = everyone in the organisations. */
   benutzer: string[];
   /** Hours of the week and a bar per weekday. */
   showWeek: boolean;
@@ -13,6 +15,7 @@ export type PlanbarZeitSettings = {
 };
 
 export const PLANBAR_ZEIT_DEFAULTS: PlanbarZeitSettings = {
+  unternehmen: [],
   benutzer: [],
   showWeek: true,
   sollStundenProTag: 8.4,
@@ -21,12 +24,15 @@ export const PLANBAR_ZEIT_DEFAULTS: PlanbarZeitSettings = {
 
 const settingsSchema: SettingsField[] = [
   { type: 'section', label: 'Personen' },
+  planbarOrgField(),
   {
     type: 'multiselect',
     key: 'benutzer',
     label: 'Personen',
-    description: 'In dieser Reihenfolge. Leer = alle Personen des Unternehmens.',
+    description:
+      'In dieser Reihenfolge. Leer = alle Personen der gewählten Unternehmen. Wer für mehrere Unternehmen arbeitet, erscheint einmal mit der Summe.',
     optionsProvider: PLANBAR_MEMBERS_PROVIDER,
+    optionsDependsOn: DEPENDS_ON_ORGS,
     ordered: true,
     placeholder: 'Person suchen',
   },

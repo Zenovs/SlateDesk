@@ -83,3 +83,48 @@
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
+
+/* ── Several Unternehmen ───────────────────────────────────────────────── */
+
+/* Unternehmen whose answer is missing: one quiet line, the data of the others stays. */
+.pb-org-issues {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  min-width: 0;
+  flex-shrink: 0;
+  font-size: max(11px, 0.72em);
+  color: var(--warning-color);
+}
+
+.pb-org-issues-icon {
+  width: 1.1em;
+  height: 1.1em;
+  flex-shrink: 0;
+}
+
+.pb-org-issues-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tag with the Unternehmen of an entry. */
+.pb-org {
+  display: inline-block;
+  flex-shrink: 0;
+  max-width: 12em;
+  padding: 0.1em 0.5em;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--pb-org-hue, 210) 45% 50% / 0.55);
+  background: hsl(var(--pb-org-hue, 210) 45% 50% / 0.14);
+  color: var(--text-secondary);
+  font-size: max(10px, 0.72em);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}

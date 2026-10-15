@@ -10,6 +10,7 @@ import {
   loadProviderOptions,
   OPTION_CACHE_MS,
   registerOptionProvider,
+  stableJson,
   type ProviderOption,
 } from './optionProviders';
 
@@ -167,5 +168,58 @@ describe('option providers', () => {
     expect(getProviderSnapshot(name).options).toBeNull();
     expect(await loadProviderOptions(name)).toEqual([PEOPLE[1]]);
     expect(getProviderSnapshot(name).options).toEqual([PEOPLE[1]]);
+  });
+
+  it('caches every combination of dependencies on its own', async () => {
+    const name = freshName();
+    const loader = vi.fn(async (deps: Readonly<Record<string, unknown>>) => [
+      { value: String(deps.unternehmen ?? 'alle'), label: 'x' },
+    ]);
+    registerOptionProvider(name, loader);
+
+    expect(await loadProviderOptions(name, false, { unternehmen: ['a'] })).toEqual([{ value: 'a', label: 'x' }]);
+    expect(await loadProviderOptions(name, false, { unternehmen: ['b'] })).toEqual([{ value: 'b', label: 'x' }]);
+    expect(await loadProviderOptions(name)).toEqual([{ value: 'alle', label: 'x' }]);
+    expect(loader).toHaveBeenCalledTimes(3);
+    expect(loader).toHaveBeenNthCalledWith(1, { unternehmen: ['a'] });
+    // Same values in another key order – same cache entry.
+    await loadProviderOptions(name, false, { b: 1, unternehmen: ['a'] });
+    await loadProviderOptions(name, false, { unternehmen: ['a'], b: 1 });
+    expect(loader).toHaveBeenCalledTimes(4);
+    expect(getProviderSnapshot(name, { unternehmen: ['b'] }).options).toEqual([{ value: 'b', label: 'x' }]);
+    expect(getProviderSnapshot(name, { unternehmen: ['c'] }).options).toBeNull();
+
+    // Invalidation reaches every combination; registering anew forgets them.
+    invalidateOptionProvider(name);
+    expect(getProviderSnapshot(name, { unternehmen: ['a'] }).loadedAt).toBe(0);
+    expect(getProviderSnapshot(name).loadedAt).toBe(0);
+    registerOptionProvider(name, loader);
+    expect(getProviderSnapshot(name, { unternehmen: ['b'] }).options).toBeNull();
+  });
+
+  it('keeps a note next to incomplete options', async () => {
+    const name = freshName();
+    registerOptionProvider(name, async () => ({ options: PEOPLE, warning: 'Unvollständig – wireon: nicht erreichbar' }));
+    expect(await loadProviderOptions(name)).toEqual(PEOPLE);
+    expect(getProviderSnapshot(name)).toMatchObject({ options: PEOPLE, warning: 'Unvollständig – wireon: nicht erreichbar' });
+    registerOptionProvider(name, async () => ({ options: PEOPLE }));
+    await loadProviderOptions(name);
+    expect(getProviderSnapshot(name).warning).toBeNull();
+  });
+
+  it('lets an invalidation retry a failed load', async () => {
+    const name = freshName();
+    registerOptionProvider(name, () => Promise.reject(new Error('planbar ist nicht eingerichtet')));
+    await expect(loadProviderOptions(name)).rejects.toThrow();
+    expect(getProviderSnapshot(name).error).toBe('planbar ist nicht eingerichtet');
+    invalidateOptionProvider(name);
+    // Error cleared: an open form loads again (the change may have fixed it).
+    expect(getProviderSnapshot(name)).toMatchObject({ error: null, loadedAt: 0 });
+  });
+
+  it('writes dependencies as stable JSON', () => {
+    expect(stableJson({ b: [2, { d: 1, c: null }], a: 'x', u: undefined })).toBe('{"a":"x","b":[2,{"c":null,"d":1}]}');
+    expect(stableJson({})).toBe('{}');
+    expect(stableJson(undefined)).toBe('null');
   });
 });

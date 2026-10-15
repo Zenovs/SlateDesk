@@ -260,6 +260,30 @@ export interface PlanbarTimeQuery {
   benutzer?: readonly string[];
 }
 
+// ── Several Unternehmen ──────────────────────────────────────────────────────
+
+/** A planbar organisation («Unternehmen») with its own API key in SlateDesk. */
+export interface PlanbarOrgRef {
+  /** Id in `planbar.unternehmen`. */
+  id: string;
+  /** Display name (never empty). */
+  name: string;
+}
+
+/** A planbar answer item with the Unternehmen it came from. */
+export type WithOrg<T> = T & { org: PlanbarOrgRef };
+
+/** A person of one or more Unternehmen – planbar user ids are global. */
+export interface PlanbarOrgMember extends PlanbarMember {
+  /** The Unternehmen the person belongs to, in the order of the request. */
+  orgs: PlanbarOrgRef[];
+}
+
+/** Booked time of a person summed over the Unternehmen. */
+export interface PlanbarOrgTimeEntry extends PlanbarTimeEntry {
+  orgs: PlanbarOrgRef[];
+}
+
 // ── GET /api/planbar-test (SlateDesk web server) ─────────────────────────────
 
 export interface PlanbarScopes {
@@ -284,4 +308,17 @@ export interface PlanbarTestResult {
   members: number | null;
   /** null when planbar lacks the endpoints or was not reached. */
   scopes: PlanbarScopes | null;
+}
+
+/** Test of one Unternehmen. */
+export interface PlanbarOrgTestResult extends PlanbarTestResult {
+  /** Id in `planbar.unternehmen`. */
+  org: string;
+  /** As entered (may be empty). */
+  name: string;
+}
+
+/** `GET /api/planbar-test[?org=<id>]`: one Unternehmen, or every one with a key. */
+export interface PlanbarTestReport {
+  results: PlanbarOrgTestResult[];
 }

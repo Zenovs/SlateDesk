@@ -6,8 +6,10 @@
  * revoked key) – they may be shown; the hint what to do comes from here.
  */
 import type { CSSProperties, ReactNode } from 'react';
-import { CloudOff, KeyRound, type LucideIcon, PlugZap, ShieldAlert, TriangleAlert } from 'lucide-react';
-import type { PlanbarPerson } from '../../planbar/types';
+import { Building2, CloudOff, KeyRound, type LucideIcon, PlugZap, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { planbarErrorShort } from '../../planbar/client';
+import type { PlanbarOrgFailure } from '../../planbar/orgs';
+import type { PlanbarOrgRef, PlanbarPerson } from '../../planbar/types';
 import { formatClock } from '../shared/format';
 import { WidgetBanner, WidgetMessage } from '../shared/WidgetParts';
 import { initials, personHue } from './format';
@@ -46,6 +48,20 @@ interface ErrorProps {
   right: string;
 }
 
+/** The selected Unternehmen are gone or lost their key – the others are set up. */
+export function PlanbarNoOrgsMessage() {
+  return (
+    <WidgetMessage
+      icon={Building2}
+      title="Unternehmen nicht eingerichtet"
+      detail="Die gewählten Unternehmen gibt es nicht mehr oder ihnen fehlt der API-Schlüssel – in den Einstellungen andere wählen."
+    />
+  );
+}
+
+/** «planbar» or «planbar (wireon)» when the error belongs to one of several Unternehmen. */
+const titleFor = (text: string, failure: PlanbarFailure): string => (failure.org ? `${text} (${failure.org.name})` : text);
+
 /** Full-size error when there is no data to show yet. */
 export function PlanbarErrorMessage({ failure, right }: ErrorProps) {
   const reason = reasonOf(failure.message);
@@ -59,7 +75,7 @@ export function PlanbarErrorMessage({ failure, right }: ErrorProps) {
         <WidgetMessage
           icon={KeyRound}
           tone="error"
-          title="planbar: API-Schlüssel ungültig"
+          title={titleFor('planbar: API-Schlüssel ungültig', failure)}
           detail={`${reason ? `${reason}. ` : ''}Neuen Schlüssel in der Fernsteuerung unter «planbar» eintragen.`}
         />
       );
@@ -68,7 +84,7 @@ export function PlanbarErrorMessage({ failure, right }: ErrorProps) {
         <WidgetMessage
           icon={ShieldAlert}
           tone="warn"
-          title="planbar: Berechtigung fehlt"
+          title={titleFor('planbar: Berechtigung fehlt', failure)}
           detail={`${reason ? `${reason}. ` : ''}Der API-Schlüssel braucht das Recht «${right}» (planbar: Unternehmen → API-Schlüssel).`}
         />
       );
@@ -77,13 +93,18 @@ export function PlanbarErrorMessage({ failure, right }: ErrorProps) {
         <WidgetMessage
           icon={TriangleAlert}
           tone="warn"
-          title="planbar-Update nötig"
+          title={titleFor('planbar-Update nötig', failure)}
           detail="Diese planbar-Version kennt die Schnittstelle für SlateDesk noch nicht."
         />
       );
     case 'unreachable':
       return (
-        <WidgetMessage icon={CloudOff} tone="error" title="planbar nicht erreichbar" detail="Neuer Versuch läuft automatisch." />
+        <WidgetMessage
+          icon={CloudOff}
+          tone="error"
+          title={titleFor('planbar nicht erreichbar', failure)}
+          detail="Neuer Versuch läuft automatisch."
+        />
       );
     case 'sessionExpired':
       return <WidgetMessage icon={KeyRound} tone="warn" title="Sitzung abgelaufen" detail="Bitte neu anmelden." />;
@@ -93,7 +114,7 @@ export function PlanbarErrorMessage({ failure, right }: ErrorProps) {
         <WidgetMessage
           icon={TriangleAlert}
           tone="error"
-          title="planbar hat die Anfrage abgelehnt"
+          title={titleFor('planbar hat die Anfrage abgelehnt', failure)}
           detail={reason ?? failure.message}
         />
       );
@@ -102,7 +123,7 @@ export function PlanbarErrorMessage({ failure, right }: ErrorProps) {
         <WidgetMessage
           icon={TriangleAlert}
           tone="error"
-          title="planbar-Fehler"
+          title={titleFor('planbar-Fehler', failure)}
           detail={
             reason ??
             (failure.status ? `planbar antwortet mit Fehler ${failure.status}.` : 'planbar hat unerwartet geantwortet.')
@@ -114,7 +135,7 @@ export function PlanbarErrorMessage({ failure, right }: ErrorProps) {
 
 /** One line above data that could not be refreshed. */
 export function PlanbarStaleBanner({ failure, lastUpdated }: { failure: PlanbarFailure; lastUpdated: number | null }) {
-  const stand = lastUpdated !== null ? ` – Stand ${formatClock(lastUpdated)}` : '';
+  const stand = `${failure.org ? ` (${failure.org.name})` : ''}${lastUpdated !== null ? ` – Stand ${formatClock(lastUpdated)}` : ''}`;
   switch (failure.kind) {
     case 'unreachable':
       return (
@@ -167,6 +188,31 @@ export function PlanbarHead({ icon: Icon, children, lastUpdated, stale }: HeadPr
       <span className="pb-head-summary">{children}</span>
       {!stale && lastUpdated !== null && <span className="pb-head-time">Stand {formatClock(lastUpdated)}</span>}
     </div>
+  );
+}
+
+/**
+ * Unternehmen whose answer is missing while the others are shown – small,
+ * one line each: «wireon: planbar-Update nötig».
+ */
+export function PlanbarOrgIssues({ failures }: { failures: readonly PlanbarOrgFailure[] }) {
+  if (failures.length === 0) return null;
+  const text = failures.map((failure) => `${failure.org.name}: ${planbarErrorShort(failure.error)}`).join(' · ');
+  return (
+    <div className="pb-org-issues" role="status" title={text}>
+      <TriangleAlert className="pb-org-issues-icon" aria-hidden="true" />
+      <span className="pb-org-issues-text">{text}</span>
+    </div>
+  );
+}
+
+/** Small tag with the Unternehmen of an entry – shown when several Unternehmen are on screen. */
+export function PlanbarOrgBadge({ org }: { org: PlanbarOrgRef }) {
+  const style = { '--pb-org-hue': personHue(org.id) } as CSSProperties;
+  return (
+    <span className="pb-org" style={style} title={`Unternehmen: ${org.name}`}>
+      {org.name}
+    </span>
   );
 }
 

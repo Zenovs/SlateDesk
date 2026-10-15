@@ -9,14 +9,14 @@
  */
 import { LagraError } from '../lagra/client';
 import { PlanbarError } from '../planbar/client';
-import type { PlanbarTestResult } from '../planbar/types';
+import type { PlanbarTestReport } from '../planbar/types';
 import { MAX_STATE_BYTES, apiRequest, HttpError, httpStatusMessage, type ApiRequestInit } from '../state/transport';
 import { ALLOWED_TOP_LEVEL_KEYS, isPlainObject } from '../state/ops';
 import type { RawState } from '../state/types';
 import type { SystemInfo, UpdateCheck, UpdateProgress } from '../utils/backend';
 import { sessionExpired } from './session';
 
-export type { PlanbarTestResult, SystemInfo, UpdateCheck, UpdateProgress };
+export type { PlanbarTestReport, SystemInfo, UpdateCheck, UpdateProgress };
 export { errorText } from './errors';
 
 /**
@@ -133,9 +133,15 @@ export async function lagraTest(signal?: AbortSignal): Promise<LagraTestResult> 
   return expectObject<LagraTestResult>(await request<unknown>('/api/lagra-test', { signal }), 'lagra-Test');
 }
 
-/** GET /api/planbar-test – connection test with the stored planbar settings (also when switched off). */
-export async function planbarTest(signal?: AbortSignal): Promise<PlanbarTestResult> {
-  return expectObject<PlanbarTestResult>(await request<unknown>('/api/planbar-test', { signal }), 'planbar-Test');
+/**
+ * GET /api/planbar-test – connection test with the stored planbar settings (also when
+ * switched off): Unternehmen `org`, or every Unternehmen with an API key.
+ */
+export async function planbarTest(org?: string, signal?: AbortSignal): Promise<PlanbarTestReport> {
+  const query = org ? `?${new URLSearchParams({ org }).toString()}` : '';
+  const report = expectObject<PlanbarTestReport>(await request<unknown>(`/api/planbar-test${query}`, { signal }), 'planbar-Test');
+  if (!Array.isArray(report.results)) throw new Error('Ungültige Antwort vom Kiosk (planbar-Test)');
+  return report;
 }
 
 /** POST /api/auth/pin – other sessions end, this one stays logged in. */

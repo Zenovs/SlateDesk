@@ -72,10 +72,11 @@ function compareProgress(a: PlanbarProjectOverview, b: PlanbarProjectOverview): 
   return compareDeadline(a, b) || byTitle(a, b);
 }
 
-export function sortProjects(
-  projects: readonly PlanbarProjectOverview[],
+/** Projects of several Unternehmen together: one order over all of them. */
+export function sortProjects<T extends PlanbarProjectOverview>(
+  projects: readonly T[],
   sortierung: PlanbarProjekteSortierung,
-): PlanbarProjectOverview[] {
+): T[] {
   const compare = sortierung === 'fortschritt' ? compareProgress : sortierung === 'name' ? byTitle : compareAsPlanbar;
   return [...projects].sort(compare);
 }

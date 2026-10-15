@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PlanbarPerson, PlanbarProjectRef, PlanbarWorkItem } from '../../planbar/types';
 import type { ChangeMap, LocalChange } from './completion';
 import { zurichDay } from './days';
-import { buildRows, compareWorkItems, dueGroupOf, groupRows, OTHER_PEOPLE_LABEL, zeitraumBis } from './workItems';
+import { buildRows, compareWorkItems, dueGroupOf, groupRows, OTHER_ORGS_LABEL, OTHER_PEOPLE_LABEL, zeitraumBis } from './workItems';
 
 const ANNA: PlanbarPerson = { id: 'anna', name: 'Anna Muster' };
 const BEAT: PlanbarPerson = { id: 'beat', name: 'Beat Leiter' };
@@ -239,5 +239,29 @@ describe('groupRows', () => {
       ['Website Relaunch', 'Muster AG', ['web-now', 'web-later']],
       ['Intern: Büroumzug', 'Intern', ['umzug']],
     ]);
+  });
+
+  it('groups by Unternehmen in the order they were asked, planbar’s order within', () => {
+    const wireon = { id: 'w1', name: 'wireon' };
+    const sw = { id: 's1', name: 'Schnyder Werbung' };
+    const rows = buildRows(
+      [
+        { ...item('w-later', { dueDay: '2026-10-20' }), org: wireon },
+        { ...item('s-now', { dueDay: '2026-10-13' }), org: sw },
+        { ...item('w-now', { dueDay: '2026-10-13' }), org: wireon },
+        item('ohne-org'),
+      ],
+      changes(),
+      TODAY,
+      true,
+    );
+    const groups = groupRows(rows, 'unternehmen', TODAY, ['anna'], [wireon, sw]);
+    expect(groups.map((g) => [g.label, ids(g.rows)])).toEqual([
+      ['wireon', ['w-now', 'w-later']],
+      ['Schnyder Werbung', ['s-now']],
+      [OTHER_ORGS_LABEL, ['ohne-org']],
+    ]);
+    expect(groups[0].org).toEqual(wireon);
+    expect(groups[0].key).not.toBe(groups[1].key);
   });
 });

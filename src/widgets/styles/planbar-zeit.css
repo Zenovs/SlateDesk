@@ -65,6 +65,14 @@
   min-width: 0;
 }
 
+.pz-orgs {
+  display: inline-flex;
+  gap: 0.25em;
+  min-width: 0;
+  overflow: hidden;
+  align-self: center;
+}
+
 .pz-name {
   flex: 1;
   min-width: 0;

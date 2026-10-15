@@ -15,6 +15,7 @@ import type {
   LagraConfig,
   LayoutData,
   PlanbarConfig,
+  PlanbarOrgConfig,
   ThemeData,
   TodoItem,
   TodoPriority,
@@ -24,6 +25,13 @@ import type {
 export const DEFAULT_LAGRA_URL = 'https://lagra.schnyder-werbung.ch';
 export const DEFAULT_PLANBAR_URL = 'https://planbar.dev';
 export const DEFAULT_TODO_LIST = 'Allgemein';
+
+/** Ids of `planbar.unternehmen` – same rule as planbar.rs. */
+export const PLANBAR_ORG_ID_PATTERN = /^[A-Za-z0-9_-]{1,40}$/;
+export const MAX_PLANBAR_ORG_NAME = 60;
+/** Unternehmen that takes over the single API key of older versions (same as state.rs). */
+export const LEGACY_PLANBAR_ORG_ID = 'standard';
+export const LEGACY_PLANBAR_ORG_NAME = 'planbar';
 
 export const DEFAULT_COLS = 12;
 export const DEFAULT_ROW_HEIGHT = 80;
@@ -82,7 +90,7 @@ export const DEFAULT_STATE: AppStateData = deepFreeze({
     displaySchedule: { enabled: false, on: '07:00', off: '19:00', days: [1, 2, 3, 4, 5] },
   },
   lagra: { enabled: false, url: DEFAULT_LAGRA_URL, token: '' },
-  planbar: { enabled: false, url: DEFAULT_PLANBAR_URL, apiKey: '' },
+  planbar: { enabled: false, url: DEFAULT_PLANBAR_URL, unternehmen: {} },
   data: { todos: {}, announcements: {} },
 });
 
@@ -254,12 +262,35 @@ function lagraWithDefaults(value: unknown): LagraConfig {
   };
 }
 
+function planbarOrgsWithDefaults(value: unknown): Record<string, PlanbarOrgConfig> {
+  const out: Record<string, PlanbarOrgConfig> = {};
+  for (const [id, entry] of Object.entries(asObject(value))) {
+    if (!usableKey(id) || !PLANBAR_ORG_ID_PATTERN.test(id) || !isPlainObject(entry)) continue;
+    out[id] = {
+      name: typeof entry.name === 'string' ? entry.name.slice(0, MAX_PLANBAR_ORG_NAME) : '',
+      apiKey: typeof entry.apiKey === 'string' ? entry.apiKey : '',
+    };
+  }
+  return out;
+}
+
+/**
+ * The single `planbar.apiKey` of older versions as Unternehmen «standard» – what
+ * the backend writes when it loads such a state (state.rs `migrate_legacy_planbar`);
+ * null when there is nothing to move.
+ */
+export function legacyPlanbarOrg(planbar: unknown): Record<string, PlanbarOrgConfig> | null {
+  if (!isPlainObject(planbar) || typeof planbar.apiKey !== 'string' || planbar.apiKey.trim() === '') return null;
+  if (Object.keys(planbarOrgsWithDefaults(planbar.unternehmen)).length > 0) return null;
+  return { [LEGACY_PLANBAR_ORG_ID]: { name: LEGACY_PLANBAR_ORG_NAME, apiKey: planbar.apiKey } };
+}
+
 function planbarWithDefaults(value: unknown): PlanbarConfig {
   const raw = asObject(value);
   return {
     enabled: bool(raw.enabled, DEFAULT_STATE.planbar.enabled),
     url: typeof raw.url === 'string' && raw.url.trim() ? raw.url.trim() : DEFAULT_PLANBAR_URL,
-    apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : '',
+    unternehmen: legacyPlanbarOrg(raw) ?? planbarOrgsWithDefaults(raw.unternehmen),
   };
 }
 

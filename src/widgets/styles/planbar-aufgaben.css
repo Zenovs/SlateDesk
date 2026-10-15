@@ -54,6 +54,12 @@
   letter-spacing: normal;
 }
 
+.pa-group-icon {
+  width: 1.25em;
+  height: 1.25em;
+  flex-shrink: 0;
+}
+
 .pa-group-label {
   min-width: 0;
   overflow: hidden;

@@ -1,18 +1,21 @@
 /**
  * planbar Aufgaben – die Arbeitsliste ausgewählter Personen aus
  * GET /api/v1/arbeitsliste: Aufgaben und zugewiesene Projekte, nach
- * Fälligkeit (Zürcher Kalendertage), Person oder Projekt gruppiert.
+ * Fälligkeit (Zürcher Kalendertage), Person, Projekt oder Unternehmen
+ * gruppiert. Mehrere Unternehmen werden einzeln gefragt und zusammengeführt;
+ * fehlt die Antwort eines Unternehmens, zeigt das Widget die übrigen.
  *
  * Abhaken (falls erlaubt) wirkt am Bildschirm sofort; planbar erfährt es
  * erst nach 5 s, bis dahin lässt es sich rückgängig machen
  * (planbar/completion.ts).
  */
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { Check, CircleCheck, ClipboardCheck, FolderKanban, RotateCcw, TriangleAlert, Users } from 'lucide-react';
+import { Building2, Check, CircleCheck, ClipboardCheck, FolderKanban, RotateCcw, TriangleAlert, Users } from 'lucide-react';
 import { normalizeSelection } from '../components/settings/multiselect';
 import { useWidgetSettings } from '../hooks/useWidgetSettings';
-import { completeItem, fetchArbeitsliste, PlanbarError, planbarErrorText } from '../planbar/client';
-import type { PlanbarPerson, PlanbarWorkItem, PlanbarWorkList } from '../planbar/types';
+import { completeItem, PlanbarError, planbarErrorText } from '../planbar/client';
+import { fetchArbeitslisteAll, type PlanbarFanOut, type PlanbarOrgWorkList } from '../planbar/orgs';
+import type { PlanbarPerson, PlanbarWorkItem } from '../planbar/types';
 import type { WidgetProps } from '../types/widget';
 import {
   PLANBAR_AUFGABEN_DEFAULTS,
@@ -26,8 +29,17 @@ import {
 import { CompletionQueue, latestWaiting, type LocalChange, UNDO_MS } from './planbar/completion';
 import { laterDay, zurichDay } from './planbar/days';
 import { dueText, formatHours } from './planbar/format';
-import { PersonAvatar, PlanbarErrorMessage, PlanbarHead, PlanbarSetupMessage, PlanbarStaleBanner } from './planbar/PlanbarParts';
-import { usePlanbarPolling } from './planbar/usePlanbarPolling';
+import {
+  PersonAvatar,
+  PlanbarErrorMessage,
+  PlanbarHead,
+  PlanbarNoOrgsMessage,
+  PlanbarOrgBadge,
+  PlanbarOrgIssues,
+  PlanbarSetupMessage,
+  PlanbarStaleBanner,
+} from './planbar/PlanbarParts';
+import { usePlanbarOrgs, usePlanbarPolling } from './planbar/usePlanbarPolling';
 import { buildRows, groupRows, type WorkGroup, type WorkRow, zeitraumBis } from './planbar/workItems';
 import { formatCount } from './shared/format';
 import { useNow } from './shared/hooks';
@@ -49,7 +61,7 @@ const EMPTY_DETAIL: Record<PlanbarZeitraum, string> = {
 };
 
 interface Loaded {
-  list: PlanbarWorkList;
+  result: PlanbarFanOut<PlanbarOrgWorkList>;
   /** epoch ms the request started – changes confirmed before are contained. */
   startedAt: number;
 }
@@ -62,6 +74,7 @@ interface ActionError {
 function readSettings(raw: PlanbarAufgabenSettings): PlanbarAufgabenSettings {
   const defaults = PLANBAR_AUFGABEN_DEFAULTS;
   return {
+    unternehmen: normalizeSelection(raw.unternehmen),
     benutzer: normalizeSelection(raw.benutzer),
     projekte: normalizeSelection(raw.projekte),
     status: readChoice(raw.status, PLANBAR_AUFGABEN_STATUS, defaults.status),
@@ -78,7 +91,7 @@ function readSettings(raw: PlanbarAufgabenSettings): PlanbarAufgabenSettings {
 
 function completionErrorText(change: LocalChange, err: unknown): string {
   if (err instanceof PlanbarError && err.kind === 'forbidden') {
-    return 'Abhaken nicht erlaubt: Der API-Schlüssel braucht bei «Aufgaben & Zeiten» das Recht «Schreiben».';
+    return 'Abhaken nicht erlaubt: Der API-Schlüssel dieses Unternehmens braucht bei «Aufgaben & Zeiten» das Recht «Schreiben».';
   }
   if (err instanceof PlanbarError && err.kind === 'notFound') return `«${change.title}» gibt es in planbar nicht mehr.`;
   const what = change.completed ? 'abgehakt' : 'wieder geöffnet';
@@ -110,6 +123,8 @@ interface RowOptions {
   today: string;
   showProject: boolean;
   showAssignee: boolean;
+  /** Several Unternehmen on screen: each entry names its own. */
+  showOrg: boolean;
   selected: ReadonlySet<string>;
   canComplete: boolean;
   onToggle: (row: WorkRow) => void;
@@ -130,7 +145,8 @@ function WorkRowView({ row, showDue, options }: { row: WorkRow; showDue: boolean
   const inProgress = isTask && item.status === 'in_progress' && !row.done;
   const hours = item.estimatedHours !== null && item.estimatedHours > 0 ? item.estimatedHours : null;
   const showProjectText = options.showProject && projectText !== '';
-  const hasMeta = !isTask || inProgress || showProjectText || hours !== null;
+  const org = options.showOrg ? (item.org ?? null) : null;
+  const hasMeta = !isTask || inProgress || showProjectText || hours !== null || org !== null;
 
   return (
     <li className={classes}>
@@ -159,6 +175,7 @@ function WorkRowView({ row, showDue, options }: { row: WorkRow; showDue: boolean
         </div>
         {hasMeta && (
           <div className="pa-meta">
+            {org && <PlanbarOrgBadge org={org} />}
             {!isTask && <span className="pa-tag pa-tag-type">Projekt</span>}
             {projectState && <span className="pa-tag">{projectState}</span>}
             {inProgress && <span className="pa-tag pa-tag-active">{item.statusLabel}</span>}
@@ -195,13 +212,14 @@ function GroupView({ group, options }: { group: WorkGroup; options: RowOptions }
     <section className={`pa-group${group.due ? ` pa-group-${group.due}` : ''}`}>
       <h3 className="pa-group-title">
         {group.person && <PersonAvatar person={group.person} />}
+        {group.org && <Building2 className="pa-group-icon" aria-hidden="true" />}
         <span className="pa-group-label">{group.label}</span>
         {group.detail && <span className="pa-group-detail">{group.detail}</span>}
         {count > 0 && <span className="pa-group-count">{formatCount(count)}</span>}
       </h3>
       <ul className="pa-list">
         {group.rows.map((row) => (
-          <WorkRowView key={row.item.id} row={row} showDue={showDue} options={options} />
+          <WorkRowView key={`${row.item.org?.id ?? ''}:${row.item.id}`} row={row} showDue={showDue} options={options} />
         ))}
       </ul>
     </section>
@@ -214,14 +232,16 @@ export function PlanbarAufgabenWidget({ instanceId }: WidgetProps) {
   const [raw] = useWidgetSettings(instanceId, PLANBAR_AUFGABEN_DEFAULTS);
   const settings = useMemo(() => readSettings(raw), [raw]);
   const now = useNow(60_000);
-  const [queue] = useState(() => new CompletionQueue((id, completed) => completeItem(id, completed)));
+  const [queue] = useState(() => new CompletionQueue((id, completed, org) => completeItem(id, completed, { org })));
   const changes = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
   const [actionError, setActionError] = useState<ActionError | null>(null);
 
+  const orgs = usePlanbarOrgs(settings.unternehmen);
   const poll = usePlanbarPolling<Loaded>(
     async (signal) => {
       const startedAt = Date.now();
-      const list = await fetchArbeitsliste(
+      const result = await fetchArbeitslisteAll(
+        orgs,
         {
           benutzer: settings.benutzer,
           projekte: settings.projekte,
@@ -233,10 +253,11 @@ export function PlanbarAufgabenWidget({ instanceId }: WidgetProps) {
         },
         { signal },
       );
-      return { list, startedAt };
+      return { result, startedAt };
     },
     settings.refreshSeconds * 1000,
     [
+      orgs,
       settings.benutzer.join(','),
       settings.projekte.join(','),
       settings.status,
@@ -244,7 +265,7 @@ export function PlanbarAufgabenWidget({ instanceId }: WidgetProps) {
       settings.zeitraum,
       settings.maxItems,
     ],
-    settings.benutzer.length > 0,
+    settings.benutzer.length > 0 && orgs.length > 0,
   );
   const { refresh } = poll;
   const loaded = poll.data;
@@ -278,19 +299,20 @@ export function PlanbarAufgabenWidget({ instanceId }: WidgetProps) {
     return () => clearTimeout(timer);
   }, [actionError]);
 
-  const today = loaded ? laterDay(loaded.list.today, zurichDay(now)) : zurichDay(now);
+  const today = loaded ? laterDay(loaded.result.data.today, zurichDay(now)) : zurichDay(now);
   const onlyOpen = settings.status === 'offen';
   const rows = useMemo(
-    () => (loaded ? buildRows(loaded.list.data, changes, today, onlyOpen) : []),
+    () => (loaded ? buildRows(loaded.result.data.data, changes, today, onlyOpen) : []),
     [loaded, changes, today, onlyOpen],
   );
   const groups = useMemo(
-    () => groupRows(rows, settings.gruppierung, today, settings.benutzer),
-    [rows, settings.gruppierung, today, settings.benutzer],
+    () => groupRows(rows, settings.gruppierung, today, settings.benutzer, orgs),
+    [rows, settings.gruppierung, today, settings.benutzer, orgs],
   );
   const selected = useMemo(() => new Set(settings.benutzer), [settings.benutzer]);
 
   if (poll.setup !== 'ready') return <PlanbarSetupMessage setup={poll.setup} />;
+  if (orgs.length === 0) return <PlanbarNoOrgsMessage />;
   if (settings.benutzer.length === 0) {
     return <WidgetMessage icon={Users} title="Keine Personen ausgewählt" detail="In den Einstellungen Personen auswählen" />;
   }
@@ -300,7 +322,7 @@ export function PlanbarAufgabenWidget({ instanceId }: WidgetProps) {
     return <WidgetMessage busy title="Arbeitsliste wird geladen …" />;
   }
 
-  const { list } = loaded;
+  const list = loaded.result.data;
   const visible = rows.filter((row) => !row.leaving);
   const open = visible.filter((row) => !row.done).length;
   const overdue = visible.filter((row) => row.overdue).length;
@@ -314,11 +336,13 @@ export function PlanbarAufgabenWidget({ instanceId }: WidgetProps) {
     today,
     showProject: settings.showProject && settings.gruppierung !== 'projekt',
     showAssignee: settings.showAssignee && settings.benutzer.length > 1 && settings.gruppierung !== 'person',
+    showOrg: loaded.result.orgs.length > 1 && settings.gruppierung !== 'unternehmen',
     selected,
     canComplete: settings.allowComplete,
     onToggle: (row) => {
       setActionError(null);
-      queue.toggle({ id: row.item.id, title: row.item.title, done: row.item.done });
+      // Ticked off with the key of the task's own Unternehmen.
+      queue.toggle({ id: row.item.id, title: row.item.title, done: row.item.done, org: row.item.org?.id });
     },
   };
 
@@ -335,6 +359,7 @@ export function PlanbarAufgabenWidget({ instanceId }: WidgetProps) {
         )}
       </PlanbarHead>
       {poll.failure && <PlanbarStaleBanner failure={poll.failure} lastUpdated={poll.lastUpdated} />}
+      {!poll.failure && <PlanbarOrgIssues failures={loaded.result.failures} />}
       {visible.length === 0 ? (
         <div className="pa-empty">
           {onlyOpen ? (

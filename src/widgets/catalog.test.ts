@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { hasOptionProvider } from '../components/settings/optionProviders';
 import { WIDGET_ICONS } from '../components/settings/widgetIcons';
-import { PLANBAR_MEMBERS_PROVIDER, PLANBAR_PROJECTS_PROVIDER } from '../planbar/options';
+import { PLANBAR_MEMBERS_PROVIDER, PLANBAR_ORG_SETTING, PLANBAR_ORGS_PROVIDER, PLANBAR_PROJECTS_PROVIDER } from '../planbar/options';
 import { DEFAULT_COLS, DEFAULT_STATE } from '../state/defaults';
 import { GRID_CONTAINER_PADDING, GRID_MARGIN } from '../types/grid';
 import { isSecretKey, type SettingsField, type ValueField } from '../types/settings';
@@ -118,6 +118,30 @@ describe('widget catalog', () => {
       if (field.showIf) expect(typeof field.showIf(values)).toBe('boolean');
     }
   });
+});
+
+describe('planbar widgets', () => {
+  const planbarWidgets = widgetCatalog.filter((m) => m.category === 'planbar');
+
+  it('exist', () => {
+    expect(planbarWidgets.map((m) => m.id).sort()).toEqual(['planbar-aufgaben', 'planbar-news', 'planbar-projekte', 'planbar-zeit']);
+  });
+
+  it.each(planbarWidgets.map((m) => [m.id, m] as const))(
+    '%s: first chooses the Unternehmen (empty = all), pickers follow that choice',
+    (_id, manifest) => {
+      const fields = (manifest.settingsSchema ?? []).filter((f): f is ValueField => f.type !== 'section');
+      const first = fields[0];
+      expect(first.key).toBe(PLANBAR_ORG_SETTING);
+      expect(first.type === 'multiselect' && first.optionsProvider).toBe(PLANBAR_ORGS_PROVIDER);
+      expect(manifest.defaultSettings?.[PLANBAR_ORG_SETTING]).toEqual([]);
+      for (const field of fields) {
+        if ((field.type === 'select' || field.type === 'multiselect') && (field.optionsProvider === PLANBAR_MEMBERS_PROVIDER || field.optionsProvider === PLANBAR_PROJECTS_PROVIDER)) {
+          expect(field.optionsDependsOn, `«${field.key}»`).toEqual([PLANBAR_ORG_SETTING]);
+        }
+      }
+    },
+  );
 });
 
 describe('choice field rules', () => {

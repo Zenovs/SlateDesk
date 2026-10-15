@@ -78,7 +78,7 @@ Abschnitt «Migration vom alten Setup» lesen.
 | lagra | lagra Übersicht | Server, Aufgaben, Virenscanner, DAM und mehr – nur Zahlen und Zustände |
 | | lagra Aufgaben | Hintergrundaufgaben: letzter Lauf, Fortschritt, nächster Lauf |
 | | lagra: Neu im DAM | Diashow oder Raster der zuletzt aufgenommenen Bilder |
-| planbar | planbar Aufgaben | Arbeitsliste ausgewählter Personen, nach Fälligkeit gruppiert, optional abhaken |
+| planbar | planbar Aufgaben | Arbeitsliste ausgewählter Personen, nach Fälligkeit gruppiert, optional abhaken – auch aus mehreren Unternehmen (ein API-Schlüssel pro Unternehmen) |
 | | planbar Projekte | Fortschritt, Termin, Stunden, Meilenstein und Beteiligte |
 | | planbar News | Beiträge der planbar-Infowand |
 | | planbar Zeit | erfasste Stunden von heute und dieser Woche, laufender Timer |
@@ -181,9 +181,10 @@ Umgebungsvariablen der App (im Betrieb per systemd-Drop-in, siehe BETRIEB.md):
   `sudo ufw allow from 192.168.19.0/24 to any port 7380 proto tcp`).
 - **Zugangsdaten:** Felder, deren Name auf `apiKey`, `token`, `password` oder `secret` endet, gibt das Backend
   über HTTP nie heraus – die Fernsteuerung und der Export zeigen nur «gesetzt». Wird über die Fernsteuerung
-  eine Adresse (`…url`, `…host`) geändert, löscht der Kiosk das Geheimnis daneben, damit niemand ein Token
-  auf einen fremden Server umleiten kann. Das lagra-Token und der planbar-Schlüssel verlassen das
-  Rust-Backend nie; der Browser fragt lagra und planbar nur über den Kiosk ab.
+  eine Adresse (`…url`, `…host`) geändert, löscht der Kiosk die Geheimnisse daneben und darunter (bei planbar
+  die Schlüssel aller Unternehmen), damit niemand ein Token auf einen fremden Server umleiten kann. Das
+  lagra-Token und die planbar-Schlüssel verlassen das Rust-Backend nie; der Browser fragt lagra und planbar
+  nur über den Kiosk ab.
 - **Nicht geheim:** ICS-Links von Kalendern und andere Adressen gelten nicht als Geheimnis und stehen im
   Klartext in der Fernsteuerung und im Export.
 - **Webschutz:** Änderungen über die API verlangen den Header `X-SlateDesk: 1`; das Sitzungs-Cookie ist

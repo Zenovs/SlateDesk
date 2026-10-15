@@ -7,6 +7,11 @@
  * come back marked with `X-SlateDesk-Upstream: planbar` – their `{ error }`
  * and 401 are planbar's, not the web UI session's.
  * All failures reject with a PlanbarError carrying a German message.
+ *
+ * A key belongs to one planbar organisation («Unternehmen»): `options.org`
+ * names the Unternehmen (id in `planbar.unternehmen`) whose key is used –
+ * kiosk: command argument, web UI: header `X-SlateDesk-Planbar-Org`. Several
+ * Unternehmen at once: ./orgs.ts.
  */
 import { useAppState } from '../state/appState';
 import { httpStatusMessage, isAbortError } from '../state/transport';
@@ -16,6 +21,7 @@ import type {
   PlanbarMemberList,
   PlanbarNewsList,
   PlanbarNewsQuery,
+  PlanbarOrgRef,
   PlanbarProjectPage,
   PlanbarProjectQuery,
   PlanbarTeam,
@@ -29,6 +35,8 @@ import type {
 const API_PREFIX = '/api/v1/';
 const PROXY_PREFIX = '/api/planbar/';
 export const UPSTREAM_HEADER = 'X-SlateDesk-Upstream';
+/** Names the Unternehmen of a proxy request (web.rs). */
+export const ORG_HEADER = 'X-SlateDesk-Planbar-Org';
 const WORK_ITEM_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export type PlanbarErrorKind =
@@ -67,12 +75,20 @@ export class PlanbarError extends Error {
   /** HTTP status if known, 0 otherwise. */
   readonly status: number;
   readonly kind: PlanbarErrorKind;
+  /** The Unternehmen the request was for, when several were asked (./orgs.ts). */
+  readonly org: PlanbarOrgRef | null;
 
-  constructor(status: number, message: string, kind: PlanbarErrorKind = 'http') {
+  constructor(status: number, message: string, kind: PlanbarErrorKind = 'http', org: PlanbarOrgRef | null = null) {
     super(message);
     this.name = 'PlanbarError';
     this.status = status;
     this.kind = kind;
+    this.org = org;
+  }
+
+  /** The same error, marked with the Unternehmen it belongs to. */
+  forOrg(org: PlanbarOrgRef): PlanbarError {
+    return new PlanbarError(this.status, this.message, this.kind, org);
   }
 
   /** planbar is too old for SlateDesk (show «planbar-Update nötig»). */
@@ -101,6 +117,29 @@ export function planbarErrorText(err: unknown): string {
   return 'Unbekannter Fehler';
 }
 
+/** Very short German text, e.g. after the name of an Unternehmen: «wireon: planbar-Update nötig». */
+export function planbarErrorShort(err: unknown): string {
+  if (!(err instanceof PlanbarError)) return planbarErrorText(err);
+  switch (err.kind) {
+    case 'notConfigured':
+      return 'nicht eingerichtet';
+    case 'disabled':
+      return 'ausgeschaltet';
+    case 'endpointMissing':
+      return 'planbar-Update nötig';
+    case 'unauthorized':
+      return 'API-Schlüssel ungültig';
+    case 'forbidden':
+      return 'Berechtigung fehlt';
+    case 'unreachable':
+      return 'nicht erreichbar';
+    case 'sessionExpired':
+      return 'Sitzung abgelaufen';
+    default:
+      return err.message.replace(/^planbar:\s*/, '');
+  }
+}
+
 /** Maps the backend's German error texts (kiosk command or proxy `{ error }`) to a PlanbarError. */
 function classify(message: string, status: number | null): PlanbarError {
   const text = message.trim() || PLANBAR_MESSAGES.unreachable;
@@ -117,7 +156,12 @@ function classify(message: string, status: number | null): PlanbarError {
   if (lower.includes('nicht erreichbar') || lower.includes('zeitüberschreitung') || code >= 500) {
     return new PlanbarError(code, text, 'unreachable');
   }
-  if (lower.includes('ungültiger planbar-pfad') || lower.includes('ungültige änderung') || lower.includes('nur für aufgaben')) {
+  if (
+    lower.includes('ungültiger planbar-pfad') ||
+    lower.includes('ungültige änderung') ||
+    lower.includes('nur für aufgaben') ||
+    lower.includes('unternehmen wählen')
+  ) {
     return new PlanbarError(code || 400, text, 'invalidRequest');
   }
   if (lower.includes('ungültige antwort')) return new PlanbarError(code, text, 'invalidResponse');
@@ -214,10 +258,12 @@ interface WebRequest {
   query?: Record<string, string>;
   body?: unknown;
   signal?: AbortSignal;
+  org?: string;
 }
 
-async function webRequest<T>({ method, path, query, body, signal }: WebRequest): Promise<T> {
+async function webRequest<T>({ method, path, query, body, signal, org }: WebRequest): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
+  if (org) headers[ORG_HEADER] = org;
   if (method !== 'GET') {
     // Required by the server for every mutating request (CSRF).
     headers['X-SlateDesk'] = '1';
@@ -265,6 +311,11 @@ export interface PlanbarRequestOptions {
   signal?: AbortSignal;
   /** Also call when planbar is switched off (previews in the settings). */
   ignoreDisabled?: boolean;
+  /**
+   * Id of the Unternehmen (`planbar.unternehmen`) whose key is used. May be
+   * left out while only one Unternehmen has a key.
+   */
+  org?: string;
 }
 
 function checkEnabled(options: PlanbarRequestOptions): void {
@@ -282,9 +333,10 @@ export async function planbarGet<T>(path: string, query?: PlanbarQuery, options:
   checkPath(path);
   checkEnabled(options);
   const params = normalizeQuery(query);
+  const org = options.org || undefined;
   return isTauri()
-    ? kioskCall(() => backendPlanbarGet<T>(path, params), options.signal)
-    : webRequest<T>({ method: 'GET', path, query: params, signal: options.signal });
+    ? kioskCall(() => backendPlanbarGet<T>(path, params, org), options.signal)
+    : webRequest<T>({ method: 'GET', path, query: params, signal: options.signal, org });
 }
 
 /**
@@ -302,9 +354,10 @@ export async function completeItem(
   checkEnabled(options);
   const path = `${API_PREFIX}arbeitsliste/${id}`;
   const body = { completed };
+  const org = options.org || undefined;
   return isTauri()
-    ? kioskCall(() => backendPlanbarPatch<PlanbarWorkItemPatchResult>(path, body), options.signal)
-    : webRequest<PlanbarWorkItemPatchResult>({ method: 'PATCH', path, body, signal: options.signal });
+    ? kioskCall(() => backendPlanbarPatch<PlanbarWorkItemPatchResult>(path, body, org), options.signal)
+    : webRequest<PlanbarWorkItemPatchResult>({ method: 'PATCH', path, body, signal: options.signal, org });
 }
 
 // ── Typed endpoints ──────────────────────────────────────────────────────────
@@ -334,7 +387,7 @@ function normalizeMember(raw: unknown): PlanbarMember | null {
   return { id, name: text(m.name), email: text(m.email), role: text(m.role), teams };
 }
 
-/** GET /api/v1/mitglieder – the people of the organisation (picker). */
+/** GET /api/v1/mitglieder – the people of one organisation (picker). */
 export async function fetchMitglieder(options?: PlanbarRequestOptions): Promise<PlanbarMemberList> {
   const list = await planbarGet<{ data?: unknown }>('/api/v1/mitglieder', undefined, options);
   const rows = Array.isArray(list?.data) ? list.data : [];

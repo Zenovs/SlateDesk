@@ -5,6 +5,10 @@
  * moves a day. Only `zurichDay` / `zurichMinuteOfDay` look at a clock.
  */
 
+import { dayNumber, laterDay } from '../../planbar/order';
+
+export { dayNumber, laterDay };
+
 const DAY_MS = 86_400_000;
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'] as const;
 const DAY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -50,17 +54,6 @@ export function zurichMinuteOfDay(ms: number): number {
   return Number(hour) * 60 + Number(minute);
 }
 
-/** `YYYY-MM-DD` → days since 1970-01-01; null when missing or not a real date (2026-02-31). */
-export function dayNumber(day: string | null | undefined): number | null {
-  const match = day ? DAY_PATTERN.exec(day) : null;
-  if (!match) return null;
-  const [year, month, date] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  const utc = Date.UTC(year, month - 1, date);
-  const check = new Date(utc);
-  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== date) return null;
-  return utc / DAY_MS;
-}
-
 const dayFromNumber = (value: number): string => new Date(value * DAY_MS).toISOString().slice(0, 10);
 
 /** `day` plus `days` calendar days; an invalid day stays as it is. */
@@ -87,18 +80,6 @@ export function weekdayIndex(day: string): number | null {
 export function endOfWeek(day: string): string {
   const weekday = weekdayIndex(day);
   return weekday === null ? day : addDays(day, 6 - weekday);
-}
-
-/**
- * The later of two days. Data that could not be refreshed since yesterday
- * must not keep yesterday as «heute»; invalid days lose.
- */
-export function laterDay(a: string, b: string): string {
-  const x = dayNumber(a);
-  const y = dayNumber(b);
-  if (x === null) return b;
-  if (y === null) return a;
-  return y > x ? b : a;
 }
 
 /** «Fr 17.10.» – with the year when it differs from `today`'s: «Mo 05.01.27». */

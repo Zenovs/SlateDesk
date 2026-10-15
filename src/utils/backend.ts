@@ -307,16 +307,21 @@ export const lagraGet = <T = unknown>(path: string, query?: Record<string, strin
 /** Resolves with a `data:<mime>;base64,…` URL. */
 export const lagraImage = (url: string): Promise<string> => call('lagra_image', { url });
 
-/** `path` must start with `/api/v1/`. Resolves with the parsed JSON body (cached 15 s in Rust). */
-export const planbarGet = <T = unknown>(path: string, query?: Record<string, string>): Promise<T> =>
-  call('planbar_get', { path, query });
+/**
+ * `path` must start with `/api/v1/`. Resolves with the parsed JSON body (cached 15 s in Rust).
+ * `org` = id in `planbar.unternehmen` whose key is used; may be left out while only one
+ * Unternehmen has a key.
+ */
+export const planbarGet = <T = unknown>(path: string, query?: Record<string, string>, org?: string): Promise<T> =>
+  call('planbar_get', { path, query, org });
 
 /**
  * Only `/api/v1/arbeitsliste/<id>` with `{ completed: boolean }` (tick off / reopen a
- * task); Rust rejects every other path or body. Drops the read cache.
+ * task) in Unternehmen `org`; Rust rejects every other path or body. Drops that
+ * Unternehmen's read cache.
  */
-export const planbarPatch = <T = unknown>(path: string, body: { completed: boolean }): Promise<T> =>
-  call('planbar_patch', { path, body });
+export const planbarPatch = <T = unknown>(path: string, body: { completed: boolean }, org?: string): Promise<T> =>
+  call('planbar_patch', { path, body, org });
 
 export const netCheck = (targets: NetCheckTarget[]): Promise<NetCheckResult[]> => call('net_check', { targets });
 

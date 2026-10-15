@@ -1,8 +1,9 @@
 /**
  * Secrets in the web UI. The server never sends them (non-empty values
- * arrive as «__gesetzt__»), and it clears a stored secret when the URL/host
- * next to it changes over HTTP without the secret being re-entered in the
- * same request (state.rs, anti-exfiltration).
+ * arrive as «__gesetzt__»), and when a URL/host changes over HTTP it clears
+ * every stored secret in the object holding it – at any depth, e.g. all
+ * planbar keys below `planbar.url` – unless the same request re-enters it
+ * (state.rs, anti-exfiltration).
  */
 import { isPlainObject, jsonEqual } from '../state/ops';
 import { isSecretKey, REDACTED_SECRET, type SettingsField, type ValueField } from '../types/settings';

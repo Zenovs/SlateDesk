@@ -18,6 +18,8 @@ export type ChangePhase = 'waiting' | 'sending' | 'sent';
 
 export interface LocalChange {
   id: string;
+  /** Unternehmen of the task (id in `planbar.unternehmen`) – planbar is asked with its key. */
+  org?: string;
   title: string;
   /** New state: true = erledigt. */
   completed: boolean;
@@ -33,7 +35,7 @@ export interface LocalChange {
 
 export type ChangeMap = ReadonlyMap<string, LocalChange>;
 
-export type CompletionSender = (id: string, completed: boolean) => Promise<unknown>;
+export type CompletionSender = (id: string, completed: boolean, org?: string) => Promise<unknown>;
 
 export interface CompletionHandlers {
   /** planbar confirmed a change – load the list again. */
@@ -85,7 +87,7 @@ export class CompletionQueue {
    * Tap on a task: marks it done (or open again). A second tap within the
    * undo window takes the change back; while planbar is asked, taps wait.
    */
-  toggle(item: { id: string; title: string; done: boolean }, now = Date.now()): void {
+  toggle(item: { id: string; title: string; done: boolean; org?: string }, now = Date.now()): void {
     const current = this.changes.get(item.id);
     if (current?.phase === 'waiting') {
       this.undo(item.id);
@@ -95,6 +97,7 @@ export class CompletionQueue {
     const shownDone = current ? current.completed : item.done;
     this.put({
       id: item.id,
+      org: item.org,
       title: item.title,
       completed: !shownDone,
       phase: 'waiting',
@@ -152,7 +155,7 @@ export class CompletionQueue {
     if (!change || change.phase !== 'waiting') return;
     const sending: LocalChange = { ...change, phase: 'sending' };
     this.put(sending);
-    this.send(id, change.completed).then(
+    this.send(id, change.completed, change.org).then(
       () => {
         if (this.changes.get(id) !== sending) return;
         const sent: LocalChange = { ...sending, phase: 'sent', sentAt: Date.now(), replaces: null };

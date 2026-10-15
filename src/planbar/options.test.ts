@@ -9,12 +9,22 @@ import {
   INTERNAL_PROJECTS_GROUP,
   memberOptions,
   PLANBAR_MEMBERS_PROVIDER,
+  PLANBAR_ORG_SETTING,
+  PLANBAR_ORGS_PROVIDER,
   PLANBAR_PROJECT_SETTINGS,
   PLANBAR_PROJECTS_PROVIDER,
   projectOptions,
   storedProjectIds,
 } from './options';
 import type { PlanbarMember, PlanbarProjectOverview } from './types';
+
+/** One Unternehmen with a key (the web UI sees it as «gesetzt»). */
+const ONE_ORG = { a: { name: 'Büro', apiKey: '__gesetzt__' } };
+const TWO_ORGS = {
+  w1: { name: 'wireon', apiKey: '__gesetzt__' },
+  s1: { name: 'Schnyder Werbung', apiKey: '__gesetzt__' },
+  n1: { name: 'Neu', apiKey: '' },
+};
 
 const member = (id: string, name: string, teams: string[] = []): PlanbarMember => ({
   id,
@@ -41,7 +51,7 @@ const finished = (id: string, title: string, customer: string | null, archived =
 /** Dashboard with planbar widgets and their stored settings. */
 function dashboard(widgets: { widgetId: string; settings: Record<string, unknown> }[]) {
   return withDefaults({
-    planbar: { enabled: true, apiKey: '__gesetzt__' },
+    planbar: { enabled: true, unternehmen: ONE_ORG },
     layout: {
       widgets: widgets.map((widget, i) => ({ instanceId: `w${i}`, widgetId: widget.widgetId, x: 0, y: i * 2, w: 4, h: 2 })),
     },
@@ -59,7 +69,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
-  useAppState.setState({ ready: true, state: withDefaults({ planbar: { enabled: true, apiKey: '__gesetzt__' } }) });
+  useAppState.setState({ ready: true, state: withDefaults({ planbar: { enabled: true, unternehmen: ONE_ORG } }) });
 });
 
 afterEach(() => {
@@ -68,6 +78,7 @@ afterEach(() => {
 
 describe('planbar option providers', () => {
   it('are registered by importing the module', () => {
+    expect(hasOptionProvider(PLANBAR_ORGS_PROVIDER)).toBe(true);
     expect(hasOptionProvider(PLANBAR_MEMBERS_PROVIDER)).toBe(true);
     expect(hasOptionProvider(PLANBAR_PROJECTS_PROVIDER)).toBe(true);
   });
@@ -195,11 +206,98 @@ describe('planbar option providers', () => {
   });
 
   it('say where to switch planbar on', async () => {
-    useAppState.setState({ state: withDefaults({ planbar: { enabled: false, apiKey: '__gesetzt__' } }) });
+    useAppState.setState({ state: withDefaults({ planbar: { enabled: false, unternehmen: ONE_ORG } }) });
     await expect(loadProviderOptions(PLANBAR_PROJECTS_PROVIDER, true)).rejects.toThrow('einschalten');
     expect(getProviderSnapshot(PLANBAR_PROJECTS_PROVIDER).error).toBe(
       'planbar ist ausgeschaltet – in der Fernsteuerung unter «planbar» einschalten',
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('list the Unternehmen of the settings without asking planbar', async () => {
+    useAppState.setState({ state: withDefaults({ planbar: { enabled: true, unternehmen: TWO_ORGS } }) });
+    expect(await loadProviderOptions(PLANBAR_ORGS_PROVIDER, true)).toEqual([
+      { value: 'n1', label: 'Neu', hint: 'API-Schlüssel fehlt' },
+      { value: 's1', label: 'Schnyder Werbung' },
+      { value: 'w1', label: 'wireon' },
+    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    useAppState.setState({ state: withDefaults({ planbar: { enabled: true } }) });
+    expect(await loadProviderOptions(PLANBAR_ORGS_PROVIDER, true)).toEqual([]);
+    expect(getProviderSnapshot(PLANBAR_ORGS_PROVIDER).warning).toContain('Noch kein Unternehmen');
+  });
+
+  it('list the people of the selected Unternehmen – their Unternehmen in the hint when several are asked', async () => {
+    useAppState.setState({ state: withDefaults({ planbar: { enabled: true, unternehmen: TWO_ORGS } }) });
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      const org = (init?.headers as Record<string, string>)['X-SlateDesk-Planbar-Org'];
+      if (org === 'w1') return json({ data: [{ id: 'u1', name: 'Anna', email: 'a@x.ch', role: 'member', teams: [{ id: 't', name: 'Grafik', color: '#f00' }] }] });
+      return json({ data: [{ id: 'u1', name: 'Anna', email: 'a@x.ch', role: 'member' }, { id: 'u2', name: 'Beat', email: 'b@x.ch', role: 'member' }] });
+    });
+
+    const all = await loadProviderOptions(PLANBAR_MEMBERS_PROVIDER, true, { [PLANBAR_ORG_SETTING]: [] });
+    expect(all).toEqual([
+      { value: 'u1', label: 'Anna', hint: 'Schnyder Werbung, wireon · Grafik' },
+      { value: 'u2', label: 'Beat', hint: 'Schnyder Werbung' },
+    ]);
+    // Keyless Unternehmen are never asked.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const wireon = await loadProviderOptions(PLANBAR_MEMBERS_PROVIDER, false, { [PLANBAR_ORG_SETTING]: ['w1'] });
+    expect(wireon).toEqual([{ value: 'u1', label: 'Anna', hint: 'Grafik' }]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // Each selection is cached on its own.
+    await loadProviderOptions(PLANBAR_MEMBERS_PROVIDER, false, { [PLANBAR_ORG_SETTING]: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    await expect(loadProviderOptions(PLANBAR_MEMBERS_PROVIDER, true, { [PLANBAR_ORG_SETTING]: ['n1'] })).rejects.toThrow(
+      'nicht eingerichtet',
+    );
+  });
+
+  it('note an Unternehmen that did not answer and name it when all fail', async () => {
+    useAppState.setState({ state: withDefaults({ planbar: { enabled: true, unternehmen: TWO_ORGS } }) });
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      const org = (init?.headers as Record<string, string>)['X-SlateDesk-Planbar-Org'];
+      if (org === 'w1') return new Response('', { status: 404, headers: { 'X-SlateDesk-Upstream': 'planbar' } });
+      return json({ data: [{ id: 'u2', name: 'Beat', email: 'b@x.ch', role: 'member' }] });
+    });
+    await loadProviderOptions(PLANBAR_MEMBERS_PROVIDER, true, { [PLANBAR_ORG_SETTING]: [] });
+    expect(getProviderSnapshot(PLANBAR_MEMBERS_PROVIDER, { [PLANBAR_ORG_SETTING]: [] }).warning).toBe(
+      'Unvollständig – wireon: planbar-Update nötig',
+    );
+
+    fetchMock.mockImplementation(async () => new Response('', { status: 404, headers: { 'X-SlateDesk-Upstream': 'planbar' } }));
+    await expect(loadProviderOptions(PLANBAR_MEMBERS_PROVIDER, true, { [PLANBAR_ORG_SETTING]: ['w1'] })).rejects.toThrow(
+      'wireon: planbar: Endpunkt fehlt',
+    );
+  });
+
+  it('group the projects of several Unternehmen by «Unternehmen · Kunde»', async () => {
+    useAppState.setState({ state: withDefaults({ planbar: { enabled: true, unternehmen: TWO_ORGS } }) });
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      const org = (init?.headers as Record<string, string>)['X-SlateDesk-Planbar-Org'];
+      const data = org === 'w1' ? [project('p1', 'Shop', 'Muster AG'), project('p2', 'Server', null)] : [project('p3', 'Flyer', 'Muster AG')];
+      return json({ data, page: 1, pageSize: 200, total: data.length });
+    });
+    const options = await loadProviderOptions(PLANBAR_PROJECTS_PROVIDER, true, { [PLANBAR_ORG_SETTING]: [] });
+    expect(options.map((o) => [o.group, o.label])).toEqual([
+      ['Schnyder Werbung · Muster AG', 'Flyer'],
+      ['wireon · Muster AG', 'Shop'],
+      [`wireon · ${INTERNAL_PROJECTS_GROUP}`, 'Server'],
+    ]);
+    // One Unternehmen chosen: groups as before.
+    const one = await loadProviderOptions(PLANBAR_PROJECTS_PROVIDER, true, { [PLANBAR_ORG_SETTING]: ['s1'] });
+    expect(one.map((o) => o.group)).toEqual(['Muster AG']);
+  });
+
+  it('load again after the Unternehmen changed', async () => {
+    useAppState.setState({ state: withDefaults({ planbar: { enabled: true, unternehmen: ONE_ORG } }) });
+    await loadProviderOptions(PLANBAR_ORGS_PROVIDER);
+    expect(getProviderSnapshot(PLANBAR_ORGS_PROVIDER).loadedAt).toBeGreaterThan(0);
+    useAppState.setState({ state: withDefaults({ planbar: { enabled: true, unternehmen: TWO_ORGS } }) });
+    expect(getProviderSnapshot(PLANBAR_ORGS_PROVIDER).loadedAt).toBe(0);
+    expect((await loadProviderOptions(PLANBAR_ORGS_PROVIDER)).map((o) => o.value)).toEqual(['n1', 's1', 'w1']);
   });
 });

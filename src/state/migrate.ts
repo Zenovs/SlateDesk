@@ -3,7 +3,7 @@
  * missing top-level sections. Runs only in the kiosk (or local dev) context –
  * the web UI never writes defaults on its own.
  */
-import { DEFAULT_STATE, isHexColor, sanitizeWidgets, DEFAULT_COLS } from './defaults';
+import { DEFAULT_STATE, isHexColor, LEGACY_PLANBAR_ORG_ID, legacyPlanbarOrg, sanitizeWidgets, DEFAULT_COLS } from './defaults';
 import { isPlainObject } from './ops';
 import type { RawState, StateOp, ThemeData, WidgetInstance } from './types';
 // Type-only imports in clock.ts: no import cycle.
@@ -140,8 +140,25 @@ export function buildInitialOps(
   if (isMissing(raw, 'kiosk')) ops.push({ op: 'set', path: ['kiosk'], value: DEFAULT_STATE.kiosk });
   if (isMissing(raw, 'lagra')) ops.push({ op: 'set', path: ['lagra'], value: DEFAULT_STATE.lagra });
   if (isMissing(raw, 'planbar')) ops.push({ op: 'set', path: ['planbar'], value: DEFAULT_STATE.planbar });
+  else ops.push(...legacyPlanbarOps(raw.planbar));
   if (isMissing(raw, 'data')) ops.push({ op: 'set', path: ['data'], value: DEFAULT_STATE.data });
 
+  return ops;
+}
+
+/**
+ * The single `planbar.apiKey` of older versions moves into Unternehmen
+ * «standard». The kiosk backend does this itself when it loads the state;
+ * this covers the plain-browser development state (LocalTransport).
+ */
+function legacyPlanbarOps(planbar: unknown): StateOp[] {
+  if (!isPlainObject(planbar) || !Object.hasOwn(planbar, 'apiKey')) return [];
+  const legacy = legacyPlanbarOrg(planbar);
+  const ops: StateOp[] = [];
+  if (legacy) {
+    ops.push({ op: 'set', path: ['planbar', 'unternehmen', LEGACY_PLANBAR_ORG_ID], value: legacy[LEGACY_PLANBAR_ORG_ID] });
+  }
+  ops.push({ op: 'delete', path: ['planbar', 'apiKey'] });
   return ops;
 }
 

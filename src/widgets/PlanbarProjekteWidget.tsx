@@ -2,14 +2,14 @@
  * planbar Projekte – Karten aus GET /api/v1/projektuebersicht: Fortschritt,
  * Termin, Stunden gegenüber Budget, nächster Meilenstein und Beteiligte.
  * Entweder nach Filter (Status, Personen, Leitung) oder ausgewählte
- * Projekte in fester Reihenfolge.
+ * Projekte in fester Reihenfolge – aus einem oder mehreren Unternehmen.
  */
 import { type CSSProperties, useMemo } from 'react';
 import { Flag, FolderKanban, Pin, TriangleAlert } from 'lucide-react';
 import { normalizeSelection } from '../components/settings/multiselect';
 import { useWidgetSettings } from '../hooks/useWidgetSettings';
-import { fetchProjektuebersicht } from '../planbar/client';
-import type { PlanbarProjectOverview, PlanbarProjectPage } from '../planbar/types';
+import { fetchProjektuebersichtAll, type PlanbarFanOut, type PlanbarOrgProjects } from '../planbar/orgs';
+import type { PlanbarProjectOverview, WithOrg } from '../planbar/types';
 import type { WidgetProps } from '../types/widget';
 import {
   PLANBAR_PROJEKTE_AUSWAHL,
@@ -20,9 +20,18 @@ import {
 } from './manifests/planbar-projekte';
 import { daysBetween, zurichDay } from './planbar/days';
 import { deadlineText, dueText, formatHours, formatHoursOf } from './planbar/format';
-import { PersonAvatar, PlanbarErrorMessage, PlanbarHead, PlanbarSetupMessage, PlanbarStaleBanner } from './planbar/PlanbarParts';
+import {
+  PersonAvatar,
+  PlanbarErrorMessage,
+  PlanbarHead,
+  PlanbarNoOrgsMessage,
+  PlanbarOrgBadge,
+  PlanbarOrgIssues,
+  PlanbarSetupMessage,
+  PlanbarStaleBanner,
+} from './planbar/PlanbarParts';
 import { hoursBudget, projectQuery, safeColor, sortProjects } from './planbar/projects';
-import { usePlanbarPolling } from './planbar/usePlanbarPolling';
+import { usePlanbarOrgs, usePlanbarPolling } from './planbar/usePlanbarPolling';
 import { formatCount, formatPercent } from './shared/format';
 import { useNow } from './shared/hooks';
 import { WidgetMessage } from './shared/WidgetParts';
@@ -37,6 +46,7 @@ const HOURS_WARN_PERCENT = 90;
 function readSettings(raw: PlanbarProjekteSettings): PlanbarProjekteSettings {
   const defaults = PLANBAR_PROJEKTE_DEFAULTS;
   return {
+    unternehmen: normalizeSelection(raw.unternehmen),
     auswahl: readChoice(raw.auswahl, PLANBAR_PROJEKTE_AUSWAHL, defaults.auswahl),
     projekte: normalizeSelection(raw.projekte),
     status: readChoice(raw.status, PLANBAR_PROJEKTE_STATUS, defaults.status),
@@ -78,12 +88,14 @@ function Bar({ label, value, percent, tone }: BarProps) {
 
 interface CardOptions {
   today: string;
+  /** Several Unternehmen on screen: each card names its own. */
+  showOrg: boolean;
   showHours: boolean;
   showMilestones: boolean;
   showMembers: boolean;
 }
 
-function ProjectCard({ project, options }: { project: PlanbarProjectOverview; options: CardOptions }) {
+function ProjectCard({ project, options }: { project: WithOrg<PlanbarProjectOverview>; options: CardOptions }) {
   const { today } = options;
   const color = safeColor(project.customer?.color);
   const style = color ? ({ '--pp-color': color } as CSSProperties) : undefined;
@@ -113,6 +125,7 @@ function ProjectCard({ project, options }: { project: PlanbarProjectOverview; op
         {deadline && <span className={`pp-deadline pp-deadline-${deadline.tone}`}>{deadline.text}</span>}
       </header>
       <div className="pp-sub">
+        {options.showOrg && <PlanbarOrgBadge org={project.org} />}
         <span className="pp-sub-text">{sub}</span>
         {state && <span className="pp-state">{state}</span>}
       </div>
@@ -163,14 +176,17 @@ export function PlanbarProjekteWidget({ instanceId }: WidgetProps) {
   const queryKey = JSON.stringify(query);
   const now = useNow(60_000);
 
-  const poll = usePlanbarPolling<PlanbarProjectPage>(
-    (signal) => fetchProjektuebersicht(query ?? {}, { signal }),
+  const orgs = usePlanbarOrgs(settings.unternehmen);
+
+  const poll = usePlanbarPolling<PlanbarFanOut<PlanbarOrgProjects>>(
+    (signal) => fetchProjektuebersichtAll(orgs, query ?? {}, { signal }),
     settings.refreshMinutes * 60_000,
-    [queryKey],
-    query !== null,
+    [orgs, queryKey],
+    query !== null && orgs.length > 0,
   );
 
   if (poll.setup !== 'ready') return <PlanbarSetupMessage setup={poll.setup} />;
+  if (orgs.length === 0) return <PlanbarNoOrgsMessage />;
   if (query === null) {
     return <WidgetMessage icon={FolderKanban} title="Keine Projekte ausgewählt" detail="In den Einstellungen Projekte auswählen" />;
   }
@@ -182,15 +198,18 @@ export function PlanbarProjekteWidget({ instanceId }: WidgetProps) {
 
   const today = zurichDay(now);
   const picked = settings.auswahl === 'ausgewaehlt';
-  // Hand-picked projects keep the chosen order (planbar answers in the order of `ids`).
-  const projects = picked ? poll.data.data : sortProjects(poll.data.data, settings.sortierung);
+  const { data, orgs: asked, failures } = poll.data;
+  // Hand-picked projects keep the chosen order (orgs.ts merges them in the order of `ids`).
+  const projects = picked ? data.data : sortProjects(data.data, settings.sortierung);
   const shown = projects.slice(0, settings.maxItems);
-  const more = Math.max(projects.length, picked ? 0 : poll.data.total) - shown.length;
-  const missing = picked ? Math.max(0, (query.ids?.length ?? 0) - poll.data.data.length) : 0;
+  const more = Math.max(projects.length, picked ? 0 : data.total) - shown.length;
+  // An Unternehmen that did not answer does not mean its projects are gone.
+  const missing = picked && failures.length === 0 ? Math.max(0, (query.ids?.length ?? 0) - data.data.length) : 0;
   const overdue = shown.filter((project) => isOverdue(project, today)).length;
   const stale = poll.failure !== null;
   const options: CardOptions = {
     today,
+    showOrg: asked.length > 1,
     showHours: settings.showHours,
     showMilestones: settings.showMilestones,
     showMembers: settings.showMembers,
@@ -209,6 +228,7 @@ export function PlanbarProjekteWidget({ instanceId }: WidgetProps) {
         {missing > 0 && ` · ${formatCount(missing)} nicht gefunden`}
       </PlanbarHead>
       {poll.failure && <PlanbarStaleBanner failure={poll.failure} lastUpdated={poll.lastUpdated} />}
+      {!poll.failure && <PlanbarOrgIssues failures={failures} />}
       {shown.length === 0 ? (
         <div className="pp-empty">
           <WidgetMessage
@@ -220,7 +240,7 @@ export function PlanbarProjekteWidget({ instanceId }: WidgetProps) {
       ) : (
         <div className={`pp-grid${stale ? ' pp-grid-stale' : ''}`}>
           {shown.map((project) => (
-            <ProjectCard key={project.id} project={project} options={options} />
+            <ProjectCard key={`${project.org.id}:${project.id}`} project={project} options={options} />
           ))}
           {more > 0 && <div className="pp-more">+{formatCount(more)} weitere in planbar</div>}
         </div>

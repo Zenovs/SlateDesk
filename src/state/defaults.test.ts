@@ -24,7 +24,12 @@ describe('withDefaults', () => {
     });
     expect(state.theme).toEqual({ mode: 'light', accent: null });
     expect(state.lagra).toEqual({ enabled: true, url: 'https://lagra.schnyder-werbung.ch', token: 'abc' });
-    expect(state.planbar).toEqual({ enabled: false, url: 'https://planbar.dev', apiKey: 'pk_live_x' });
+    // The single key of older versions reads as Unternehmen «standard» (like the backend moves it).
+    expect(state.planbar).toEqual({
+      enabled: false,
+      url: 'https://planbar.dev',
+      unternehmen: { standard: { name: 'planbar', apiKey: 'pk_live_x' } },
+    });
     expect(state.layout.cols).toBe(24);
     expect(state.layout.rowHeight).toBe(80);
     expect(state.layout.widgets.map((w) => w.instanceId)).toEqual(DEFAULT_WIDGETS.map((w) => w.instanceId));
@@ -56,6 +61,29 @@ describe('withDefaults', () => {
     expect(state.kiosk.displaySchedule).toEqual({ enabled: false, on: '07:00', off: '19:00', days: [0, 1, 5] });
     expect(state.widgetSettings).toEqual({ a: { x: 1 } });
     expect(state.planbar).toEqual(DEFAULT_STATE.planbar);
+  });
+
+  it('keeps valid planbar Unternehmen and drops broken ones', () => {
+    // Parsed like the backend's JSON: «__proto__» is an own key there.
+    const unternehmen = JSON.parse(
+      JSON.stringify({
+        wireon: { name: 'wireon', apiKey: '__gesetzt__' },
+        'mgk3x1a2-9f3c2b7d1e0a4c55': { name: 'S'.repeat(80), apiKey: 7 },
+        'mit leerzeichen': { name: 'x', apiKey: 'k' },
+        ['a'.repeat(41)]: { name: 'zu lang', apiKey: 'k' },
+        kaputt: 'pk_live_x',
+        liste: [],
+      }).replace('{', '{"__proto__":{"name":"p","apiKey":"k"},'),
+    ) as Record<string, unknown>;
+    expect(Object.keys(unternehmen)).toContain('__proto__');
+    const state = withDefaults({ planbar: { enabled: true, apiKey: 'pk_live_alt', unternehmen } });
+    expect(state.planbar.unternehmen).toEqual({
+      wireon: { name: 'wireon', apiKey: '__gesetzt__' },
+      'mgk3x1a2-9f3c2b7d1e0a4c55': { name: 'S'.repeat(60), apiKey: '' },
+    });
+    // Existing Unternehmen win over the old single key.
+    expect(Object.keys(state.planbar.unternehmen)).not.toContain('standard');
+    expect(withDefaults({ planbar: { apiKey: '  ' } }).planbar.unternehmen).toEqual({});
   });
 
   it('keeps an explicitly empty widget list', () => {

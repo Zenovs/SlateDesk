@@ -107,12 +107,13 @@ Felds oder mit der Eingabetaste.
 - **Zugangsdaten** (Passwörter, Tokens, API-Schlüssel) werden nie angezeigt. «gesetzt» heisst, dass ein Wert
   gespeichert ist; zum Ändern einfach den neuen Wert eingeben.
 - **Adresse geändert → Zugang weg:** Ändert man über die Fernsteuerung eine Adresse (URL oder Host), löscht
-  der Kiosk das zugehörige Passwort bzw. den Schlüssel. Deshalb zuerst die Adresse ändern, danach den Zugang
-  neu eingeben.
+  der Kiosk die zugehörigen Passwörter bzw. Schlüssel (daneben und darunter, bei planbar die aller
+  Unternehmen). Deshalb zuerst die Adresse ändern, danach den Zugang neu eingeben.
 - **Nur am Kiosk:** Kamera-Auswahl, Verbindungstests, die Modell-Liste des KI-Assistenten und ähnliche
   Zusatzbereiche gibt es nur im Einstellungsdialog am Kiosk (Bearbeiten → Zahnrad am Widget).
 - **lagra- und planbar-Widgets** melden oben, wenn die Verbindung noch nicht eingerichtet ist, mit Link zur
-  passenden Seite. Die Auswahl von Personen und Projekten (planbar) lädt erst, wenn die Verbindung steht.
+  passenden Seite. Die Auswahl von Personen und Projekten (planbar) lädt erst, wenn die Verbindung steht, und
+  folgt der Auswahl **Unternehmen** darüber.
 - **Verwalten:** *Auf Standard zurücksetzen* löscht alle Einstellungen des Widgets inklusive gespeicherter
   Zugangsdaten; *Widget entfernen* nimmt es vom Kiosk.
 
@@ -131,15 +132,34 @@ sich Aufgaben je nach Widget-Einstellung abhaken und neu erfassen.
 
 ## lagra und planbar
 
-Je eine Seite pro Integration:
+Je eine Seite pro Integration.
 
-1. **Verbindung** – «… verwenden» einschalten, Adresse (leer = Standardadresse) und API-Token bzw.
-   API-Schlüssel eintragen, **Verbindung testen**. Der Test meldet z. B. «Verbindung hergestellt», ein
-   ungültiges Token oder «Update nötig», wenn lagra bzw. planbar die Endpunkte für SlateDesk noch nicht
-   kennt. Beim planbar-Test stehen die Anzahl Personen und die Rechte des Schlüssels dabei.
-2. **Vorschau** – lagra: Übersicht (Server, Aufgaben, Virenscanner, DAM, NAS) und Hintergrundaufgaben;
-   planbar: Arbeitsliste einer gewählten Person und die neusten News. So sieht man, was die Widgets
-   anzeigen.
+**lagra**
+
+1. **Verbindung** – «lagra verwenden» einschalten, Adresse (leer = Standardadresse) und API-Token eintragen,
+   **Verbindung testen**. Der Test meldet z. B. «Verbindung hergestellt», ein ungültiges Token oder «Update
+   nötig», wenn lagra die Endpunkte für SlateDesk noch nicht kennt.
+2. **Vorschau** – Übersicht (Server, Aufgaben, Virenscanner, DAM, NAS) und Hintergrundaufgaben. So sieht man,
+   was die Widgets anzeigen.
+
+**planbar** – ein API-Schlüssel gehört in planbar zu genau einem Unternehmen, deshalb gibt es pro Unternehmen
+einen Eintrag:
+
+1. **Verbindung** – «planbar verwenden» einschalten und die Adresse (leer = Standardadresse) eintragen; sie
+   gilt für alle Unternehmen. Eine neue Adresse löscht die Schlüssel **aller** Unternehmen – zuerst die
+   Adresse, dann die Schlüssel.
+2. **Unternehmen** – mit **Unternehmen hinzufügen** eine Karte pro Unternehmen anlegen: Name (z. B. «wireon»)
+   und API-Schlüssel. Der Schlüssel erscheint danach nur als «gesetzt»; ein neuer Wert ersetzt ihn, das ×
+   entfernt ihn. **Verbindung testen** prüft genau dieses Unternehmen und zeigt die Anzahl Personen, die Rechte
+   des Schlüssels oder «planbar-Update nötig». **Entfernen** (mit Rückfrage) löscht das Unternehmen samt
+   Schlüssel.
+3. **Vorschau** – ein Unternehmen oder «Alle Unternehmen» und eine Person wählen: ihre Arbeitsliste über alle
+   gewählten Unternehmen (mit Unternehmen-Etikett) und die neusten News. Antwortet ein Unternehmen nicht,
+   steht das als Hinweis dabei, die Daten der anderen bleiben sichtbar.
+
+In den Einstellungen der planbar-Widgets kommt zuerst die Auswahl **Unternehmen** (leer = alle
+eingerichteten); die Personen- und Projektlisten darunter zeigen dann die Personen und Projekte der gewählten
+Unternehmen.
 
 Token und Schlüssel bleiben auf dem Kiosk; die Vorschau holt die Daten über den Kiosk. Wie Token und
 Schlüssel erstellt werden: [API_SETUP.md](../API_SETUP.md).

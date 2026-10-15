@@ -3355,6 +3355,32 @@ html.r-scroll-locked {
   gap: 14px;
 }
 
+.rp-test:empty {
+  display: none;
+}
+
+/* One card per Unternehmen. */
+.rp-orgs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+@media (min-width: 1180px) {
+  .rp-orgs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.rp-org-actions {
+  justify-content: space-between;
+}
+
+.rp-preview-orgs {
+  max-width: 420px;
+}
+
 /* Work items, news posts and the rights of the key. */
 .rp-items {
   display: flex;

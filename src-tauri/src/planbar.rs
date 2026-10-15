@@ -1,6 +1,8 @@
 //! planbar integration – the work dashboard (tasks, projects, news, booked time). planbar's
 //! `/api/v1` needs an API key and sends no CORS headers, so every call (kiosk commands and
-//! the web UI proxy) goes through here; the key never leaves Rust.
+//! the web UI proxy) goes through here; the keys never leave Rust. A key belongs to exactly
+//! one planbar organisation, so `planbar.unternehmen` holds one key per Unternehmen and every
+//! request names the Unternehmen it is for.
 
 use crate::http::{content_type, describe_error, read_body_limited, ProxyResponse};
 use crate::state::StateStore;
@@ -27,6 +29,8 @@ const JSON_MAX_BYTES: usize = 5 * 1024 * 1024;
 const MAX_PATH_LEN: usize = 512;
 const MAX_QUERY_PARAMS: usize = 32;
 const MAX_ID_LEN: usize = 64;
+const MAX_ORG_ID_LEN: usize = 40;
+const MAX_ORG_NAME_LEN: usize = 60;
 const PLAIN_TEXT: &str = "text/plain; charset=utf-8";
 /// Unknown task id for the write probe of the connection test (the request changes nothing).
 const PROBE_ITEM_PATH: &str = "/api/v1/arbeitsliste/slatedesk-verbindungstest";
@@ -57,6 +61,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanbarError {
     NotConfigured,
+    /// Several Unternehmen have a key and the request names none.
+    OrgRequired,
+    /// The named Unternehmen does not exist or has no key (its name, else the id).
+    OrgNotConfigured(String),
     InvalidBaseUrl,
     InvalidPath(String),
     /// A path the web UI proxy does not read.
@@ -82,6 +90,10 @@ impl fmt::Display for PlanbarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PlanbarError::NotConfigured => f.write_str("planbar ist nicht eingerichtet"),
+            PlanbarError::OrgRequired => f.write_str("planbar: bitte ein Unternehmen wählen"),
+            PlanbarError::OrgNotConfigured(name) => {
+                write!(f, "planbar: Unternehmen «{name}» ist nicht eingerichtet")
+            }
             PlanbarError::InvalidBaseUrl => f.write_str("Die planbar-Adresse ist ungültig"),
             PlanbarError::InvalidPath(p) => write!(f, "Ungültiger planbar-Pfad: {p}"),
             PlanbarError::ReadNotAllowed(p) => {
@@ -221,72 +233,203 @@ pub fn validate_patch_body(body: &Value) -> Result<(), PlanbarError> {
     }
 }
 
+fn is_org_id_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
+}
+
+/// Ids of `planbar.unternehmen` (keys of the object): `^[A-Za-z0-9_-]{1,40}$`.
+pub fn is_valid_org_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= MAX_ORG_ID_LEN && id.bytes().all(is_org_id_byte)
+}
+
+/// One Unternehmen (planbar organisation) – an API key always belongs to exactly one.
 #[derive(Clone)]
-pub struct PlanbarConfig {
-    base: Url,
+pub struct PlanbarOrg {
+    pub id: String,
+    /// As entered, may be empty – see [`PlanbarOrg::label`].
+    pub name: String,
     api_key: String,
 }
 
 /// Without the key – a `{:?}` in a log line must not leak it.
-impl fmt::Debug for PlanbarConfig {
+impl fmt::Debug for PlanbarOrg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PlanbarConfig")
-            .field("base", &self.base.as_str())
+        f.debug_struct("PlanbarOrg")
+            .field("id", &self.id)
+            .field("name", &self.name)
             .field("api_key", &"…")
             .finish()
     }
 }
 
+impl PlanbarOrg {
+    fn has_key(&self) -> bool {
+        !self.api_key.is_empty()
+    }
+
+    /// Name for messages; the id when no name was entered.
+    pub fn label(&self) -> &str {
+        if self.name.is_empty() {
+            &self.id
+        } else {
+            &self.name
+        }
+    }
+}
+
+fn planbar_section(state: &Value) -> Option<&Value> {
+    state.get("planbar")
+}
+
+fn planbar_enabled(planbar: Option<&Value>) -> bool {
+    planbar
+        .and_then(|p| p.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Entries of `planbar.unternehmen` with a valid id, keys trimmed (empty = no key yet).
+fn org_entries(planbar: Option<&Value>) -> Vec<PlanbarOrg> {
+    let Some(orgs) = planbar
+        .and_then(|p| p.get("unternehmen"))
+        .and_then(Value::as_object)
+    else {
+        return Vec::new();
+    };
+    orgs.iter()
+        .filter(|(id, _)| is_valid_org_id(id))
+        .filter_map(|(id, entry)| {
+            let entry = entry.as_object()?;
+            let text = |name: &str| {
+                entry
+                    .get(name)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .unwrap_or_default()
+            };
+            Some(PlanbarOrg {
+                id: id.clone(),
+                name: text("name").chars().take(MAX_ORG_NAME_LEN).collect(),
+                api_key: text("apiKey").to_string(),
+            })
+        })
+        .collect()
+}
+
+/// `planbar.url` (missing = planbar.dev), http(s) with a host.
+fn base_url(planbar: Option<&Value>) -> Result<Url, PlanbarError> {
+    let raw_url = planbar
+        .and_then(|p| p.get("url"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_PLANBAR_URL);
+    let base = Url::parse(raw_url).map_err(|_| PlanbarError::InvalidBaseUrl)?;
+    if !matches!(base.scheme(), "http" | "https") || base.host_str().is_none() {
+        return Err(PlanbarError::InvalidBaseUrl);
+    }
+    Ok(base)
+}
+
+#[derive(Clone, Debug)]
+pub struct PlanbarConfig {
+    base: Url,
+    /// Every Unternehmen of the settings, also those without key (for their names).
+    orgs: Vec<PlanbarOrg>,
+}
+
 impl PlanbarConfig {
     /// Reads `state.planbar`. Rust must not assume the frontend's defaults are stored, so it
     /// applies the same ones (`src/state/defaults.ts`): a missing `url` means planbar.dev, a
-    /// missing `enabled` means switched off.
+    /// missing `enabled` means switched off. Needs at least one Unternehmen with a key.
     pub fn from_state(state: &Value, require_enabled: bool) -> Result<Self, PlanbarError> {
-        let planbar = state.get("planbar");
-        let field = |name: &str| {
-            planbar
-                .and_then(|p| p.get(name))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-        };
-        let enabled = planbar
-            .and_then(|p| p.get("enabled"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        if require_enabled && !enabled {
+        let planbar = planbar_section(state);
+        if require_enabled && !planbar_enabled(planbar) {
             return Err(PlanbarError::NotConfigured);
         }
-        let api_key = field("apiKey")
-            .ok_or(PlanbarError::NotConfigured)?
-            .to_string();
-        let raw_url = field("url").unwrap_or(DEFAULT_PLANBAR_URL);
-        let base = Url::parse(raw_url).map_err(|_| PlanbarError::InvalidBaseUrl)?;
-        if !matches!(base.scheme(), "http" | "https") || base.host_str().is_none() {
-            return Err(PlanbarError::InvalidBaseUrl);
+        let orgs = org_entries(planbar);
+        if !orgs.iter().any(PlanbarOrg::has_key) {
+            return Err(PlanbarError::NotConfigured);
         }
-        Ok(PlanbarConfig { base, api_key })
+        Ok(PlanbarConfig {
+            base: base_url(planbar)?,
+            orgs,
+        })
+    }
+
+    /// The Unternehmen a request is for: the requested one, or – when none is named – the
+    /// only one with a key.
+    pub fn select(&self, requested: Option<&str>) -> Result<&PlanbarOrg, PlanbarError> {
+        match requested.map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => self
+                .orgs
+                .iter()
+                .find(|org| org.id == id && org.has_key())
+                .ok_or_else(|| PlanbarError::OrgNotConfigured(self.label_of(id))),
+            None => {
+                let mut keyed = self.orgs.iter().filter(|org| org.has_key());
+                match (keyed.next(), keyed.next()) {
+                    (Some(org), None) => Ok(org),
+                    (None, _) => Err(PlanbarError::NotConfigured),
+                    _ => Err(PlanbarError::OrgRequired),
+                }
+            }
+        }
+    }
+
+    fn label_of(&self, id: &str) -> String {
+        org_label(&self.orgs, id)
     }
 
     /// `{base}/api/v1/` – everything the key may be sent to lives below it.
     fn api_root(&self) -> String {
-        let mut root = self.base.clone();
-        root.set_query(None);
-        root.set_fragment(None);
-        format!("{}{}", root.as_str().trim_end_matches('/'), API_PREFIX)
+        api_root(&self.base)
     }
 
     fn api_url(&self, path: &str) -> Result<Url, PlanbarError> {
-        let relative = path.strip_prefix(API_PREFIX).unwrap_or(path);
-        Url::parse(&format!("{}{relative}", self.api_root()))
-            .map_err(|_| PlanbarError::InvalidBaseUrl)
+        api_url(&self.base, path)
     }
 
-    /// Cache key part: changes when url or key change, without keeping the key around.
-    fn fingerprint(&self) -> String {
-        let digest = Sha256::digest(self.api_key.as_bytes());
-        format!("{}#{}", self.api_root(), hex::encode(&digest[..8]))
+    /// Cache key part: changes with url, Unternehmen and key, without keeping the key around.
+    fn fingerprint(&self, org: &PlanbarOrg) -> String {
+        let digest = Sha256::digest(org.api_key.as_bytes());
+        format!(
+            "{}#{}#{}|",
+            self.api_root(),
+            org.id,
+            hex::encode(&digest[..8])
+        )
     }
+}
+
+/// Name of a requested Unternehmen for a message – never more than an id's characters of
+/// what a client sent.
+fn org_label(orgs: &[PlanbarOrg], id: &str) -> String {
+    if let Some(org) = orgs.iter().find(|org| org.id == id) {
+        return org.label().to_string();
+    }
+    let clean: String = id
+        .chars()
+        .filter(|c| c.is_ascii() && is_org_id_byte(*c as u8))
+        .take(MAX_ORG_ID_LEN)
+        .collect();
+    if clean.is_empty() {
+        "?".to_string()
+    } else {
+        clean
+    }
+}
+
+fn api_root(base: &Url) -> String {
+    let mut root = base.clone();
+    root.set_query(None);
+    root.set_fragment(None);
+    format!("{}{}", root.as_str().trim_end_matches('/'), API_PREFIX)
+}
+
+fn api_url(base: &Url, path: &str) -> Result<Url, PlanbarError> {
+    let relative = path.strip_prefix(API_PREFIX).unwrap_or(path);
+    Url::parse(&format!("{}{relative}", api_root(base))).map_err(|_| PlanbarError::InvalidBaseUrl)
 }
 
 /// What planbar answered, before it is interpreted.
@@ -387,6 +530,22 @@ impl PlanbarTestResult {
     }
 }
 
+/// Connection test of one Unternehmen.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PlanbarOrgTestResult {
+    /// Id in `planbar.unternehmen`.
+    pub org: String,
+    pub name: String,
+    #[serde(flatten)]
+    pub result: PlanbarTestResult,
+}
+
+/// `GET /api/planbar-test`: one entry per tested Unternehmen.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PlanbarTestReport {
+    pub results: Vec<PlanbarOrgTestResult>,
+}
+
 /// Outcome of one probe of the connection test.
 #[derive(Debug, PartialEq, Eq)]
 enum Access {
@@ -435,7 +594,7 @@ impl PlanbarService {
 
     async fn request(
         &self,
-        config: &PlanbarConfig,
+        api_key: &str,
         method: Method,
         url: Url,
         body: Option<&Value>,
@@ -443,7 +602,7 @@ impl PlanbarService {
         let mut builder = self
             .client
             .request(method, url)
-            .bearer_auth(&config.api_key)
+            .bearer_auth(api_key)
             .header(ACCEPT, "application/json")
             .timeout(REQUEST_TIMEOUT);
         if let Some(body) = body {
@@ -493,14 +652,17 @@ impl PlanbarService {
         cache.insert(key, (Instant::now(), value));
     }
 
-    /// `planbar_get`: JSON from `{planbar.url}/api/v1/…`, cached 15 s per url+key.
+    /// `planbar_get`: JSON from `{planbar.url}/api/v1/…` with the key of Unternehmen `org`,
+    /// cached 15 s per url + Unternehmen + key.
     pub async fn get_json(
         &self,
         state: &Value,
         path: &str,
         query: &BTreeMap<String, String>,
+        org: Option<&str>,
     ) -> Result<Value, PlanbarError> {
         let config = PlanbarConfig::from_state(state, true)?;
+        let org = config.select(org)?;
         validate_api_path(path)?;
         if query.len() > MAX_QUERY_PARAMS {
             return Err(PlanbarError::InvalidPath("zu viele Parameter".to_string()));
@@ -509,12 +671,12 @@ impl PlanbarService {
         if !query.is_empty() {
             url.query_pairs_mut().extend_pairs(query.iter());
         }
-        let key = format!("{}|{url}", config.fingerprint());
+        let key = format!("{}{url}", config.fingerprint(org));
         if let Some(hit) = self.cached_json(&key) {
             return Ok(hit);
         }
         let value = self
-            .request(&config, Method::GET, url, None)
+            .request(&org.api_key, Method::GET, url, None)
             .await?
             .for_route(path)
             .into_json()?;
@@ -522,23 +684,26 @@ impl PlanbarService {
         Ok(value)
     }
 
-    /// Ticks off / reopens a task. A change drops the GET cache, so the next poll shows it
-    /// (and the new instance of a recurring task) right away.
+    /// Ticks off / reopens a task. A change drops that Unternehmen's GET cache, so the next
+    /// poll shows it (and the new instance of a recurring task) right away.
     async fn patch_work_item(
         &self,
         state: &Value,
         path: &str,
         body: &Value,
+        org: Option<&str>,
     ) -> Result<Upstream, PlanbarError> {
         let config = PlanbarConfig::from_state(state, true)?;
+        let org = config.select(org)?;
         validate_patch_path(path)?;
         validate_patch_body(body)?;
         let url = config.api_url(path)?;
         let upstream = self
-            .request(&config, Method::PATCH, url, Some(body))
+            .request(&org.api_key, Method::PATCH, url, Some(body))
             .await?;
         if upstream.status.is_success() {
-            lock(&self.json_cache).clear();
+            let prefix = config.fingerprint(org);
+            lock(&self.json_cache).retain(|key, _| !key.starts_with(&prefix));
         }
         Ok(upstream)
     }
@@ -549,8 +714,11 @@ impl PlanbarService {
         state: &Value,
         path: &str,
         body: &Value,
+        org: Option<&str>,
     ) -> Result<Value, PlanbarError> {
-        self.patch_work_item(state, path, body).await?.into_json()
+        self.patch_work_item(state, path, body, org)
+            .await?
+            .into_json()
     }
 
     /// Web UI proxy: `GET {planbar.url}/api/v1/{sub_path}?{query}` for the dashboard routes
@@ -560,12 +728,14 @@ impl PlanbarService {
         state: &Value,
         sub_path: &str,
         raw_query: Option<&str>,
+        org: Option<&str>,
     ) -> Result<ProxyResponse, PlanbarError> {
         let sub_path = sub_path.trim_start_matches('/');
         let path = format!("{API_PREFIX}{sub_path}");
         validate_api_path(&path)?;
         validate_proxy_path(sub_path)?;
         let config = PlanbarConfig::from_state(state, true)?;
+        let org = config.select(org)?;
         let mut url = config.api_url(&path)?;
         if let Some(query) = raw_query.filter(|q| !q.is_empty()) {
             if query
@@ -577,7 +747,7 @@ impl PlanbarService {
             url.set_query(Some(query));
         }
         Ok(self
-            .request(&config, Method::GET, url, None)
+            .request(&org.api_key, Method::GET, url, None)
             .await?
             .for_route(&path)
             .into_proxy())
@@ -589,53 +759,103 @@ impl PlanbarService {
         state: &Value,
         sub_path: &str,
         body: &[u8],
+        org: Option<&str>,
     ) -> Result<ProxyResponse, PlanbarError> {
         let path = format!("{API_PREFIX}{}", sub_path.trim_start_matches('/'));
         validate_patch_path(&path)?;
         let body: Value = serde_json::from_slice(body).map_err(|_| PlanbarError::InvalidBody)?;
         Ok(self
-            .patch_work_item(state, &path, &body)
+            .patch_work_item(state, &path, &body, org)
             .await?
             .into_proxy())
     }
 
     async fn probe(
         &self,
-        config: &PlanbarConfig,
+        base: &Url,
+        api_key: &str,
         method: Method,
         path: &str,
         query: &str,
         body: Option<&Value>,
     ) -> Result<Upstream, PlanbarError> {
-        let mut url = config.api_url(path)?;
+        let mut url = api_url(base, path)?;
         url.set_query(Some(query).filter(|q| !q.is_empty()));
         Ok(self
-            .request(config, method, url, body)
+            .request(api_key, method, url, body)
             .await?
             .for_route(path))
     }
 
-    /// Connection test for the settings page; works before planbar is switched on. Tells an
-    /// old planbar («Update nötig») from a wrong key and reports the key's rights. The probes
-    /// send no parameters (or an unknown task id), so they read and change nothing.
-    pub async fn test(&self, state: &Value) -> PlanbarTestResult {
-        let config = match PlanbarConfig::from_state(state, false) {
-            Ok(config) => config,
-            Err(e) => return PlanbarTestResult::failed(0, &e),
+    /// Connection test for the settings page; works before planbar is switched on. Tests the
+    /// Unternehmen `org` (also one without key – that is the answer then), or every
+    /// Unternehmen with a key at once.
+    pub async fn test(&self, state: &Value, org: Option<&str>) -> PlanbarTestReport {
+        let planbar = planbar_section(state);
+        let entries = org_entries(planbar);
+        let requested = org.map(str::trim).filter(|id| !id.is_empty());
+        let targets: Vec<&PlanbarOrg> = match requested {
+            Some(id) => entries.iter().filter(|entry| entry.id == id).collect(),
+            None => entries.iter().filter(|entry| entry.has_key()).collect(),
         };
+        if let (Some(id), true) = (requested, targets.is_empty()) {
+            let name = org_label(&entries, id);
+            let error = PlanbarError::OrgNotConfigured(name.clone());
+            return PlanbarTestReport {
+                results: vec![PlanbarOrgTestResult {
+                    org: name.clone(),
+                    name,
+                    result: PlanbarTestResult::failed(0, &error),
+                }],
+            };
+        }
+        let base = base_url(planbar);
+        let results = futures_util::future::join_all(targets.into_iter().map(|entry| {
+            let base = base.clone();
+            async move {
+                let result = match base {
+                    Err(error) => PlanbarTestResult::failed(0, &error),
+                    Ok(_) if !entry.has_key() => PlanbarTestResult::failed(
+                        0,
+                        &PlanbarError::OrgNotConfigured(entry.label().to_string()),
+                    ),
+                    Ok(base) => self.test_org(&base, &entry.api_key).await,
+                };
+                PlanbarOrgTestResult {
+                    org: entry.id.clone(),
+                    name: entry.name.clone(),
+                    result,
+                }
+            }
+        }))
+        .await;
+        PlanbarTestReport { results }
+    }
+
+    /// Tells an old planbar («Update nötig») from a wrong key and reports the key's rights.
+    /// The probes send no parameters (or an unknown task id), so they read and change nothing.
+    async fn test_org(&self, base: &Url, api_key: &str) -> PlanbarTestResult {
         let empty = json!({});
         let (members, work, write, projects, news) = tokio::join!(
-            self.probe(&config, Method::GET, "/api/v1/mitglieder", "", None),
-            self.probe(&config, Method::GET, "/api/v1/arbeitsliste", "", None),
-            self.probe(&config, Method::PATCH, PROBE_ITEM_PATH, "", Some(&empty)),
+            self.probe(base, api_key, Method::GET, "/api/v1/mitglieder", "", None),
+            self.probe(base, api_key, Method::GET, "/api/v1/arbeitsliste", "", None),
             self.probe(
-                &config,
+                base,
+                api_key,
+                Method::PATCH,
+                PROBE_ITEM_PATH,
+                "",
+                Some(&empty)
+            ),
+            self.probe(
+                base,
+                api_key,
                 Method::GET,
                 "/api/v1/projektuebersicht",
                 "pageSize=1",
                 None
             ),
-            self.probe(&config, Method::GET, "/api/v1/news", "limit=1", None),
+            self.probe(base, api_key, Method::GET, "/api/v1/news", "limit=1", None),
         );
 
         let members = match members {
@@ -717,17 +937,19 @@ impl PlanbarService {
     }
 }
 
+/// `org` = id in `planbar.unternehmen`; may be left out while only one Unternehmen has a key.
 #[tauri::command]
 pub async fn planbar_get(
     path: String,
     query: Option<HashMap<String, String>>,
+    org: Option<String>,
     store: State<'_, Arc<StateStore>>,
     planbar: State<'_, Arc<PlanbarService>>,
 ) -> Result<Value, String> {
     let query: BTreeMap<String, String> = query.unwrap_or_default().into_iter().collect();
     let snapshot = store.snapshot();
     planbar
-        .get_json(&snapshot.state, &path, &query)
+        .get_json(&snapshot.state, &path, &query, org.as_deref())
         .await
         .map_err(|e| e.to_string())
 }
@@ -736,12 +958,13 @@ pub async fn planbar_get(
 pub async fn planbar_patch(
     path: String,
     body: Value,
+    org: Option<String>,
     store: State<'_, Arc<StateStore>>,
     planbar: State<'_, Arc<PlanbarService>>,
 ) -> Result<Value, String> {
     let snapshot = store.snapshot();
     planbar
-        .patch_json(&snapshot.state, &path, &body)
+        .patch_json(&snapshot.state, &path, &body, org.as_deref())
         .await
         .map_err(|e| e.to_string())
 }
@@ -753,11 +976,30 @@ pub(crate) mod tests {
 
     /// May read and write everything.
     pub(crate) const KEY: &str = "pk_live_voll";
+    /// Full rights in a second organisation (other people).
+    pub(crate) const SECOND_KEY: &str = "pk_live_zwei";
     /// Lacks `aufgaben:write` and `news:read`.
     pub(crate) const READ_ONLY_KEY: &str = "pk_live_lesen";
 
+    /// planbar with one Unternehmen («a», named «Büro»).
     pub(crate) fn state_for(url: &str, key: &str) -> Value {
-        json!({ "planbar": { "enabled": true, "url": url, "apiKey": key } })
+        state_with_orgs(url, &[("a", "Büro", key)])
+    }
+
+    /// planbar with the given Unternehmen: (id, name, key).
+    pub(crate) fn state_with_orgs(url: &str, orgs: &[(&str, &str, &str)]) -> Value {
+        let orgs: serde_json::Map<String, Value> = orgs
+            .iter()
+            .map(|(id, name, key)| (id.to_string(), json!({ "name": name, "apiKey": key })))
+            .collect();
+        json!({ "planbar": { "enabled": true, "url": url, "unternehmen": orgs } })
+    }
+
+    /// Test of the only Unternehmen with a key.
+    async fn single_test(service: &PlanbarService, state: &Value) -> PlanbarTestResult {
+        let report = service.test(state, None).await;
+        assert_eq!(report.results.len(), 1, "{report:?}");
+        report.results.into_iter().next().unwrap().result
     }
 
     fn service() -> PlanbarService {
@@ -781,6 +1023,7 @@ pub(crate) mod tests {
 
         enum Caller {
             Full,
+            Second,
             ReadOnly,
             Unknown,
         }
@@ -792,6 +1035,7 @@ pub(crate) mod tests {
                 .and_then(|v| v.strip_prefix("Bearer "));
             match key {
                 Some(KEY) => Caller::Full,
+                Some(SECOND_KEY) => Caller::Second,
                 Some(READ_ONLY_KEY) => Caller::ReadOnly,
                 _ => Caller::Unknown,
             }
@@ -811,14 +1055,20 @@ pub(crate) mod tests {
             .route(
                 "/api/v1/mitglieder",
                 get(|headers: HeaderMap| async move {
-                    if let Caller::Unknown = caller(&headers) {
-                        return unauthorized();
+                    match caller(&headers) {
+                        Caller::Unknown => unauthorized(),
+                        Caller::Second => Json(json!({ "data": [
+                            { "id": "u1", "name": "Anna Muster", "email": "anna@example.ch", "role": "member", "teams": [] },
+                            { "id": "u3", "name": "Dora", "email": "dora@example.ch", "role": "member", "teams": [] },
+                            { "id": "u4", "name": "Emil", "email": "emil@example.ch", "role": "member", "teams": [] }
+                        ] }))
+                        .into_response(),
+                        _ => Json(json!({ "data": [
+                            { "id": "u1", "name": "Anna Muster", "email": "anna@example.ch", "role": "member", "teams": [] },
+                            { "id": "u2", "name": "", "email": "carla@example.ch", "role": "koordinator", "teams": [] }
+                        ] }))
+                        .into_response(),
                     }
-                    Json(json!({ "data": [
-                        { "id": "u1", "name": "Anna Muster", "email": "anna@example.ch", "role": "member", "teams": [] },
-                        { "id": "u2", "name": "", "email": "carla@example.ch", "role": "koordinator", "teams": [] }
-                    ] }))
-                    .into_response()
                 }),
             )
             .route(
@@ -844,9 +1094,11 @@ pub(crate) mod tests {
                     get(move |headers: HeaderMap, RawQuery(query): RawQuery| {
                         let counter = Arc::clone(&counter);
                         async move {
-                            if let Caller::Unknown = caller(&headers) {
-                                return unauthorized();
-                            }
+                            let org = match caller(&headers) {
+                                Caller::Unknown => return unauthorized(),
+                                Caller::Second => "zwei",
+                                _ => "eins",
+                            };
                             let query = query.unwrap_or_default();
                             if !query.contains("benutzer=") {
                                 return error(
@@ -855,7 +1107,7 @@ pub(crate) mod tests {
                                 );
                             }
                             counter.fetch_add(1, Ordering::SeqCst);
-                            Json(json!({ "data": [], "total": 0, "limit": 50, "today": "2026-10-13", "query": query }))
+                            Json(json!({ "data": [], "total": 0, "limit": 50, "today": "2026-10-13", "query": query, "org": org }))
                                 .into_response()
                         }
                     }),
@@ -872,7 +1124,7 @@ pub(crate) mod tests {
                                         "Fehlende Berechtigung: aufgaben:write",
                                     )
                                 }
-                                Caller::Full => {}
+                                Caller::Full | Caller::Second => {}
                             }
                             let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
                             let Some(completed) = body.get("completed").and_then(Value::as_bool)
@@ -908,8 +1160,9 @@ pub(crate) mod tests {
                             Caller::ReadOnly => {
                                 error(AxStatus::FORBIDDEN, "Fehlende Berechtigung: news:read")
                             }
-                            Caller::Full => Json(json!({ "data": [], "total": 0, "limit": 1 }))
-                                .into_response(),
+                            Caller::Full | Caller::Second => {
+                                Json(json!({ "data": [], "total": 0, "limit": 1 })).into_response()
+                            }
                         }
                     }),
                 )
@@ -933,32 +1186,42 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn config_requires_key_and_respects_enabled() {
+    fn config_requires_a_key_and_respects_enabled() {
         assert_eq!(
             PlanbarConfig::from_state(&json!({}), false).unwrap_err(),
             PlanbarError::NotConfigured
         );
-        let disabled = json!({ "planbar": { "enabled": false, "apiKey": "k" } });
+        let org = json!({ "a": { "name": "A", "apiKey": "k" } });
+        let disabled = json!({ "planbar": { "enabled": false, "unternehmen": org } });
         assert_eq!(
             PlanbarConfig::from_state(&disabled, true).unwrap_err(),
             PlanbarError::NotConfigured
         );
         assert!(PlanbarConfig::from_state(&disabled, false).is_ok());
-        let blank_key = json!({ "planbar": { "enabled": true, "apiKey": "  " } });
+        let blank_key =
+            json!({ "planbar": { "enabled": true, "unternehmen": { "a": { "apiKey": "  " } } } });
         assert_eq!(
             PlanbarConfig::from_state(&blank_key, true).unwrap_err(),
             PlanbarError::NotConfigured
         );
-        // The lagra token is no planbar key.
-        let other =
-            json!({ "lagra": { "enabled": true, "token": "t" }, "planbar": { "enabled": true } });
-        assert_eq!(
-            PlanbarConfig::from_state(&other, true).unwrap_err(),
-            PlanbarError::NotConfigured
-        );
+        // The old single key is no Unternehmen (state.rs moves it on load), nor is the lagra token.
+        for other in [
+            json!({ "planbar": { "enabled": true, "apiKey": "k" } }),
+            json!({ "lagra": { "enabled": true, "token": "t" }, "planbar": { "enabled": true } }),
+            json!({ "planbar": { "enabled": true, "unternehmen": [{ "apiKey": "k" }] } }),
+            json!({ "planbar": { "enabled": true, "unternehmen": { "a": "k" } } }),
+            json!({ "planbar": { "enabled": true, "unternehmen": { "nicht gültig": { "apiKey": "k" } } } }),
+            json!({ "planbar": { "enabled": true, "unternehmen": { "a".repeat(41): { "apiKey": "k" } } } }),
+        ] {
+            assert_eq!(
+                PlanbarConfig::from_state(&other, true).unwrap_err(),
+                PlanbarError::NotConfigured,
+                "{other}"
+            );
+        }
         // Same defaults as the frontend: without `enabled` planbar is off, without `url` the
         // public host is used.
-        let defaults = json!({ "planbar": { "apiKey": "k" } });
+        let defaults = json!({ "planbar": { "unternehmen": org } });
         assert_eq!(
             PlanbarConfig::from_state(&defaults, true).unwrap_err(),
             PlanbarError::NotConfigured
@@ -970,7 +1233,7 @@ pub(crate) mod tests {
             "https://planbar.dev/api/v1/"
         );
         for bad in ["ftp://planbar.dev", "planbar.dev", "https://"] {
-            let state = json!({ "planbar": { "enabled": true, "apiKey": "k", "url": bad } });
+            let state = json!({ "planbar": { "enabled": true, "unternehmen": org, "url": bad } });
             assert_eq!(
                 PlanbarConfig::from_state(&state, true).unwrap_err(),
                 PlanbarError::InvalidBaseUrl,
@@ -982,14 +1245,64 @@ pub(crate) mod tests {
             cfg.api_url("/api/v1/arbeitsliste").unwrap().as_str(),
             "https://planbar.example.ch/api/v1/arbeitsliste"
         );
-        assert_ne!(
-            cfg.fingerprint(),
+        let org = cfg.select(None).unwrap();
+        let other =
             PlanbarConfig::from_state(&state_for("https://planbar.example.ch", "anders"), true)
-                .unwrap()
-                .fingerprint()
+                .unwrap();
+        assert_ne!(
+            cfg.fingerprint(org),
+            other.fingerprint(other.select(None).unwrap())
         );
-        assert!(!cfg.fingerprint().contains(KEY));
+        assert!(!cfg.fingerprint(org).contains(KEY));
         assert!(!format!("{cfg:?}").contains(KEY));
+        assert!(!format!("{org:?}").contains(KEY));
+    }
+
+    #[test]
+    fn requests_pick_their_unternehmen() {
+        let state = state_with_orgs(
+            "https://planbar.dev",
+            &[
+                ("wireon", "wireon", KEY),
+                ("sw", "Schnyder Werbung", SECOND_KEY),
+                ("neu", "Neu", ""),
+            ],
+        );
+        let cfg = PlanbarConfig::from_state(&state, true).unwrap();
+        assert_eq!(cfg.select(Some("wireon")).unwrap().api_key, KEY);
+        assert_eq!(cfg.select(Some(" sw ")).unwrap().api_key, SECOND_KEY);
+        assert_eq!(cfg.select(Some("sw")).unwrap().label(), "Schnyder Werbung");
+        // Several keys and none named: the caller has to choose.
+        assert_eq!(cfg.select(None).unwrap_err(), PlanbarError::OrgRequired);
+        assert_eq!(cfg.select(Some("")).unwrap_err(), PlanbarError::OrgRequired);
+        assert_eq!(
+            cfg.select(None).unwrap_err().to_string(),
+            "planbar: bitte ein Unternehmen wählen"
+        );
+        // Without key the name is known, an unknown id is echoed only as id characters.
+        assert_eq!(
+            cfg.select(Some("neu")).unwrap_err().to_string(),
+            "planbar: Unternehmen «Neu» ist nicht eingerichtet"
+        );
+        assert_eq!(
+            cfg.select(Some("<script>x")).unwrap_err(),
+            PlanbarError::OrgNotConfigured("scriptx".into())
+        );
+        assert_eq!(
+            cfg.select(Some("äö")).unwrap_err(),
+            PlanbarError::OrgNotConfigured("?".into())
+        );
+        // One key: it is used without naming it, and an Unternehmen without name shows its id.
+        let single = state_with_orgs("https://planbar.dev", &[("x1", " ", KEY), ("leer", "", "")]);
+        let cfg = PlanbarConfig::from_state(&single, true).unwrap();
+        assert_eq!(cfg.select(None).unwrap().id, "x1");
+        assert_eq!(cfg.select(None).unwrap().label(), "x1");
+        let long = "n".repeat(80);
+        let named = state_with_orgs("https://planbar.dev", &[("x", &long, KEY)]);
+        let cfg = PlanbarConfig::from_state(&named, true).unwrap();
+        assert_eq!(cfg.select(None).unwrap().name.len(), MAX_ORG_NAME_LEN);
+        assert!(is_valid_org_id("mgk3x1a2-9f3c2b7d1e0a4c55"));
+        assert!(!is_valid_org_id("a.b"));
     }
 
     #[test]
@@ -1276,13 +1589,13 @@ pub(crate) mod tests {
 
         let service = service();
         let page = serve_everything_with(AxStatus::OK).await;
-        let result = service.test(&state_for(&page, KEY)).await;
+        let result = single_test(&service, &state_for(&page, KEY)).await;
         assert!(!result.ok);
         assert_eq!(result.status, 200);
         assert_eq!(result.message, "planbar: ungültige Antwort (kein JSON)");
 
         let missing = serve_everything_with(AxStatus::NOT_FOUND).await;
-        let result = service.test(&state_for(&missing, KEY)).await;
+        let result = single_test(&service, &state_for(&missing, KEY)).await;
         assert!(!result.ok);
         assert_eq!(result.status, 404);
         assert_eq!(
@@ -1292,7 +1605,7 @@ pub(crate) mod tests {
 
         // A login redirect (SSO in front of planbar) is never followed with the key.
         let login = serve_everything_with(AxStatus::FOUND).await;
-        let result = service.test(&state_for(&login, KEY)).await;
+        let result = single_test(&service, &state_for(&login, KEY)).await;
         assert!(!result.ok);
         assert_eq!(
             result.message,
@@ -1303,14 +1616,12 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn unconfigured_planbar_needs_no_network() {
         let service = service();
-        let result = service.test(&json!({})).await;
-        assert_eq!(
-            result,
-            PlanbarTestResult::failed(0, &PlanbarError::NotConfigured)
-        );
+        // Nothing to test without an Unternehmen with a key.
+        let result = service.test(&json!({}), None).await;
+        assert!(result.results.is_empty());
         assert_eq!(
             service
-                .get_json(&json!({}), "/api/v1/mitglieder", &BTreeMap::new())
+                .get_json(&json!({}), "/api/v1/mitglieder", &BTreeMap::new(), None)
                 .await
                 .unwrap_err(),
             PlanbarError::NotConfigured
@@ -1320,7 +1631,8 @@ pub(crate) mod tests {
                 .patch_json(
                     &json!({}),
                     "/api/v1/arbeitsliste/a1",
-                    &json!({ "completed": true })
+                    &json!({ "completed": true }),
+                    None
                 )
                 .await
                 .unwrap_err(),
@@ -1329,19 +1641,24 @@ pub(crate) mod tests {
         let state = state_for("http://127.0.0.1:9", KEY);
         assert_eq!(
             service
-                .patch_json(&state, "/api/v1/tickets", &json!({ "completed": true }))
+                .patch_json(
+                    &state,
+                    "/api/v1/tickets",
+                    &json!({ "completed": true }),
+                    None
+                )
                 .await
                 .unwrap_err(),
             PlanbarError::WriteNotAllowed
         );
         assert_eq!(
             service
-                .proxy_patch(&state, "arbeitsliste/a1", b"kein json")
+                .proxy_patch(&state, "arbeitsliste/a1", b"kein json", None)
                 .await
                 .unwrap_err(),
             PlanbarError::InvalidBody
         );
-        let unreachable = service.test(&state).await;
+        let unreachable = single_test(&service, &state).await;
         assert!(!unreachable.ok);
         assert_eq!(unreachable.status, 0);
         assert!(unreachable
@@ -1360,12 +1677,12 @@ pub(crate) mod tests {
         ]);
 
         let first = service
-            .get_json(&state, "/api/v1/arbeitsliste", &query)
+            .get_json(&state, "/api/v1/arbeitsliste", &query, None)
             .await
             .unwrap();
         assert_eq!(first["query"], json!("benutzer=u1%2Cu2&limit=5"));
         let second = service
-            .get_json(&state, "/api/v1/arbeitsliste", &query)
+            .get_json(&state, "/api/v1/arbeitsliste", &query, None)
             .await
             .unwrap();
         assert_eq!(first, second);
@@ -1377,12 +1694,13 @@ pub(crate) mod tests {
                 &state,
                 "/api/v1/arbeitsliste/a1",
                 &json!({ "completed": true }),
+                None,
             )
             .await
             .unwrap();
         assert_eq!(changed["data"], json!({ "id": "a1", "done": true }));
         service
-            .get_json(&state, "/api/v1/arbeitsliste", &query)
+            .get_json(&state, "/api/v1/arbeitsliste", &query, None)
             .await
             .unwrap();
         assert_eq!(hits.load(Ordering::SeqCst), 2);
@@ -1392,7 +1710,8 @@ pub(crate) mod tests {
                 .patch_json(
                     &state,
                     "/api/v1/arbeitsliste/fehlt",
-                    &json!({ "completed": false })
+                    &json!({ "completed": false }),
+                    None
                 )
                 .await
                 .unwrap_err(),
@@ -1404,7 +1723,8 @@ pub(crate) mod tests {
                 .patch_json(
                     &read_only,
                     "/api/v1/arbeitsliste/a1",
-                    &json!({ "completed": true })
+                    &json!({ "completed": true }),
+                    None
                 )
                 .await
                 .unwrap_err()
@@ -1414,14 +1734,14 @@ pub(crate) mod tests {
         let revoked = state_for(&url, "pk_live_alt");
         assert_eq!(
             service
-                .get_json(&revoked, "/api/v1/mitglieder", &BTreeMap::new())
+                .get_json(&revoked, "/api/v1/mitglieder", &BTreeMap::new(), None)
                 .await
                 .unwrap_err(),
             PlanbarError::Unauthorized(Some("API-Schlüssel wurde widerrufen".into()))
         );
         assert_eq!(
             service
-                .get_json(&state, "/api/v1/gibts-nicht", &BTreeMap::new())
+                .get_json(&state, "/api/v1/gibts-nicht", &BTreeMap::new(), None)
                 .await
                 .unwrap_err(),
             PlanbarError::EndpointMissing
@@ -1434,21 +1754,29 @@ pub(crate) mod tests {
         let service = service();
         let state = state_for(&url, KEY);
 
-        let members = service.proxy_get(&state, "mitglieder", None).await.unwrap();
+        let members = service
+            .proxy_get(&state, "mitglieder", None, None)
+            .await
+            .unwrap();
         assert_eq!(members.status, 200);
         assert!(members.content_type.starts_with("application/json"));
         let body: Value = serde_json::from_slice(&members.body).unwrap();
         assert_eq!(body["data"].as_array().map(Vec::len), Some(2));
 
         let work = service
-            .proxy_get(&state, "/arbeitsliste", Some("benutzer=u1&typ=aufgabe"))
+            .proxy_get(
+                &state,
+                "/arbeitsliste",
+                Some("benutzer=u1&typ=aufgabe"),
+                None,
+            )
             .await
             .unwrap();
         let body: Value = serde_json::from_slice(&work.body).unwrap();
         assert_eq!(body["query"], json!("benutzer=u1&typ=aufgabe"));
 
         let denied = service
-            .proxy_get(&state_for(&url, "falsch"), "mitglieder", None)
+            .proxy_get(&state_for(&url, "falsch"), "mitglieder", None, None)
             .await
             .unwrap();
         assert_eq!(denied.status, 401);
@@ -1461,19 +1789,25 @@ pub(crate) mod tests {
             "arbeitsliste/a1",
         ] {
             assert_eq!(
-                service.proxy_get(&state, denied, None).await.unwrap_err(),
+                service
+                    .proxy_get(&state, denied, None, None)
+                    .await
+                    .unwrap_err(),
                 PlanbarError::ReadNotAllowed(denied.into()),
                 "{denied}"
             );
         }
-        assert!(service.proxy_get(&state, "../geheim", None).await.is_err());
         assert!(service
-            .proxy_get(&state, "news", Some("a=b#c"))
+            .proxy_get(&state, "../geheim", None, None)
+            .await
+            .is_err());
+        assert!(service
+            .proxy_get(&state, "news", Some("a=b#c"), None)
             .await
             .is_err());
 
         let ticked = service
-            .proxy_patch(&state, "arbeitsliste/a1", br#"{"completed":false}"#)
+            .proxy_patch(&state, "arbeitsliste/a1", br#"{"completed":false}"#, None)
             .await
             .unwrap();
         assert_eq!(ticked.status, 200);
@@ -1482,13 +1816,14 @@ pub(crate) mod tests {
                 &state_for(&url, READ_ONLY_KEY),
                 "arbeitsliste/a1",
                 br#"{"completed":true}"#,
+                None,
             )
             .await
             .unwrap();
         assert_eq!(forbidden.status, 403);
         assert_eq!(
             service
-                .proxy_patch(&state, "mitglieder", br#"{"completed":true}"#)
+                .proxy_patch(&state, "mitglieder", br#"{"completed":true}"#, None)
                 .await
                 .unwrap_err(),
             PlanbarError::WriteNotAllowed
@@ -1498,7 +1833,8 @@ pub(crate) mod tests {
                 .proxy_patch(
                     &state,
                     "arbeitsliste/a1",
-                    br#"{"completed":true,"title":"x"}"#
+                    br#"{"completed":true,"title":"x"}"#,
+                    None
                 )
                 .await
                 .unwrap_err(),
@@ -1511,7 +1847,7 @@ pub(crate) mod tests {
         let (url, _) = fake_planbar(true).await;
         let service = service();
 
-        let full = service.test(&state_for(&url, KEY)).await;
+        let full = single_test(&service, &state_for(&url, KEY)).await;
         assert_eq!(
             full,
             PlanbarTestResult {
@@ -1533,7 +1869,7 @@ pub(crate) mod tests {
             json!(true)
         );
 
-        let limited = service.test(&state_for(&url, READ_ONLY_KEY)).await;
+        let limited = single_test(&service, &state_for(&url, READ_ONLY_KEY)).await;
         assert!(limited.ok && limited.dashboard);
         assert_eq!(
             limited.message,
@@ -1549,7 +1885,7 @@ pub(crate) mod tests {
             })
         );
 
-        let revoked = service.test(&state_for(&url, "pk_live_alt")).await;
+        let revoked = single_test(&service, &state_for(&url, "pk_live_alt")).await;
         assert!(!revoked.ok);
         assert_eq!(revoked.status, 401);
         assert_eq!(
@@ -1560,10 +1896,10 @@ pub(crate) mod tests {
         // Switched off still tests (the settings page tests before switching on).
         let mut disabled = state_for(&url, KEY);
         disabled["planbar"]["enabled"] = json!(false);
-        assert!(service.test(&disabled).await.ok);
+        assert!(single_test(&service, &disabled).await.ok);
 
         let (old_url, _) = fake_planbar(false).await;
-        let old = service.test(&state_for(&old_url, KEY)).await;
+        let old = single_test(&service, &state_for(&old_url, KEY)).await;
         assert!(old.ok);
         assert!(!old.dashboard);
         assert_eq!(old.members, Some(2));
@@ -1580,13 +1916,13 @@ pub(crate) mod tests {
         let old = state_for(&old_url, KEY);
         assert_eq!(
             service
-                .get_json(&old, summary, &BTreeMap::new())
+                .get_json(&old, summary, &BTreeMap::new(), None)
                 .await
                 .unwrap_err(),
             PlanbarError::EndpointMissing
         );
         let proxied = service
-            .proxy_get(&old, "zeiten/zusammenfassung", None)
+            .proxy_get(&old, "zeiten/zusammenfassung", None, None)
             .await
             .unwrap();
         assert_eq!((proxied.status, proxied.body.len()), (404, 0));
@@ -1594,7 +1930,7 @@ pub(crate) mod tests {
         // Other routes keep planbar's «not found».
         assert_eq!(
             service
-                .get_json(&old, "/api/v1/zeiten/z1", &BTreeMap::new())
+                .get_json(&old, "/api/v1/zeiten/z1", &BTreeMap::new(), None)
                 .await
                 .unwrap_err(),
             PlanbarError::NotFound(Some("Zeiteintrag nicht gefunden".into()))
@@ -1602,9 +1938,166 @@ pub(crate) mod tests {
 
         let (url, _) = fake_planbar(true).await;
         let current = service
-            .get_json(&state_for(&url, KEY), summary, &BTreeMap::new())
+            .get_json(&state_for(&url, KEY), summary, &BTreeMap::new(), None)
             .await
             .unwrap();
         assert_eq!(current["weekStart"], json!("2026-10-12"));
+    }
+
+    #[tokio::test]
+    async fn every_unternehmen_reads_with_its_own_key_and_cache() {
+        let (url, hits) = fake_planbar(true).await;
+        let service = service();
+        let state = state_with_orgs(&url, &[("eins", "wireon", KEY), ("zwei", "SW", SECOND_KEY)]);
+        let query = BTreeMap::from([("benutzer".to_string(), "u1".to_string())]);
+        let work = "/api/v1/arbeitsliste";
+
+        assert_eq!(
+            service
+                .get_json(&state, work, &query, None)
+                .await
+                .unwrap_err(),
+            PlanbarError::OrgRequired
+        );
+        assert_eq!(
+            service
+                .get_json(&state, work, &query, Some("drei"))
+                .await
+                .unwrap_err()
+                .to_string(),
+            "planbar: Unternehmen «drei» ist nicht eingerichtet"
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        let first = service
+            .get_json(&state, work, &query, Some("eins"))
+            .await
+            .unwrap();
+        let second = service
+            .get_json(&state, work, &query, Some("zwei"))
+            .await
+            .unwrap();
+        assert_eq!(first["org"], json!("eins"));
+        assert_eq!(second["org"], json!("zwei"));
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+        // Cached per Unternehmen.
+        for (org, tag) in [("eins", "eins"), ("zwei", "zwei")] {
+            let again = service
+                .get_json(&state, work, &query, Some(org))
+                .await
+                .unwrap();
+            assert_eq!(again["org"], json!(tag));
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+
+        // Ticking off in one Unternehmen drops only its cache.
+        service
+            .patch_json(
+                &state,
+                "/api/v1/arbeitsliste/a1",
+                &json!({ "completed": true }),
+                Some("zwei"),
+            )
+            .await
+            .unwrap();
+        service
+            .get_json(&state, work, &query, Some("eins"))
+            .await
+            .unwrap();
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+        service
+            .get_json(&state, work, &query, Some("zwei"))
+            .await
+            .unwrap();
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+
+        let members = service
+            .proxy_get(&state, "mitglieder", None, Some("zwei"))
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&members.body).unwrap();
+        assert_eq!(body["data"][1]["id"], json!("u3"));
+        assert_eq!(
+            service
+                .proxy_get(&state, "mitglieder", None, None)
+                .await
+                .unwrap_err(),
+            PlanbarError::OrgRequired
+        );
+        assert_eq!(
+            service
+                .proxy_patch(&state, "arbeitsliste/a1", br#"{"completed":true}"#, None)
+                .await
+                .unwrap_err(),
+            PlanbarError::OrgRequired
+        );
+    }
+
+    #[tokio::test]
+    async fn test_covers_each_unternehmen() {
+        let (url, _) = fake_planbar(true).await;
+        let service = service();
+        let state = state_with_orgs(
+            &url,
+            &[
+                ("eins", "wireon", KEY),
+                ("zwei", "SW", READ_ONLY_KEY),
+                ("alt", "Alt", "pk_live_alt"),
+                ("leer", "Leer", ""),
+            ],
+        );
+
+        let all = service.test(&state, None).await;
+        let by_org: HashMap<&str, &PlanbarOrgTestResult> =
+            all.results.iter().map(|r| (r.org.as_str(), r)).collect();
+        // Only Unternehmen with a key are tested.
+        assert_eq!(all.results.len(), 3);
+        assert!(!by_org.contains_key("leer"));
+        assert_eq!(by_org["eins"].name, "wireon");
+        assert!(by_org["eins"].result.ok);
+        assert_eq!(by_org["eins"].result.members, Some(2));
+        assert_eq!(
+            by_org["zwei"].result.message,
+            "Verbunden, aber dem API-Schlüssel fehlen Rechte: News lesen"
+        );
+        assert!(!by_org["alt"].result.ok);
+        assert_eq!(by_org["alt"].result.status, 401);
+
+        let json = serde_json::to_value(&all).unwrap();
+        let first = &json["results"][0];
+        for field in [
+            "org",
+            "name",
+            "ok",
+            "status",
+            "message",
+            "dashboard",
+            "members",
+            "scopes",
+        ] {
+            assert!(first.get(field).is_some(), "{field}: {first}");
+        }
+
+        let one = service.test(&state, Some("zwei")).await;
+        assert_eq!(one.results.len(), 1);
+        assert_eq!(one.results[0].org, "zwei");
+        let empty = service.test(&state, Some("leer")).await;
+        assert_eq!(
+            empty.results[0].result,
+            PlanbarTestResult::failed(0, &PlanbarError::OrgNotConfigured("Leer".into()))
+        );
+        let unknown = service.test(&state, Some("gibts/nicht")).await;
+        assert_eq!(unknown.results[0].org, "gibtsnicht");
+        assert!(!unknown.results[0].result.ok);
+
+        let mut bad_url = state.clone();
+        bad_url["planbar"]["url"] = json!("ftp://x");
+        let failed = service.test(&bad_url, Some("eins")).await;
+        assert_eq!(
+            failed.results[0].result.message,
+            "Die planbar-Adresse ist ungültig"
+        );
+
+        assert_eq!(service.test(&json!({}), None).await.results, vec![]);
     }
 }

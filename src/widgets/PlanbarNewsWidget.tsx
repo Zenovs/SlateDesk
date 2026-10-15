@@ -1,13 +1,15 @@
 /**
  * planbar News – Beiträge der planbar-Infowand (GET /api/v1/news), als Liste
  * oder einzeln im Wechsel. Standardmässig nur Beiträge, die alle sehen
- * dürfen: Den Bildschirm kann lesen, wer davor steht.
+ * dürfen: Den Bildschirm kann lesen, wer davor steht. Mehrere Unternehmen:
+ * die neusten Beiträge aller zusammen, jeder mit seinem Unternehmen.
  */
 import { type CSSProperties, useEffect, useMemo, useState } from 'react';
 import { Lock, Megaphone, MessageSquare, TriangleAlert } from 'lucide-react';
+import { normalizeSelection } from '../components/settings/multiselect';
 import { useWidgetSettings } from '../hooks/useWidgetSettings';
-import { fetchNews } from '../planbar/client';
-import type { PlanbarNewsList, PlanbarNewsPost } from '../planbar/types';
+import { fetchNewsAll, type PlanbarFanOut, type PlanbarOrgNews } from '../planbar/orgs';
+import type { PlanbarNewsPost, WithOrg } from '../planbar/types';
 import type { WidgetProps } from '../types/widget';
 import {
   PLANBAR_NEWS_DEFAULTS,
@@ -16,9 +18,17 @@ import {
   type PlanbarNewsSettings,
 } from './manifests/planbar-news';
 import { isNewPost, postBody } from './planbar/news';
-import { PlanbarErrorMessage, PlanbarHead, PlanbarSetupMessage, PlanbarStaleBanner } from './planbar/PlanbarParts';
+import {
+  PlanbarErrorMessage,
+  PlanbarHead,
+  PlanbarNoOrgsMessage,
+  PlanbarOrgBadge,
+  PlanbarOrgIssues,
+  PlanbarSetupMessage,
+  PlanbarStaleBanner,
+} from './planbar/PlanbarParts';
 import { safeColor } from './planbar/projects';
-import { usePlanbarPolling } from './planbar/usePlanbarPolling';
+import { usePlanbarOrgs, usePlanbarPolling } from './planbar/usePlanbarPolling';
 import { formatAgo, formatCount, parseTime } from './shared/format';
 import { useNow } from './shared/hooks';
 import { WidgetMessage } from './shared/WidgetParts';
@@ -31,6 +41,7 @@ const MAX_MENTIONS = 6;
 function readSettings(raw: PlanbarNewsSettings): PlanbarNewsSettings {
   const defaults = PLANBAR_NEWS_DEFAULTS;
   return {
+    unternehmen: normalizeSelection(raw.unternehmen),
     anzahl: readNumber(raw.anzahl, defaults.anzahl, 1, 20),
     mode: readChoice(raw.mode, PLANBAR_NEWS_MODES, defaults.mode),
     rotateSeconds: readNumber(raw.rotateSeconds, defaults.rotateSeconds, 5, 120),
@@ -42,18 +53,23 @@ function readSettings(raw: PlanbarNewsSettings): PlanbarNewsSettings {
   };
 }
 
+type Post = WithOrg<PlanbarNewsPost>;
+
 interface PostOptions {
   now: number;
+  /** Several Unternehmen on screen: each post names its own. */
+  showOrg: boolean;
   showTeaser: boolean;
   showAuthor: boolean;
   showComments: boolean;
 }
 
-function PostMeta({ post, options }: { post: PlanbarNewsPost; options: PostOptions }) {
+function PostMeta({ post, options }: { post: Post; options: PostOptions }) {
   const created = parseTime(post.createdAt);
   const author = options.showAuthor ? post.author?.name.trim() : null;
   return (
     <div className="pn-meta">
+      {options.showOrg && <PlanbarOrgBadge org={post.org} />}
       {author && <span className="pn-author">{author}</span>}
       {created !== null && <span className="pn-time">{formatAgo(created, options.now)}</span>}
       {options.showComments && post.commentCount > 0 && (
@@ -76,11 +92,13 @@ function NewMark({ post, now }: { post: PlanbarNewsPost; now: number }) {
   return isNewPost(post, now) ? <span className="pn-new">Neu</span> : null;
 }
 
-function PostList({ posts, options }: { posts: readonly PlanbarNewsPost[]; options: PostOptions }) {
+const postKey = (post: Post): string => `${post.org.id}:${post.id}`;
+
+function PostList({ posts, options }: { posts: readonly Post[]; options: PostOptions }) {
   return (
     <div className="pn-list">
       {posts.map((post) => (
-        <article key={post.id} className="pn-item">
+        <article key={postKey(post)} className="pn-item">
           <h3 className="pn-title">
             <NewMark post={post} now={options.now} />
             {post.title}
@@ -117,7 +135,7 @@ function Mentions({ post }: { post: PlanbarNewsPost }) {
   );
 }
 
-function PostRotation({ posts, options, rotateMs }: { posts: readonly PlanbarNewsPost[]; options: PostOptions; rotateMs: number }) {
+function PostRotation({ posts, options, rotateMs }: { posts: readonly Post[]; options: PostOptions; rotateMs: number }) {
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -135,7 +153,7 @@ function PostRotation({ posts, options, rotateMs }: { posts: readonly PlanbarNew
   return (
     <div className="pn-rotation">
       {/* Keyed by post: every change mounts anew and fades in. */}
-      <article key={post.id} className="pn-hero">
+      <article key={postKey(post)} className="pn-hero">
         <PostMeta post={post} options={options} />
         <h3 className="pn-hero-title">
           <NewMark post={post} now={options.now} />
@@ -158,7 +176,7 @@ function PostRotation({ posts, options, rotateMs }: { posts: readonly PlanbarNew
         (posts.length <= MAX_DOTS ? (
           <div className="pn-dots" aria-hidden="true">
             {posts.map((entry, i) => (
-              <span key={entry.id} className={`pn-dot${i === index ? ' pn-dot-active' : ''}`} />
+              <span key={postKey(entry)} className={`pn-dot${i === index ? ' pn-dot-active' : ''}`} />
             ))}
           </div>
         ) : (
@@ -175,24 +193,29 @@ export function PlanbarNewsWidget({ instanceId }: WidgetProps) {
   const settings = useMemo(() => readSettings(raw), [raw]);
   const now = useNow(60_000);
 
-  const poll = usePlanbarPolling<PlanbarNewsList>(
-    (signal) => fetchNews({ limit: settings.anzahl, sichtbarkeit: settings.sichtbarkeit }, { signal }),
+  const orgs = usePlanbarOrgs(settings.unternehmen);
+
+  const poll = usePlanbarPolling<PlanbarFanOut<PlanbarOrgNews>>(
+    (signal) => fetchNewsAll(orgs, { limit: settings.anzahl, sichtbarkeit: settings.sichtbarkeit }, { signal }),
     settings.refreshMinutes * 60_000,
-    [settings.anzahl, settings.sichtbarkeit],
+    [orgs, settings.anzahl, settings.sichtbarkeit],
+    orgs.length > 0,
   );
 
   if (poll.setup !== 'ready') return <PlanbarSetupMessage setup={poll.setup} />;
+  if (orgs.length === 0) return <PlanbarNoOrgsMessage />;
   if (poll.data === null) {
     if (poll.failure) return <PlanbarErrorMessage failure={poll.failure} right="News – Lesen" />;
     if (poll.error !== null) return <WidgetMessage icon={TriangleAlert} tone="error" title="planbar-Fehler" detail={poll.error} />;
     return <WidgetMessage busy title="News werden geladen …" />;
   }
 
-  const posts = poll.data.data;
+  const posts = poll.data.data.data;
   const stale = poll.failure !== null;
   const fresh = posts.filter((post) => isNewPost(post, now)).length;
   const options: PostOptions = {
     now,
+    showOrg: poll.data.orgs.length > 1,
     showTeaser: settings.showTeaser,
     showAuthor: settings.showAuthor,
     showComments: settings.showComments,
@@ -205,6 +228,7 @@ export function PlanbarNewsWidget({ instanceId }: WidgetProps) {
         {fresh > 0 && ` · ${formatCount(fresh)} neu`}
       </PlanbarHead>
       {poll.failure && <PlanbarStaleBanner failure={poll.failure} lastUpdated={poll.lastUpdated} />}
+      {!poll.failure && <PlanbarOrgIssues failures={poll.data.failures} />}
       <div className={`pn-body${stale ? ' pn-body-stale' : ''}`}>
         {posts.length === 0 ? (
           <WidgetMessage

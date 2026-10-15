@@ -173,6 +173,21 @@ describe('buildInitialOps', () => {
     });
   });
 
+  it('moves the single planbar key of older versions into an Unternehmen (browser state)', () => {
+    const complete = JSON.parse(JSON.stringify(DEFAULT_STATE)) as RawState;
+    const legacy: RawState = { ...complete, planbar: { enabled: true, url: 'https://planbar.dev', apiKey: 'pk_live_alt' } };
+    const next = applyOps(legacy, buildInitialOps(legacy, null));
+    expect(next.planbar).toEqual({
+      enabled: true,
+      url: 'https://planbar.dev',
+      unternehmen: { standard: { name: 'planbar', apiKey: 'pk_live_alt' } },
+    });
+    // Nothing left to do afterwards; an empty old key just goes away.
+    expect(buildInitialOps(next, null)).toEqual([]);
+    const empty: RawState = { ...complete, planbar: { apiKey: '', unternehmen: { a: { name: 'A', apiKey: 'k' } } } };
+    expect(applyOps(empty, buildInitialOps(empty, null)).planbar).toEqual({ unternehmen: { a: { name: 'A', apiKey: 'k' } } });
+  });
+
   it('returns no ops for a complete state', () => {
     const complete = JSON.parse(JSON.stringify(DEFAULT_STATE)) as RawState;
     expect(buildInitialOps(complete, legacyStorage())).toEqual([]);

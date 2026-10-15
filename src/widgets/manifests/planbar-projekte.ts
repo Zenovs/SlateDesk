@@ -1,4 +1,4 @@
-import { PLANBAR_MEMBERS_PROVIDER, PLANBAR_PROJECTS_PROVIDER } from '../../planbar/options';
+import { DEPENDS_ON_ORGS, PLANBAR_MEMBERS_PROVIDER, PLANBAR_PROJECTS_PROVIDER, planbarOrgField } from '../../planbar/options';
 import type { SettingsField } from '../../types/settings';
 import type { WidgetManifest } from '../../types/widget';
 
@@ -14,6 +14,8 @@ export const PLANBAR_PROJEKTE_SORTIERUNG = ['deadline', 'fortschritt', 'name'] a
 export type PlanbarProjekteSortierung = (typeof PLANBAR_PROJEKTE_SORTIERUNG)[number];
 
 export type PlanbarProjekteSettings = {
+  /** Ids in `planbar.unternehmen`; empty = every Unternehmen with an API key. */
+  unternehmen: string[];
   auswahl: PlanbarProjekteAuswahl;
   /** Project (ticket) ids in display order – used with auswahl 'ausgewaehlt'. */
   projekte: string[];
@@ -32,6 +34,7 @@ export type PlanbarProjekteSettings = {
 };
 
 export const PLANBAR_PROJEKTE_DEFAULTS: PlanbarProjekteSettings = {
+  unternehmen: [],
   auswahl: 'filter',
   projekte: [],
   status: 'aktiv',
@@ -49,6 +52,7 @@ const byFilter = (values: Record<string, unknown>): boolean => values.auswahl !=
 
 const settingsSchema: SettingsField[] = [
   { type: 'section', label: 'Projekte' },
+  planbarOrgField(),
   {
     type: 'radio',
     key: 'auswahl',
@@ -64,6 +68,7 @@ const settingsSchema: SettingsField[] = [
     label: 'Projekte',
     description: 'In der gewählten Reihenfolge – auch wenn sie inzwischen erledigt sind.',
     optionsProvider: PLANBAR_PROJECTS_PROVIDER,
+    optionsDependsOn: DEPENDS_ON_ORGS,
     ordered: true,
     placeholder: 'Projekt suchen',
     showIf: (values) => values.auswahl === 'ausgewaehlt',
@@ -86,6 +91,7 @@ const settingsSchema: SettingsField[] = [
     label: 'Beteiligte Personen (optional)',
     description: 'Projekte, die sie leiten, verantworten, mitbearbeiten oder in denen sie Aufgaben haben. Leer = alle.',
     optionsProvider: PLANBAR_MEMBERS_PROVIDER,
+    optionsDependsOn: DEPENDS_ON_ORGS,
     placeholder: 'Person suchen',
     showIf: byFilter,
   },
@@ -95,6 +101,7 @@ const settingsSchema: SettingsField[] = [
     label: 'Projektleitung',
     options: [{ value: '', label: 'Alle' }],
     optionsProvider: PLANBAR_MEMBERS_PROVIDER,
+    optionsDependsOn: DEPENDS_ON_ORGS,
     showIf: byFilter,
   },
   {

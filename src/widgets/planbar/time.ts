@@ -26,7 +26,7 @@ export const timerTodayMinutes = (timer: PlanbarTimer, now: number): number =>
   Math.min(timerElapsedMs(timer, now) / MINUTE_MS, zurichMinuteOfDay(now));
 
 /** Selected people in their order; without selection (everyone) alphabetically. */
-export function orderEntries(entries: readonly PlanbarTimeEntry[], benutzer: readonly string[]): PlanbarTimeEntry[] {
+export function orderEntries<T extends PlanbarTimeEntry>(entries: readonly T[], benutzer: readonly string[]): T[] {
   if (benutzer.length === 0) {
     return [...entries].sort((a, b) => a.user.name.localeCompare(b.user.name, 'de-CH', { sensitivity: 'base' }));
   }

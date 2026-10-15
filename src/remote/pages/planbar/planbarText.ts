@@ -1,5 +1,5 @@
 /** Labels and day texts for planbar data in the web UI. */
-import type { PlanbarScopes, PlanbarWorkItem } from '../../../planbar/types';
+import type { PlanbarScopes, PlanbarTestResult, PlanbarWorkItem } from '../../../planbar/types';
 import { formatDay } from '../../format';
 import type { StatusTone } from '../../ui';
 
@@ -79,3 +79,13 @@ export function scopeState(row: ScopeRow, granted: boolean): { tone: StatusTone;
   if (granted) return { tone: 'ok', text: 'erteilt' };
   return row.optional ? { tone: 'idle', text: 'nicht erteilt (optional)' } : { tone: 'error', text: 'fehlt' };
 }
+
+/** Connection test of one Unternehmen as a card shows it. */
+export interface TestState {
+  busy: boolean;
+  result: PlanbarTestResult | null;
+  error: string | null;
+  at: number | null;
+}
+
+export const NO_TEST: TestState = { busy: false, result: null, error: null, at: null };

@@ -2,21 +2,30 @@
  * planbar Zeit – heute und diese Woche erfasste Zeit pro Person aus
  * GET /api/v1/zeiten/zusammenfassung, mit laufendem Timer. planbar zählt den
  * laufenden Timer noch nicht mit; hier läuft er sekundengenau weiter und
- * zählt ab Mitternacht zu heute.
+ * zählt ab Mitternacht zu heute. Mehrere Unternehmen: pro Person die Summe.
  */
 import { useMemo } from 'react';
 import { Timer, TriangleAlert, Users } from 'lucide-react';
 import { normalizeSelection } from '../components/settings/multiselect';
 import { useWidgetSettings } from '../hooks/useWidgetSettings';
-import { fetchZeitZusammenfassung } from '../planbar/client';
-import type { PlanbarTimeEntry, PlanbarTimeSummary, PlanbarTimer } from '../planbar/types';
+import { fetchZeitZusammenfassungAll, type PlanbarFanOut, type PlanbarOrgTimeSummary } from '../planbar/orgs';
+import type { PlanbarOrgTimeEntry, PlanbarTimer } from '../planbar/types';
 import type { WidgetProps } from '../types/widget';
 import { PLANBAR_ZEIT_DEFAULTS, type PlanbarZeitSettings } from './manifests/planbar-zeit';
 import { daysBetween } from './planbar/days';
 import { formatElapsed, formatMinutes } from './planbar/format';
-import { PersonAvatar, PlanbarErrorMessage, PlanbarHead, PlanbarSetupMessage, PlanbarStaleBanner } from './planbar/PlanbarParts';
+import {
+  PersonAvatar,
+  PlanbarErrorMessage,
+  PlanbarHead,
+  PlanbarNoOrgsMessage,
+  PlanbarOrgBadge,
+  PlanbarOrgIssues,
+  PlanbarSetupMessage,
+  PlanbarStaleBanner,
+} from './planbar/PlanbarParts';
 import { orderEntries, targetPercent, timerElapsedMs, timerTodayMinutes, WORKDAYS_PER_WEEK } from './planbar/time';
-import { usePlanbarPolling } from './planbar/usePlanbarPolling';
+import { usePlanbarOrgs, usePlanbarPolling } from './planbar/usePlanbarPolling';
 import { formatCount, formatPercent } from './shared/format';
 import { useNow } from './shared/hooks';
 import { WidgetMessage } from './shared/WidgetParts';
@@ -29,6 +38,7 @@ const WEEKDAY_NAMES = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag'
 function readSettings(raw: PlanbarZeitSettings): PlanbarZeitSettings {
   const defaults = PLANBAR_ZEIT_DEFAULTS;
   return {
+    unternehmen: normalizeSelection(raw.unternehmen),
     benutzer: normalizeSelection(raw.benutzer),
     showWeek: readBoolean(raw.showWeek, defaults.showWeek),
     sollStundenProTag: readNumber(raw.sollStundenProTag, defaults.sollStundenProTag, 0, 24, false),
@@ -76,12 +86,14 @@ function WeekBars({ days, todayIndex, running, dayTarget }: WeekProps) {
 
 interface RowOptions {
   now: number;
+  /** Several Unternehmen on screen: each person names theirs. */
+  showOrgs: boolean;
   dayTarget: number;
   showWeek: boolean;
   todayIndex: number;
 }
 
-function PersonRow({ entry, options }: { entry: PlanbarTimeEntry; options: RowOptions }) {
+function PersonRow({ entry, options }: { entry: PlanbarOrgTimeEntry; options: RowOptions }) {
   const { timer } = entry;
   const running = timer ? timerTodayMinutes(timer, options.now) : 0;
   const today = Math.max(0, entry.todayMinutes) + running;
@@ -97,6 +109,13 @@ function PersonRow({ entry, options }: { entry: PlanbarTimeEntry; options: RowOp
       <div className="pz-main">
         <div className="pz-line">
           <span className="pz-name">{entry.user.name.trim() || 'Ohne Namen'}</span>
+          {options.showOrgs && (
+            <span className="pz-orgs">
+              {entry.orgs.map((org) => (
+                <PlanbarOrgBadge key={org.id} org={org} />
+              ))}
+            </span>
+          )}
           <span className="pz-today" title="Heute erfasst">
             {formatMinutes(today)}&nbsp;h
           </span>
@@ -137,21 +156,26 @@ export function PlanbarZeitWidget({ instanceId }: WidgetProps) {
   const [raw] = useWidgetSettings(instanceId, PLANBAR_ZEIT_DEFAULTS);
   const settings = useMemo(() => readSettings(raw), [raw]);
 
-  const poll = usePlanbarPolling<PlanbarTimeSummary>(
-    (signal) => fetchZeitZusammenfassung({ benutzer: settings.benutzer }, { signal }),
+  const orgs = usePlanbarOrgs(settings.unternehmen);
+
+  const poll = usePlanbarPolling<PlanbarFanOut<PlanbarOrgTimeSummary>>(
+    (signal) => fetchZeitZusammenfassungAll(orgs, { benutzer: settings.benutzer }, { signal }),
     settings.refreshSeconds * 1000,
-    [settings.benutzer.join(',')],
+    [orgs, settings.benutzer.join(',')],
+    orgs.length > 0,
   );
-  const anyRunning = poll.data?.data.some((entry) => entry.timer !== null) ?? false;
+  const summary = poll.data?.data ?? null;
+  const anyRunning = summary?.data.some((entry) => entry.timer !== null) ?? false;
   // Seconds tick only while a timer runs.
   const now = useNow(anyRunning ? 1000 : 30_000);
   const entries = useMemo(
-    () => (poll.data ? orderEntries(poll.data.data, settings.benutzer) : []),
-    [poll.data, settings.benutzer],
+    () => (summary ? orderEntries(summary.data, settings.benutzer) : []),
+    [summary, settings.benutzer],
   );
 
   if (poll.setup !== 'ready') return <PlanbarSetupMessage setup={poll.setup} />;
-  if (poll.data === null) {
+  if (orgs.length === 0) return <PlanbarNoOrgsMessage />;
+  if (poll.data === null || summary === null) {
     if (poll.failure) return <PlanbarErrorMessage failure={poll.failure} right="Aufgaben & Zeiten – Lesen" />;
     if (poll.error !== null) return <WidgetMessage icon={TriangleAlert} tone="error" title="planbar-Fehler" detail={poll.error} />;
     return <WidgetMessage busy title="Zeiten werden geladen …" />;
@@ -159,9 +183,10 @@ export function PlanbarZeitWidget({ instanceId }: WidgetProps) {
 
   const stale = poll.failure !== null;
   const dayTarget = Math.round(settings.sollStundenProTag * 60);
-  const todayIndex = daysBetween(poll.data.weekStart, poll.data.today) ?? -1;
+  const todayIndex = daysBetween(summary.weekStart, summary.today) ?? -1;
   const options: RowOptions = {
     now,
+    showOrgs: poll.data.orgs.length > 1,
     dayTarget,
     showWeek: settings.showWeek,
     todayIndex: todayIndex >= 0 && todayIndex < WEEKDAY_LETTERS.length ? todayIndex : -1,
@@ -179,6 +204,7 @@ export function PlanbarZeitWidget({ instanceId }: WidgetProps) {
         {runningCount > 0 && ` · ${formatCount(runningCount)} ${runningCount === 1 ? 'Timer läuft' : 'Timer laufen'}`}
       </PlanbarHead>
       {poll.failure && <PlanbarStaleBanner failure={poll.failure} lastUpdated={poll.lastUpdated} />}
+      {!poll.failure && <PlanbarOrgIssues failures={poll.data.failures} />}
       {entries.length === 0 ? (
         <div className="pz-empty">
           <WidgetMessage

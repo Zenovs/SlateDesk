@@ -21,12 +21,13 @@ Backend). Einzige Ausnahme: der KI-Assistent spricht OpenAI direkt aus der Kiosk
 | Cloudflare Speedtest | Speedtest | nein | Widget-Einstellungen |
 | OpenAI oder Ollama / LM Studio | KI-Assistent | OpenAI: ja; lokal: nein | Widget-Einstellungen (+ Modell am Kiosk) |
 | lagra | lagra Übersicht, lagra Aufgaben, lagra: Neu im DAM | Token | Fernsteuerung → lagra |
-| planbar | planbar Aufgaben, Projekte, News, Zeit | API-Schlüssel | Fernsteuerung → planbar |
+| planbar | planbar Aufgaben, Projekte, News, Zeit | API-Schlüssel pro Unternehmen | Fernsteuerung → planbar |
 
 **Zugangsdaten** (Felder, deren Name auf `apiKey`, `token`, `password` oder `secret` endet) speichert der
 Kiosk in `~/.config/com.slatedesk.app/state.json` (Rechte 0600). Über die Fernsteuerung und im Export
-erscheinen sie nur als «gesetzt». Wird über die Fernsteuerung die Adresse daneben geändert, löscht der Kiosk
-den gespeicherten Zugang – deshalb immer **zuerst die Adresse, dann den Zugang** eintragen.
+erscheinen sie nur als «gesetzt». Wird über die Fernsteuerung eine Adresse geändert, löscht der Kiosk alle
+gespeicherten Zugänge daneben und darunter (bei planbar: die Schlüssel aller Unternehmen) – deshalb immer
+**zuerst die Adresse, dann den Zugang** eintragen.
 
 **Firewall:** Der Kiosk braucht ausgehend HTTPS (Port 443) zu den genannten Diensten; für Volumio, den
 Host-Monitor und lokale KI-Server zusätzlich die jeweiligen Ports im LAN.
@@ -239,7 +240,8 @@ Der Bildschirm steht dort, wo auch Besuch steht:
 
 ## planbar
 
-Die planbar-Widgets machen den Kiosk zum persönlichen Arbeits-Dashboard – mit Namen und Projekten:
+Die planbar-Widgets machen den Kiosk zum persönlichen Arbeits-Dashboard – mit Namen und Projekten, auch über
+**mehrere Unternehmen** hinweg (z. B. wireon und Schnyder Werbung):
 
 | Widget | planbar-Endpunkt | benötigtes Recht |
 |---|---|---|
@@ -251,6 +253,14 @@ Die planbar-Widgets machen den Kiosk zum persönlichen Arbeits-Dashboard – mit
 | Personen-Auswahl in den Einstellungen | `GET /api/v1/mitglieder` | Aufgaben & Zeiten oder Projekte – Lesen |
 | Projekt-Auswahl in den Einstellungen | `GET /api/v1/projektuebersicht` | Projekte – Lesen |
 
+### Ein Schlüssel pro Unternehmen
+
+Ein planbar-API-Schlüssel gehört immer zu **genau einem Unternehmen** (Organisation) und sieht nur dessen
+Daten. Für jedes Unternehmen, dessen Aufgaben, Projekte, News und Zeiten SlateDesk zeigen soll, braucht es
+deshalb einen eigenen Schlüssel – in SlateDesk ist jedes Unternehmen ein Eintrag mit Name und Schlüssel.
+Personen sind in planbar unternehmensübergreifend dieselben: Wer in mehreren Unternehmen mitarbeitet, wird in
+den Widgets einmal ausgewählt und erscheint mit der Arbeit aus allen gewählten Unternehmen.
+
 ### Voraussetzung: planbar-Version
 
 Die Endpunkte für SlateDesk (`/arbeitsliste`, `/projektuebersicht`, `/news`, `/zeiten/zusammenfassung`) und
@@ -259,9 +269,10 @@ auf planbar.dev läuft, melden Verbindungstest und Widgets «planbar-Update nöt
 auf den Auslieferungszweig automatisch produktiv ausgerollt – das Mergen ist ein bewusster Schritt im
 planbar-Repository.
 
-### 1. API-Schlüssel in planbar erstellen
+### 1. API-Schlüssel in planbar erstellen – für jedes Unternehmen
 
-1. In planbar als **Admin Unternehmen** anmelden (nur diese Rolle sieht die Seite).
+1. In planbar als **Admin Unternehmen** anmelden (nur diese Rolle sieht die Seite) und zum gewünschten
+   Unternehmen wechseln.
 2. **Unternehmen → API-Schlüssel** (`https://planbar.dev/api-keys`) → **Schlüssel erstellen**.
 3. Name z. B. `SlateDesk Büro`; unter *Rechte* ankreuzen:
    - *Aufgaben & Zeiten* – **Lesen**, oder **Schreiben**, wenn Aufgaben am Kiosk abgehakt werden sollen
@@ -271,24 +282,35 @@ planbar-Repository.
 
    Optional ein Ablaufdatum setzen.
 4. **Erstellen**: planbar zeigt den Schlüssel (`pk_live_…`) **nur einmal** an – gleich kopieren.
+5. Für jedes weitere Unternehmen die Schritte 1–4 in diesem Unternehmen wiederholen.
 
 Mit «Schreiben» könnte der Schlüssel über die planbar-API auch Tickets und Zeiteinträge anlegen. SlateDesk
 leitet ausschliesslich das Abhaken einer Aufgabe weiter (`PATCH /api/v1/arbeitsliste/<id>` mit genau
-`{ "completed": true | false }`) und lehnt alles andere ab. Wer nicht abhaken will, gibt nur «Lesen».
-Bei Verlust oder Austausch des Geräts den Schlüssel in planbar widerrufen.
+`{ "completed": true | false }`, mit dem Schlüssel des Unternehmens der Aufgabe) und lehnt alles andere ab.
+Wer nicht abhaken will, gibt nur «Lesen». Bei Verlust oder Austausch des Geräts die Schlüssel in planbar
+widerrufen.
 
 ### 2. In SlateDesk einrichten
 
-1. Fernsteuerung → **planbar**: zuerst die **Adresse** (leer = `https://planbar.dev`), dann den
-   **API-Schlüssel** eintragen – eine geänderte Adresse löscht den gespeicherten Schlüssel.
-2. «planbar verwenden» einschalten und **Verbindung testen**. Der Test zeigt die Anzahl Personen und welche
-   Rechte der Schlüssel hat; fehlende Rechte sind markiert.
-3. In der **Vorschau** eine Person wählen: So sieht ihre Arbeitsliste im Widget aus; dazu die neusten News.
-4. Widgets im Layout hinzufügen und in ihren Einstellungen **Personen** bzw. **Projekte** auswählen. Die
-   Auswahllisten laden die Daten live aus planbar (zwischengespeichert 60 Sekunden, «Neu laden» holt sie
-   sofort).
+1. Fernsteuerung → **planbar**: zuerst die **Adresse** (leer = `https://planbar.dev`, gilt für alle
+   Unternehmen) – eine geänderte Adresse löscht die gespeicherten Schlüssel **aller** Unternehmen.
+2. Unter **Unternehmen** → **Unternehmen hinzufügen**: Name (z. B. «wireon») und API-Schlüssel eintragen,
+   dann **Verbindung testen**. Der Test zeigt die Anzahl Personen und welche Rechte der Schlüssel hat; fehlende
+   Rechte sind markiert. Für jedes Unternehmen wiederholen.
+3. «planbar verwenden» einschalten. In der **Vorschau** ein Unternehmen (oder alle) und eine Person wählen: So
+   sieht ihre Arbeitsliste im Widget aus; dazu die neusten News.
+4. Widgets im Layout hinzufügen und in ihren Einstellungen zuerst die **Unternehmen** wählen (leer = alle
+   eingerichteten), dann **Personen** bzw. **Projekte**. Die Auswahllisten laden die Daten live aus den
+   gewählten Unternehmen (zwischengespeichert 60 Sekunden, «Neu laden» holt sie sofort).
 
-Der Schlüssel verlässt das Backend des Kiosks nie; Antworten speichert der Kiosk 15 Sekunden zwischen.
+Mit mehreren Unternehmen fragt jedes Widget jedes gewählte Unternehmen einzeln und führt die Antworten
+zusammen; ein kleines Etikett nennt bei jedem Eintrag das Unternehmen, **planbar Aufgaben** lässt sich auch
+nach Unternehmen gruppieren. Antwortet ein Unternehmen nicht (z. B. «wireon: planbar-Update nötig»), steht
+das in einer Zeile oben – die Daten der übrigen bleiben sichtbar.
+
+Bestehende Einrichtungen mit einem einzigen Schlüssel übernimmt SlateDesk beim Start als Unternehmen
+«planbar»; ihr Name lässt sich in der Fernsteuerung anpassen. Die Schlüssel verlassen das Backend des Kiosks
+nie; Antworten speichert der Kiosk 15 Sekunden pro Unternehmen zwischen.
 
 ### Abhaken am Kiosk
 
@@ -303,7 +325,8 @@ laufender Timer auf der Aufgabe stoppt). Fehlt das Recht «Schreiben», meldet d
 
 | Meldung | Ursache |
 |---|---|
-| «planbar ist ausgeschaltet» / «planbar ist nicht eingerichtet» | «planbar verwenden» aus oder API-Schlüssel fehlt |
+| «planbar ist ausgeschaltet» / «planbar ist nicht eingerichtet» | «planbar verwenden» aus oder kein Unternehmen mit API-Schlüssel |
+| «Unternehmen nicht eingerichtet» (im Widget) | die im Widget gewählten Unternehmen gibt es nicht mehr oder ihnen fehlt der Schlüssel |
 | «planbar: API-Schlüssel ungültig (401) – …» | Schlüssel falsch, widerrufen oder abgelaufen (planbar nennt den Grund) |
 | «planbar: Berechtigung fehlt – Fehlende Berechtigung: …» | dem Schlüssel fehlt das genannte Recht – in planbar einen neuen Schlüssel mit dem Recht erstellen |
 | «planbar-Update nötig» | planbar.dev ohne Branch `slatedesk-dashboard` |

@@ -9,7 +9,9 @@ use crate::remote::{PinCheck, RemoteAuth, PIN_RULE_MESSAGE, SESSION_COOKIE, SESS
 use crate::state::{redact, redacted_event_json, StateError, StateOp, StateStore};
 use crate::system::{self, SystemContext};
 use axum::body::{Body, Bytes};
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Path as UrlPath, RawQuery, Request, State};
+use axum::extract::{
+    ConnectInfo, DefaultBodyLimit, Path as UrlPath, Query, RawQuery, Request, State,
+};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -43,6 +45,8 @@ const REMOTE_ENTRY: &str = "remote.html";
 const KIOSK_ENTRY: &str = "index.html";
 const CSRF_HEADER: &str = "x-slatedesk";
 const UPSTREAM_HEADER: &str = "x-slatedesk-upstream";
+/// Selects the planbar Unternehmen (id in `planbar.unternehmen`) of a `/api/planbar/…` call.
+const PLANBAR_ORG_HEADER: &str = "x-slatedesk-planbar-org";
 const SSE_PING: Duration = Duration::from_secs(20);
 const BODY_LIMIT: usize = 4 * 1024 * 1024;
 /// `{ "pin": … }` / `{ "current": …, "next": … }` – login is reachable without a session.
@@ -257,9 +261,11 @@ fn planbar_error_status(error: &PlanbarError) -> StatusCode {
         PlanbarError::NotConfigured | PlanbarError::InvalidBaseUrl => {
             StatusCode::SERVICE_UNAVAILABLE
         }
+        PlanbarError::OrgNotConfigured(_) => StatusCode::SERVICE_UNAVAILABLE,
         PlanbarError::InvalidPath(_)
         | PlanbarError::WriteNotAllowed
-        | PlanbarError::InvalidBody => StatusCode::BAD_REQUEST,
+        | PlanbarError::InvalidBody
+        | PlanbarError::OrgRequired => StatusCode::BAD_REQUEST,
         PlanbarError::ReadNotAllowed(_) => StatusCode::FORBIDDEN,
         _ => StatusCode::BAD_GATEWAY,
     }
@@ -687,15 +693,26 @@ async fn lagra_test(State(ctx): State<WebState>) -> Response {
     Json(ctx.lagra.test(&snapshot.state).await).into_response()
 }
 
+/// The Unternehmen named by [`PLANBAR_ORG_HEADER`]; an unreadable value names none that
+/// exists (planbar.rs answers «nicht eingerichtet»).
+fn planbar_org(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(PLANBAR_ORG_HEADER)
+        .map(|value| value.to_str().unwrap_or("?").trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 async fn planbar_proxy_get(
     State(ctx): State<WebState>,
     UrlPath(path): UrlPath<String>,
     RawQuery(query): RawQuery,
+    headers: HeaderMap,
 ) -> Response {
     let snapshot = ctx.store.snapshot();
+    let org = planbar_org(&headers);
     match ctx
         .planbar
-        .proxy_get(&snapshot.state, &path, query.as_deref())
+        .proxy_get(&snapshot.state, &path, query.as_deref(), org.as_deref())
         .await
     {
         Ok(upstream) => upstream_response(upstream, "planbar"),
@@ -708,10 +725,16 @@ async fn planbar_proxy_get(
 async fn planbar_proxy_patch(
     State(ctx): State<WebState>,
     UrlPath(path): UrlPath<String>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let snapshot = ctx.store.snapshot();
-    match ctx.planbar.proxy_patch(&snapshot.state, &path, &body).await {
+    let org = planbar_org(&headers);
+    match ctx
+        .planbar
+        .proxy_patch(&snapshot.state, &path, &body, org.as_deref())
+        .await
+    {
         Ok(upstream) => {
             if (200..300).contains(&upstream.status) {
                 log::info!("Fernsteuerung: planbar-Aufgabe geändert");
@@ -722,9 +745,23 @@ async fn planbar_proxy_patch(
     }
 }
 
-async fn planbar_test(State(ctx): State<WebState>) -> Response {
+#[derive(Deserialize)]
+struct PlanbarTestQuery {
+    org: Option<String>,
+}
+
+/// `?org=<id>` tests one Unternehmen, without it every one with a key.
+async fn planbar_test(
+    State(ctx): State<WebState>,
+    Query(query): Query<PlanbarTestQuery>,
+) -> Response {
     let snapshot = ctx.store.snapshot();
-    Json(ctx.planbar.test(&snapshot.state).await).into_response()
+    Json(
+        ctx.planbar
+            .test(&snapshot.state, query.org.as_deref())
+            .await,
+    )
+    .into_response()
 }
 
 async fn export_state(State(ctx): State<WebState>) -> Response {
@@ -1204,7 +1241,43 @@ mod tests {
         csrf: bool,
         body: Option<Value>,
     ) -> Reply {
-        let mut builder = HttpRequest::builder().method(method).uri(uri);
+        let request = HttpRequest::builder().method(method).uri(uri);
+        send(h, ip, request, cookie, csrf, body).await
+    }
+
+    /// `call` with the planbar Unternehmen header.
+    async fn call_planbar_org(
+        h: &Harness,
+        method: &str,
+        uri: &str,
+        cookie: Option<&str>,
+        org: &str,
+        body: Option<Value>,
+    ) -> Reply {
+        let request = HttpRequest::builder()
+            .method(method)
+            .uri(uri)
+            .header(PLANBAR_ORG_HEADER, org);
+        let csrf = method != "GET";
+        send(
+            h,
+            Ipv4Addr::new(192, 168, 1, 50),
+            request,
+            cookie,
+            csrf,
+            body,
+        )
+        .await
+    }
+
+    async fn send(
+        h: &Harness,
+        ip: Ipv4Addr,
+        mut builder: axum::http::request::Builder,
+        cookie: Option<&str>,
+        csrf: bool,
+        body: Option<Value>,
+    ) -> Reply {
         if let Some(token) = cookie {
             builder = builder.header(
                 header::COOKIE,
@@ -1895,12 +1968,23 @@ mod tests {
         assert_eq!(delete.status, StatusCode::METHOD_NOT_ALLOWED);
 
         let test = call(&h, "GET", "/api/planbar-test", Some(&token), false, None).await;
+        assert_eq!(test.json(), json!({ "results": [] }));
+        let one = call(
+            &h,
+            "GET",
+            "/api/planbar-test?org=wireon",
+            Some(&token),
+            false,
+            None,
+        )
+        .await;
         assert_eq!(
-            test.json(),
-            json!({
-                "ok": false, "status": 0, "message": "planbar ist nicht eingerichtet",
+            one.json(),
+            json!({ "results": [{
+                "org": "wireon", "name": "wireon",
+                "ok": false, "status": 0, "message": "planbar: Unternehmen «wireon» ist nicht eingerichtet",
                 "dashboard": false, "members": null, "scopes": null
-            })
+            }] })
         );
     }
 
@@ -1916,8 +2000,8 @@ mod tests {
             .await
             .json();
         assert_eq!(
-            state["state"]["planbar"]["apiKey"],
-            json!(SECRET_PLACEHOLDER)
+            state["state"]["planbar"]["unternehmen"]["a"],
+            json!({ "name": "Büro", "apiKey": SECRET_PLACEHOLDER })
         );
 
         let work = call(
@@ -1991,11 +2075,12 @@ mod tests {
         let test = call(&h, "GET", "/api/planbar-test", Some(&token), false, None).await;
         assert_eq!(
             test.json(),
-            json!({
+            json!({ "results": [{
+                "org": "a", "name": "Büro",
                 "ok": true, "status": 200, "message": "Verbindung zu planbar hergestellt",
                 "dashboard": true, "members": 2,
                 "scopes": { "aufgaben": true, "aufgabenSchreiben": true, "projekte": true, "news": true }
-            })
+            }] })
         );
 
         configure_planbar(&h, &url, READ_ONLY_KEY).await;
@@ -2034,6 +2119,150 @@ mod tests {
                 .status,
             StatusCode::OK
         );
+    }
+
+    #[tokio::test]
+    async fn planbar_org_header_selects_the_unternehmen() {
+        use crate::planbar::tests::{fake_planbar, state_with_orgs, KEY, SECOND_KEY};
+        let (url, _) = fake_planbar(true).await;
+        let h = harness(true);
+        let state = state_with_orgs(
+            &url,
+            &[
+                ("wireon", "wireon", KEY),
+                ("sw", "Schnyder Werbung", SECOND_KEY),
+            ],
+        );
+        h.ctx
+            .store
+            .apply_ops(
+                vec![StateOp::Set {
+                    path: vec![crate::state::PathSeg::Key("planbar".into())],
+                    value: state["planbar"].clone(),
+                }],
+                "kiosk",
+                false,
+            )
+            .await
+            .unwrap();
+        let token = login(&h).await;
+
+        // Two keys: without the header the kiosk can't tell whose data is wanted.
+        let unnamed = call(
+            &h,
+            "GET",
+            "/api/planbar/mitglieder",
+            Some(&token),
+            false,
+            None,
+        )
+        .await;
+        assert_eq!(unnamed.status, StatusCode::BAD_REQUEST);
+        assert!(unnamed.headers.get(UPSTREAM_HEADER).is_none());
+        assert_eq!(
+            unnamed.json(),
+            json!({ "error": "planbar: bitte ein Unternehmen wählen" })
+        );
+
+        let wireon = call_planbar_org(
+            &h,
+            "GET",
+            "/api/planbar/mitglieder",
+            Some(&token),
+            "wireon",
+            None,
+        )
+        .await;
+        assert_eq!(wireon.status, StatusCode::OK);
+        assert_eq!(wireon.json()["data"].as_array().map(Vec::len), Some(2));
+        let sw = call_planbar_org(
+            &h,
+            "GET",
+            "/api/planbar/arbeitsliste?benutzer=u1",
+            Some(&token),
+            "sw",
+            None,
+        )
+        .await;
+        assert_eq!(sw.json()["org"], json!("zwei"));
+
+        let unknown = call_planbar_org(
+            &h,
+            "GET",
+            "/api/planbar/mitglieder",
+            Some(&token),
+            "<b>x",
+            None,
+        )
+        .await;
+        assert_eq!(unknown.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            unknown.json(),
+            json!({ "error": "planbar: Unternehmen «bx» ist nicht eingerichtet" })
+        );
+
+        // The allowlist and the PATCH rules stay the same with the header.
+        let denied = call_planbar_org(
+            &h,
+            "GET",
+            "/api/planbar/rechnungen",
+            Some(&token),
+            "sw",
+            None,
+        )
+        .await;
+        assert_eq!(denied.status, StatusCode::FORBIDDEN);
+        let ticked = call_planbar_org(
+            &h,
+            "PATCH",
+            "/api/planbar/arbeitsliste/a1",
+            Some(&token),
+            "sw",
+            Some(json!({ "completed": true })),
+        )
+        .await;
+        assert_eq!(ticked.status, StatusCode::OK);
+        assert_eq!(ticked.headers[UPSTREAM_HEADER], "planbar");
+        let rejected = call_planbar_org(
+            &h,
+            "PATCH",
+            "/api/planbar/mitglieder",
+            Some(&token),
+            "sw",
+            Some(json!({ "completed": true })),
+        )
+        .await;
+        assert_eq!(rejected.status, StatusCode::BAD_REQUEST);
+
+        let all = call(&h, "GET", "/api/planbar-test", Some(&token), false, None)
+            .await
+            .json();
+        let orgs: Vec<&str> = all["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["org"].as_str().unwrap())
+            .collect();
+        assert_eq!(orgs.len(), 2);
+        assert!(orgs.contains(&"wireon") && orgs.contains(&"sw"));
+        let one = call(
+            &h,
+            "GET",
+            "/api/planbar-test?org=sw",
+            Some(&token),
+            false,
+            None,
+        )
+        .await
+        .json();
+        assert_eq!(one["results"].as_array().map(Vec::len), Some(1));
+        assert_eq!(one["results"][0]["name"], json!("Schnyder Werbung"));
+        assert_eq!(one["results"][0]["ok"], json!(true));
+
+        // Keys never leave the kiosk – not in the state, not in the test answer.
+        let state = call(&h, "GET", "/api/state", Some(&token), false, None).await;
+        assert!(!state.text().contains("pk_live"));
+        assert!(!serde_json::to_string(&all).unwrap().contains("pk_live"));
     }
 
     #[tokio::test]

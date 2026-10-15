@@ -736,6 +736,10 @@
   color: var(--error);
 }
 
+.settings-provider-status.warning {
+  color: var(--warning);
+}
+
 .settings-provider-status .settings-btn {
   min-height: 40px;
 }
