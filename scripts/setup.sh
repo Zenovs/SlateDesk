@@ -222,13 +222,20 @@ ini_replace_keys() {
 ensure_bootstrap_packages() {
     local -a missing=()
     local p
-    for p in git curl ca-certificates; do
+    for p in git curl ca-certificates xz-utils; do
         pkg_installed "$p" || missing+=("$p")
     done
     [ ${#missing[@]} -gt 0 ] || return 0
     info "Installiere ${missing[*]}…"
-    DEBIAN_FRONTEND=noninteractive apt-get update -q || warn "apt-get update fehlgeschlagen."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${missing[@]}" || die "Installation von ${missing[*]} fehlgeschlagen."
+    apt_get update -q || warn "apt-get update fehlgeschlagen."
+    apt_get install -y -q "${missing[@]}" || die "Installation von ${missing[*]} fehlgeschlagen."
+}
+
+# apt ohne jede Rückfrage: keine Eingabe vom Terminal (install.sh hängt setup.sh
+# an /dev/tty), needrestart ausgesetzt, vorhandene Konfigurationsdateien behalten.
+apt_get() {
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1 \
+        apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@" </dev/null
 }
 
 install_packages() {
@@ -245,14 +252,14 @@ install_packages() {
         return 0
     fi
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q || warn "apt-get update fehlgeschlagen – versuche es mit den vorhandenen Paketlisten."
+    apt_get update -q || warn "apt-get update fehlgeschlagen – versuche es mit den vorhandenen Paketlisten."
     if [ ${#missing[@]} -gt 0 ]; then
         info "Installiere: ${missing[*]}"
-        apt-get install -y -q "${missing[@]}" || die "Paketinstallation fehlgeschlagen."
+        apt_get install -y -q "${missing[@]}" || die "Paketinstallation fehlgeschlagen."
     fi
     for p in "${optional[@]}"; do
         if apt-cache show "$p" >/dev/null 2>&1; then
-            apt-get install -y -q "$p" || warn "Optionales Paket $p konnte nicht installiert werden."
+            apt_get install -y -q "$p" || warn "Optionales Paket $p konnte nicht installiert werden."
         else
             info "Optionales Paket $p ist in den Paketquellen nicht verfügbar – übersprungen."
         fi
@@ -301,49 +308,22 @@ node_version_ok() {
     ((major > 22 || (major == 22 && minor >= 12) || (major == 20 && minor >= 19)))
 }
 
-# Node.js aus den Ubuntu/Debian-Paketquellen bringt npm nicht mit (nur
-# "Empfiehlt"); NodeSource-Pakete enthalten es.
-ensure_npm() {
-    local candidate
-    command -v npm >/dev/null 2>&1 && return 0
-    candidate=$(apt-cache policy npm 2>/dev/null | awk '/Candidate:/ { print $2 }')
-    if pkg_installed nodejs && [ -n "$candidate" ] && [ "$candidate" != "(none)" ]; then
-        info "npm fehlt – installiere npm aus den Paketquellen…"
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -q npm || die "Installation von npm fehlgeschlagen."
-    fi
-    command -v npm >/dev/null 2>&1 ||
-        die "npm fehlt (Node.js $(node -v 2>/dev/null || echo '?') ohne npm) – bitte npm installieren und setup.sh erneut ausführen."
-}
-
+# Node.js gehört wie Rust dem Kiosk-Benutzer (~/.local/opt/nodejs, Befehle in
+# ~/.local/bin): offizielles Archiv von nodejs.org mit Prüfsumme, ohne apt –
+# ein apt-Lauf startet die Hooks des Systems, und hängt einer, hängt alles.
 ensure_node() {
-    local current="" candidate tmp
-    current=$(node -v 2>/dev/null || true)
-    if [ -n "$current" ] && node_version_ok "$current"; then
-        ensure_npm
-        ok "Node.js $current und npm $(npm -v 2>/dev/null || echo '?') vorhanden."
+    local current=""
+    current=$(as_user node -v 2>/dev/null || true)
+    if [ -n "$current" ] && node_version_ok "$current" && as_user npm -v >/dev/null 2>&1; then
+        ok "Node.js $current und npm $(as_user npm -v 2>/dev/null) vorhanden."
         return 0
     fi
-    [ -n "$current" ] && info "Node.js $current ist zu alt."
-    candidate=$(apt-cache policy nodejs 2>/dev/null | awk '/Candidate:/ { print $2 }')
-    candidate=${candidate#*:}
-    if [ -n "$candidate" ] && [ "$candidate" != "(none)" ] && node_version_ok "$candidate" && [ "${candidate%%.*}" -ge 22 ]; then
-        info "Installiere Node.js $candidate aus den Paketquellen…"
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nodejs npm || die "Installation von Node.js fehlgeschlagen."
-    else
-        info "Installiere Node.js 22 aus dem NodeSource-Repository…"
-        tmp=$(mktemp)
-        if ! curl -fsSL https://deb.nodesource.com/setup_22.x -o "$tmp"; then
-            rm -f "$tmp"
-            die "NodeSource-Setup konnte nicht geladen werden."
-        fi
-        bash "$tmp" || { rm -f "$tmp"; die "NodeSource-Setup fehlgeschlagen."; }
-        rm -f "$tmp"
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -q nodejs || die "Installation von Node.js fehlgeschlagen."
-    fi
-    current=$(node -v 2>/dev/null || true)
+    [ -n "$current" ] && info "Node.js $current ist zu alt oder ohne npm."
+    info "Installiere Node.js 22 für $SD_USER (nodejs.org, ohne apt)…"
+    as_user bash "$REPO_DIR/scripts/install-node.sh" || die "Node.js-Installation fehlgeschlagen."
+    current=$(as_user node -v 2>/dev/null || true)
     node_version_ok "$current" || die "Node.js ${current:-fehlt} – benötigt wird 22.12 oder neuer."
-    ensure_npm
-    ok "Node.js $current installiert."
+    ok "Node.js $current für $SD_USER bereit."
 }
 
 # Rust gehört dem Kiosk-Benutzer (rustup in ~/.cargo), denn er baut die Updates.

@@ -62,8 +62,8 @@ Das Script
    soweit in den Paketquellen vorhanden – `x11-xserver-utils`, `wlr-randr` und `libglib2.0-bin` für
    das Schalten des Bildschirms,
 3. aktiviert *Linger* für `slatedesk`, damit seine Dienste und Timer auch ohne Anmeldung laufen, und
-   installiert Node.js 22 mit npm (falls nötig über NodeSource) sowie Rust per `rustup` **für
-   `slatedesk`**,
+   installiert Node.js 22 mit npm (offizielles Archiv von nodejs.org mit Prüfsumme, nach
+   `~/.local/opt/nodejs`, ohne apt) sowie Rust per `rustup` **für `slatedesk`**,
 4. sichert vorhandene WebKit-Daten, solange es noch keine `state.json` gibt (siehe
    [Migration](#migration-vom-alten-setup)),
 5. baut SlateDesk als `slatedesk` (`scripts/auto-update.sh`, beim ersten Mal 10–30 Minuten),
@@ -443,6 +443,13 @@ loginctl show-session "$(loginctl list-sessions --no-legend | awk '$3 == "slated
 ```
 
 ## Fehlersuche
+
+**Installation hängt nach «… wird eingerichtet …» bei apt:** Dann wartet ein apt-Hook des Systems
+(z. B. `needrestart` oder ein Hook der Distribution). `setup.sh` ruft apt ohne Terminal-Eingabe und mit
+ausgesetztem `needrestart` auf; Node.js und Rust kommen ganz ohne apt ins Benutzerkonto. Hängt es
+trotzdem: im zweiten Terminal `ps -eo pid,etime,cmd --forest | grep -A12 apt-get` zeigt den wartenden
+Prozess. Nach einem Abbruch mit Ctrl+C einmal `sudo dpkg --configure -a`, dann die Installation neu
+starten – bereits installierte Pakete werden übersprungen.
 
 **Bildschirm schwarz, App startet nicht**
 
