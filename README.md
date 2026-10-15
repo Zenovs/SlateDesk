@@ -119,10 +119,21 @@ Details in [docs/WIDGET_DEVELOPMENT.md](docs/WIDGET_DEVELOPMENT.md).
 Der Kiosk baut SlateDesk selbst aus diesem Repository und läuft als Benutzer `slatedesk` mit
 systemd-User-Diensten – ohne Root-Rechte und ohne `.deb`-Paket:
 
+Ein Befehl im Terminal genügt (Ubuntu, Debian, Raspberry Pi OS, zenOS):
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/scripts/setup.sh -o /tmp/slatedesk-setup.sh
-sudo bash /tmp/slatedesk-setup.sh --autologin
+curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/install.sh | sudo bash
 ```
+
+Mit Optionen, z. B. automatischer Anmeldung und Firewall-Regel für die Fernsteuerung:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/install.sh | sudo bash -s -- --autologin --ufw
+```
+
+`install.sh` lädt `scripts/setup.sh` des gewählten Branches (`--branch NAME`, Standard `main`) und
+startet es; Rückfragen kommen über das Terminal. Unter zenOS wird automatisch für das Anzeige-Konto
+`anzeige` installiert, sonst für den aufrufenden Benutzer. Vorschau ohne Änderung: `--dry-run`.
 
 Installation, Migration vom alten `.deb`-Setup, Updates, Rollback, Logs, Datensicherung und Fehlersuche:
 **[docs/BETRIEB.md](docs/BETRIEB.md)**. Vor der ersten Migration eines bestehenden Kiosks dort den
@@ -201,6 +212,7 @@ SlateDesk/
 │   ├── http.rs, feeds.rs, calendar.rs, net.rs, ollama.rs   externe Abfragen der Widgets
 │   ├── lagra.rs, planbar.rs  Integrationen (Token bzw. Schlüssel bleiben im Backend)
 │   └── display.rs, system.rs, update.rs, qr.rs
+├── install.sh                Installation in einem Schritt (curl … | sudo bash)
 ├── scripts/                  setup.sh, auto-update.sh, uninstall.sh, systemd/ (User-Dienste und Timer)
 ├── public/models/            Modell der Gesichtserkennung
 └── docs/                     BETRIEB.md, FERNSTEUERUNG.md, WIDGET_DEVELOPMENT.md

@@ -32,6 +32,19 @@ Für den systemd-User-Manager von `slatedesk` dient `systemctl --user -M slatede
 Der unterstützte Weg ist `scripts/setup.sh`. Das Script ist idempotent und kann jederzeit erneut
 ausgeführt werden (Reparatur, Rust-Update, Aufräumen).
 
+In einem Schritt (lädt `scripts/setup.sh` des gewählten Branches und startet es):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/install.sh | sudo bash
+```
+
+Optionen gehen an `setup.sh` weiter: `… | sudo bash -s -- --autologin --ufw`. Zusätzlich kennt
+`install.sh` `--branch NAME` (Standard `main`) und `--dry-run` (nur anzeigen, was passieren würde).
+Unter zenOS installiert es ohne `--user` für das Anzeige-Konto `anzeige`, fehlt dieses, für den
+aufrufenden Benutzer.
+
+Gleichwertig, mit dem Script als Datei:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/scripts/setup.sh -o /tmp/slatedesk-setup.sh
 sudo bash /tmp/slatedesk-setup.sh --autologin
@@ -309,9 +322,9 @@ Umgebungsvariable `SLATEDESK_BRANCH` die Einstellung.
 
 SlateDesk läuft auch unter zenOS (Ubuntu 26.04 Server mit labwc). Zu beachten:
 
-* **Benutzer:** zenOS meldet über greetd an, ohne Autologin. Am einfachsten läuft SlateDesk im
-  eigenen zenOS-Benutzer: `sudo bash ~/SlateDesk/scripts/setup.sh --user "$USER" --ufw`
-  (ohne `--autologin` – greetd wird nicht verändert).
+* **Installation:** `curl -fsSL https://raw.githubusercontent.com/Zenovs/SlateDesk/main/install.sh | sudo bash -s -- --ufw`
+  – mit Anzeige-Profil (Konto `anzeige`) wird dafür installiert, sonst für den eigenen Benutzer.
+  Ohne `--autologin`: greetd wird nicht verändert, die automatische Anmeldung regelt zenOS.
 * **Start:** zenOS startet `zenos-sitzung.target`, das `graphical-session.target` mitzieht. Damit
   startet `slatedesk.service` nach der Anmeldung von selbst; der XDG-Autostart-Eintrag wird unter
   labwc nicht gebraucht.
