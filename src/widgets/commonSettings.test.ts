@@ -55,7 +55,8 @@ describe('common widget settings', () => {
     expect(fontScaleOf({ [FONT_SCALE_KEY]: 125 })).toBe(1.25);
     expect(fontScaleOf({ [FONT_SCALE_KEY]: '80' })).toBe(0.8);
     expect(fontScaleOf({ [FONT_SCALE_KEY]: 10 })).toBe(0.6);
-    expect(fontScaleOf({ [FONT_SCALE_KEY]: 999 })).toBe(1.5);
+    expect(fontScaleOf({ [FONT_SCALE_KEY]: 999 })).toBe(3);
+    expect(fontScaleOf({ [FONT_SCALE_KEY]: 250 })).toBe(2.5);
     expect(fontScaleOf({ [FONT_SCALE_KEY]: 'gross' })).toBe(1);
     expect(fontScaleOf({ [FONT_SCALE_KEY]: null })).toBe(1);
   });

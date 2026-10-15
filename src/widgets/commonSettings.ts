@@ -11,7 +11,7 @@ import type { WidgetManifest } from '../types/widget';
 export const FONT_SCALE_KEY = 'schriftgroesse';
 export const FONT_SCALE_MIN = 60;
 /** Upper end of the slider; a manifest may lower it with `maxFontScale` (widgets that fill their area). */
-export const FONT_SCALE_MAX = 150;
+export const FONT_SCALE_MAX = 300;
 export const FONT_SCALE_DEFAULT = 100;
 
 const maxScaleOf = (manifest?: Pick<WidgetManifest, 'maxFontScale'>): number =>
