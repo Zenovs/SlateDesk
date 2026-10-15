@@ -5,6 +5,7 @@
  * components, React or Tauri. Kiosk registration happens in ./index.ts.
  */
 import type { WidgetCategory, WidgetManifest } from '../types/widget';
+import { withCommonSettings } from './commonSettings';
 import { calendarManifest } from './manifests/calendar';
 import { cameraManifest } from './manifests/camera';
 import { clockManifest } from './manifests/clock';
@@ -27,6 +28,7 @@ import { volumioManifest } from './manifests/volumio';
 import { weatherManifest } from './manifests/weather';
 import { whisperManifest } from './manifests/whisper';
 
+// Every manifest gets the common settings (Darstellung → Schriftgrösse).
 export const widgetCatalog: WidgetManifest[] = [
   clockManifest,
   calendarManifest,
@@ -49,7 +51,7 @@ export const widgetCatalog: WidgetManifest[] = [
   planbarProjekteManifest,
   planbarNewsManifest,
   planbarZeitManifest,
-];
+].map(withCommonSettings);
 
 /** Display order of the categories (picker, web UI). */
 export const WIDGET_CATEGORIES: readonly WidgetCategory[] = [

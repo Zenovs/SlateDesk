@@ -185,6 +185,8 @@ export const clockManifest: WidgetManifest = {
   minHeight: 2,
   defaultWidth: 3,
   defaultHeight: 3,
+  // Füllt seine Fläche schon ganz – «Schriftgrösse» nur verkleinern.
+  maxFontScale: 100,
   permissions: [],
   settingsSchema: SETTINGS_SCHEMA,
   defaultSettings: CLOCK_DEFAULT_SETTINGS,

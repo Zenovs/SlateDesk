@@ -114,6 +114,10 @@ Felds oder mit der Eingabetaste.
 - **lagra- und planbar-Widgets** melden oben, wenn die Verbindung noch nicht eingerichtet ist, mit Link zur
   passenden Seite. Die Auswahl von Personen und Projekten (planbar) lädt erst, wenn die Verbindung steht, und
   folgt der Auswahl **Unternehmen** darüber.
+- **Darstellung → Schriftgrösse** (jedes Widget, 60–150 %): zoomt Text und Inhalt dieses Widgets, die Änderung
+  erscheint sofort am Kiosk. Bei grösserer Schrift zeigen Listen entsprechend weniger Einträge. Uhr und
+  QR-Code füllen ihre Fläche schon ganz und lassen sich nur verkleinern – grösser werden sie, wenn man das
+  Widget im Layout grösser zieht.
 - **Verwalten:** *Auf Standard zurücksetzen* löscht alle Einstellungen des Widgets inklusive gespeicherter
   Zugangsdaten; *Widget entfernen* nimmt es vom Kiosk.
 

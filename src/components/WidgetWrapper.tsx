@@ -19,6 +19,7 @@ import { getWidget } from '../utils/widgetRegistry';
 import { SettingsForm } from './settings/SettingsForm';
 import { WidgetIcon } from './settings/WidgetIcon';
 import { WidgetSettingsDialog } from './WidgetSettingsDialog';
+import { fontScaleOf } from '../widgets/commonSettings';
 import '../styles/widgets.css';
 
 interface Props {
@@ -225,6 +226,7 @@ export const WidgetWrapper = memo(function WidgetWrapper({ instanceId, widgetId,
 
   const definition = getWidget(widgetId);
   const manifest = definition?.manifest;
+  const fontScale = fontScaleOf(storedSettings, manifest);
   const title = manifest?.name ?? 'Unbekanntes Widget';
   const schemaManifest = hasSchema(manifest) ? manifest : null;
   const confirming = confirmingRemove && editMode;
@@ -303,29 +305,36 @@ export const WidgetWrapper = memo(function WidgetWrapper({ instanceId, widgetId,
           </div>
         </div>
       )}
-      <div className="widget-body">
-        {Component ? (
-          <WidgetErrorBoundary
-            label={title}
-            resetKey={storedSettings}
-            onResetSettings={editMode && storedSettings !== undefined ? resetSettings : undefined}
-          >
-            <Suspense fallback={<WidgetLoading />}>
-              <Component instanceId={instanceId} width={w} height={h} />
-            </Suspense>
-          </WidgetErrorBoundary>
-        ) : (
-          <div className="widget-fallback" role="alert">
-            <div className="widget-fallback-title">
-              <AlertTriangle size={16} />
-              Unbekanntes Widget
+      <div className={fontScale === 1 ? 'widget-body' : 'widget-body is-scaled'}>
+        {/* Schriftgrösse: bei 100 % ist die Hülle «display: contents» (wie ohne sie); sonst wird der Inhalt in einem
+            umgerechneten Rahmen gelayoutet und skaliert. Der Baum bleibt gleich, das Widget startet nicht neu. */}
+        <div
+          className={fontScale === 1 ? 'widget-scale' : 'widget-scale is-scaled'}
+          style={fontScale === 1 ? undefined : ({ '--widget-scale': String(fontScale) } as React.CSSProperties)}
+        >
+          {Component ? (
+            <WidgetErrorBoundary
+              label={title}
+              resetKey={storedSettings}
+              onResetSettings={editMode && storedSettings !== undefined ? resetSettings : undefined}
+            >
+              <Suspense fallback={<WidgetLoading />}>
+                <Component instanceId={instanceId} width={w} height={h} />
+              </Suspense>
+            </WidgetErrorBoundary>
+          ) : (
+            <div className="widget-fallback" role="alert">
+              <div className="widget-fallback-title">
+                <AlertTriangle size={16} />
+                Unbekanntes Widget
+              </div>
+              <div className="widget-fallback-detail">
+                «{widgetId}» ist in dieser Version nicht verfügbar.
+                {editMode ? '' : ' Im Bearbeiten-Modus entfernen.'}
+              </div>
             </div>
-            <div className="widget-fallback-detail">
-              «{widgetId}» ist in dieser Version nicht verfügbar.
-              {editMode ? '' : ' Im Bearbeiten-Modus entfernen.'}
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
       {schemaManifest && settingsOpen && editMode && (
         <WidgetSettingsDialog open onClose={closeSettings} title={`${title} – Einstellungen`}>

@@ -142,6 +142,28 @@
   container-name: widget;
 }
 
+/* Schriftgrösse pro Widget (Einstellung «Darstellung»): der Inhalt wird gezoomt – in einem umgerechneten Rahmen
+   gelayoutet und skaliert. Der Container «widget» bleibt .widget-body, also wirkt der Zoom auf alle Einheiten
+   gleich (px, em, cq); Listen zeigen dann weniger bzw. mehr Einträge. Widgets, die ihre Fläche ganz füllen
+   (Uhr, QR-Code), lassen sich nur verkleinern (maxFontScale im Manifest). Bei 100 % ist die Hülle unsichtbar. */
+.widget-scale {
+  display: contents;
+}
+
+.widget-scale.is-scaled {
+  display: block;
+  width: calc(100% / var(--widget-scale));
+  height: calc(100% / var(--widget-scale));
+  overflow: auto;
+  transform: scale(var(--widget-scale));
+  transform-origin: 0 0;
+}
+
+/* Das unskalierte Layout der Hülle ist bei < 100 % grösser als der Rahmen – kein Scrollbalken dafür. */
+.widget-body.is-scaled {
+  overflow: hidden;
+}
+
 /* Crashed widget / unknown widget id */
 .widget-fallback {
   height: 100%;

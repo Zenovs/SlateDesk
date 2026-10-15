@@ -5,6 +5,7 @@
  * Code that only needs metadata (and the web UI) uses src/widgets/catalog.ts.
  */
 import type { WidgetDefinition } from '../types/widget';
+import { withCommonSettings } from '../widgets/commonSettings';
 
 const registry = new Map<string, WidgetDefinition>();
 
@@ -12,7 +13,8 @@ export const registerWidget = (definition: WidgetDefinition): void => {
   if (registry.has(definition.manifest.id)) {
     console.warn(`Widget "${definition.manifest.id}" is already registered. Overwriting.`);
   }
-  registry.set(definition.manifest.id, definition);
+  // Same manifest as in the catalog: with the common settings (Darstellung).
+  registry.set(definition.manifest.id, { ...definition, manifest: withCommonSettings(definition.manifest) });
 };
 
 export const getWidget = (id: string): WidgetDefinition | undefined => registry.get(id);

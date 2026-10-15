@@ -128,6 +128,8 @@ export const qrCodeManifest: WidgetManifest = {
   minHeight: 2,
   defaultWidth: 3,
   defaultHeight: 4,
+  // Füllt seine Fläche schon ganz – «Schriftgrösse» nur verkleinern.
+  maxFontScale: 100,
   permissions: [],
   settingsSchema,
   defaultSettings: QR_CODE_DEFAULTS,

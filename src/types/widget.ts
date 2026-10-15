@@ -43,6 +43,8 @@ export interface WidgetManifest {
   defaultSettings?: Record<string, unknown>;
   /** At most one instance per dashboard (e.g. widgets competing for the camera). */
   singleton?: boolean;
+  /** Upper end of «Darstellung → Schriftgrösse» in percent (default 150); 100 for widgets that already fill their area. */
+  maxFontScale?: number;
 }
 
 export interface WidgetProps {
