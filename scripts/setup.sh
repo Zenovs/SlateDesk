@@ -835,13 +835,15 @@ configure_desktop() {
     fi
 }
 
+# Massgeblich ist, was systemd als Anmeldedienst startet; /etc/X11/default-display-manager
+# kann veraltet sein (zenOS startet greetd, die Datei nennt noch gdm3).
 display_manager() {
     local dm=""
-    if [ -r /etc/X11/default-display-manager ]; then
-        dm=$(basename "$(head -n 1 /etc/X11/default-display-manager)")
-    fi
-    if [ -z "$dm" ] && [ -L /etc/systemd/system/display-manager.service ]; then
+    if [ -L /etc/systemd/system/display-manager.service ]; then
         dm=$(basename "$(readlink -f /etc/systemd/system/display-manager.service)" .service)
+    fi
+    if [ -z "$dm" ] && [ -r /etc/X11/default-display-manager ]; then
+        dm=$(basename "$(head -n 1 /etc/X11/default-display-manager)")
     fi
     printf '%s' "$dm"
 }
@@ -875,6 +877,10 @@ configure_autologin() {
     fi
     case "$dm" in
         gdm3 | gdm | lightdm) ;;
+        greetd)
+            info "Anmeldedienst greetd: die automatische Anmeldung regelt das System (unter zenOS das Anzeige-Profil)."
+            return 0
+            ;;
         *)
             info "Display-Manager ${dm:-unbekannt}: automatische Anmeldung von $SD_USER bitte von Hand einrichten."
             return 0
