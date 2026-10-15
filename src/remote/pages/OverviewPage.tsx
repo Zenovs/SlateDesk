@@ -25,6 +25,7 @@ import { themeActions } from '../../state/dataActions';
 import type { ThemeMode } from '../../state/types';
 import { actions, type SystemInfo } from '../api';
 import { LayoutMiniMap } from '../components/LayoutMiniMap';
+import { UpdateCard } from './system/UpdateCard';
 import { Stat, UsageBar } from '../components/Stats';
 import { formatDuration, formatNumber, formatTime } from '../format';
 import type { PollState } from '../hooks/usePoll';
@@ -210,6 +211,7 @@ export function OverviewPage() {
       <div className="r-overview-grid">
         <KioskStatusCard poll={system} />
         <QuickActionsCard />
+        <UpdateCard info={system.data} />
         <ScreenCard viewport={system.data?.viewport ?? null} />
       </div>
     </div>

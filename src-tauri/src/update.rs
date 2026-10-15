@@ -276,6 +276,57 @@ fn failure(label: &str, output: &Output) -> String {
     }
 }
 
+/// How long a fresh start may take to show up (unit running or a new status from the script).
+const START_CONFIRM: Duration = Duration::from_secs(6);
+
+/// systemd may accept a start job without the update ever running (or the script may stop
+/// before its first status). Only a run that shows up counts as started: its unit is running,
+/// or the status file was written after `since_ms` (a quick «aktuell» run is already over).
+async fn run_started(unit: Option<&str>, since_ms: i64) -> bool {
+    let deadline = Instant::now() + START_CONFIRM;
+    loop {
+        if read_status()
+            .await
+            .is_some_and(|s| s.updated_at.or(s.started_at).unwrap_or(0) >= since_ms)
+        {
+            return true;
+        }
+        if let Some(unit) = unit {
+            if unit_running(unit).await {
+                return true;
+            }
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+async fn unit_running(unit: &str) -> bool {
+    let mut cmd = Command::new("systemctl");
+    cmd.args(["--user", "show", "--property=ActiveState", "--value", unit]);
+    match run_quiet(cmd, "systemctl").await {
+        Ok(output) if output.status.success() => matches!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "active" | "activating" | "reloading"
+        ),
+        _ => false,
+    }
+}
+
+/// «Result» of a unit that did not run, for the error message (e.g. «exit-code», «resources»).
+async fn unit_result(unit: &str) -> String {
+    let mut cmd = Command::new("systemctl");
+    cmd.args(["--user", "show", "--property=Result", "--value", unit]);
+    match run_quiet(cmd, "systemctl").await {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        _ => String::new(),
+    }
+}
+
 /// The update must never run as a child of the app: stopping the app's unit would kill the
 /// update with it. Order: installed user unit → transient unit → detached session. Errors are
 /// the bare reasons of all attempts; callers prefix [`TRIGGER_FAILED`].
@@ -293,13 +344,26 @@ pub async fn trigger() -> Result<(), String> {
         return Ok(());
     }
 
+    let since = now_ms();
     let mut systemctl = Command::new("systemctl");
     systemctl.args(["--user", "start", "--no-block", UPDATE_UNIT]);
     match run_quiet(systemctl, "systemctl").await {
         Ok(output) if output.status.success() => {
-            log::info!("Update gestartet über {UPDATE_UNIT}");
-            TRIGGERED_AT_MS.store(now_ms(), Ordering::Relaxed);
-            return Ok(());
+            if run_started(Some(UPDATE_UNIT), since).await {
+                log::info!("Update gestartet über {UPDATE_UNIT}");
+                TRIGGERED_AT_MS.store(since, Ordering::Relaxed);
+                return Ok(());
+            }
+            let result = unit_result(UPDATE_UNIT).await;
+            log::warn!("{UPDATE_UNIT} angenommen, aber nicht angelaufen (Result: {result})");
+            errors.push(format!(
+                "{UPDATE_UNIT} lief nicht an{}",
+                if result.is_empty() || result == "success" {
+                    String::new()
+                } else {
+                    format!(" ({result})")
+                }
+            ));
         }
         Ok(output) => errors.push(failure("systemctl", &output)),
         Err(e) => errors.push(e),
@@ -317,11 +381,16 @@ pub async fn trigger() -> Result<(), String> {
         .arg(format!("--setenv=SLATEDESK_HOME={}", dir.display()))
         .args(["/bin/bash", "-l"])
         .arg(&script);
+    let since = now_ms();
     match run_quiet(systemd_run, "systemd-run").await {
         Ok(output) if output.status.success() => {
-            log::info!("Update gestartet über {MANUAL_UNIT}.service");
-            TRIGGERED_AT_MS.store(now_ms(), Ordering::Relaxed);
-            return Ok(());
+            if run_started(Some(&format!("{MANUAL_UNIT}.service")), since).await {
+                log::info!("Update gestartet über {MANUAL_UNIT}.service");
+                TRIGGERED_AT_MS.store(since, Ordering::Relaxed);
+                return Ok(());
+            }
+            log::warn!("{MANUAL_UNIT}.service angenommen, aber nicht angelaufen");
+            errors.push(format!("{MANUAL_UNIT}.service lief nicht an"));
         }
         // The previous manual run is still active – the script's lock allows only one anyway.
         Ok(output) if String::from_utf8_lossy(&output.stderr).contains("already") => {
@@ -341,11 +410,15 @@ pub async fn trigger() -> Result<(), String> {
         .env("SLATEDESK_HOME", &dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    let since = now_ms();
     match run_quiet(setsid, "setsid").await {
         Ok(output) if output.status.success() => {
-            log::info!("Update gestartet (setsid)");
-            TRIGGERED_AT_MS.store(now_ms(), Ordering::Relaxed);
-            return Ok(());
+            if run_started(None, since).await {
+                log::info!("Update gestartet (setsid)");
+                TRIGGERED_AT_MS.store(since, Ordering::Relaxed);
+                return Ok(());
+            }
+            errors.push("setsid: Update-Script schrieb keinen Status".to_string());
         }
         Ok(output) => errors.push(failure("setsid", &output)),
         Err(e) => errors.push(e),

@@ -4,7 +4,7 @@
  * 3 s until it is done). An update already running when the page opens is
  * followed as well. The app restarts at the end, which ends this session.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw } from 'lucide-react';
 import { actions, errorText, updateProgress, type SystemInfo, type UpdateCheck, type UpdateProgress } from '../../api';
 import { plural } from '../../format';
@@ -161,7 +161,8 @@ export function UpdateCard({ info }: { info: SystemInfo | null }) {
   const watch = useRef<RunWatch | null>(null);
   /** Whether that answer is this run's outcome (shown prominently) – null: no run followed here. */
   const [outcome, setOutcome] = useState<RunOutcome | null>(null);
-  const [check, setCheck] = useState<CheckState>({ busy: false, result: null, error: null });
+  // busy: true – die Karte sucht beim Öffnen gleich nach (Effekt unten).
+  const [check, setCheck] = useState<CheckState>({ busy: true, result: null, error: null });
 
   const fetchProgress = useCallback(async (signal: AbortSignal) => {
     const progress = await updateProgress(signal);
@@ -181,13 +182,25 @@ export function UpdateCard({ info }: { info: SystemInfo | null }) {
   const poll = usePoll(fetchProgress, following ? PROGRESS_POLL_MS : 0);
   const progress = poll.data;
 
+  const loadCheck = useCallback(
+    () =>
+      actions.updateCheck().then(
+        (result) => setCheck({ busy: false, result, error: null }),
+        (err: unknown) => setCheck({ busy: false, result: null, error: errorText(err) }),
+      ),
+    [],
+  );
+
   const runCheck = () => {
     setCheck((current) => ({ ...current, busy: true }));
-    actions.updateCheck().then(
-      (result) => setCheck({ busy: false, result, error: null }),
-      (err: unknown) => setCheck({ busy: false, result: null, error: errorText(err) }),
-    );
+    void loadCheck();
   };
+
+  // Beim Öffnen gleich nachsehen: steht ein Update an, ist «Update installieren» sofort da.
+  // Der Kiosk merkt sich das Ergebnis 30 s, Übersicht und System fragen also nicht doppelt.
+  useEffect(() => {
+    void loadCheck();
+  }, [loadCheck]);
 
   const install = () =>
     actions.updateRun().then(() => {
