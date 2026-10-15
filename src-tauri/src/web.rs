@@ -456,8 +456,11 @@ async fn api_guard(State(ctx): State<WebState>, mut req: Request, next: Next) ->
 // API handlers
 // ---------------------------------------------------------------------------
 
+/// Public: the web UI also uses `commit` to notice that the kiosk now runs a
+/// newer build than the page was loaded from (and reloads itself).
 async fn health() -> Response {
-    Json(json!({ "ok": true, "version": system::VERSION })).into_response()
+    Json(json!({ "ok": true, "version": system::VERSION, "commit": system::commit() }))
+        .into_response()
 }
 
 async fn auth_status(State(ctx): State<WebState>, session: Option<Extension<Session>>) -> Response {
@@ -1343,6 +1346,7 @@ mod tests {
         assert_eq!(reply.status, StatusCode::OK);
         assert_eq!(reply.json()["ok"], json!(true));
         assert_eq!(reply.json()["version"], json!(system::VERSION));
+        assert_eq!(reply.json()["commit"], json!(system::commit()));
         assert_eq!(reply.headers[header::X_FRAME_OPTIONS], "DENY");
         assert_eq!(reply.headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         assert_eq!(reply.headers[header::CONTENT_SECURITY_POLICY], WEB_CSP);

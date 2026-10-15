@@ -4,6 +4,7 @@
  */
 import { useEffect } from 'react';
 import { useAppState } from '../state/appState';
+import { checkBuild, startBuildWatch } from './buildWatch';
 import { SessionOverlay } from './components/SessionOverlay';
 import { Shell } from './components/Shell';
 import { LoadingScreen, SplashScreen, UnreachableScreen } from './components/StatusScreens';
@@ -80,11 +81,19 @@ function AuthenticatedApp({ status }: { status: SessionStatus }) {
 export function RemoteApp() {
   const status = useSession((s) => s.status);
   const keepApp = useSession((s) => s.keepApp);
+  const connected = useAppState((s) => s.connected);
   const name = useKioskName();
 
   useEffect(() => {
     void checkSession();
   }, []);
+
+  // A new kiosk build reloads the page (buildWatch.ts). Every update restarts
+  // the kiosk: the session ends (login) and the event stream reconnects.
+  useEffect(() => startBuildWatch(), []);
+  useEffect(() => {
+    if (status === 'login' || connected) void checkBuild();
+  }, [status, connected]);
 
   useEffect(() => {
     document.title = `${name} – Fernsteuerung`;

@@ -7,14 +7,21 @@
 import { useSyncExternalStore } from 'react';
 
 const dialogs: HTMLDialogElement[] = [];
+/** Dialogs registered with `holdsInput: false` (the login overlay). */
+const withoutInput = new WeakSet<HTMLDialogElement>();
 const listeners = new Set<() => void>();
 
 const notify = (): void => {
   for (const listener of listeners) listener();
 };
 
-/** Call right after showModal(); the returned function after close(). */
-export function registerModalDialog(dialog: HTMLDialogElement): () => void {
+/**
+ * Call right after showModal(); the returned function after close().
+ * `holdsInput: false` marks a dialog whose input may be lost (the login
+ * overlay) – see inputDialogOpen().
+ */
+export function registerModalDialog(dialog: HTMLDialogElement, { holdsInput = true } = {}): () => void {
+  if (!holdsInput) withoutInput.add(dialog);
   dialogs.push(dialog);
   notify();
   return () => {
@@ -29,6 +36,12 @@ function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+
+/** True while a modal dialog that may hold unsaved input (an editor) is open. */
+export const inputDialogOpen = (): boolean => dialogs.some((dialog) => !withoutInput.has(dialog));
+
+/** Calls `listener` whenever a modal dialog opens or closes; returns the unsubscribe function. */
+export const onModalDialogsChange: (listener: () => void) => () => void = subscribe;
 
 const topDialog = (): HTMLDialogElement | null => dialogs[dialogs.length - 1] ?? null;
 

@@ -189,6 +189,9 @@ Schlüssel erstellt werden: [API_SETUP.md](../API_SETUP.md).
 - **Update** – *Nach Updates suchen* vergleicht mit dem Stand auf GitHub. Ist ein Update da, startet
   *Installieren* es nach Rückfrage. Der Fortschritt läuft live mit (Laden, Bauen, Installieren, Neustart,
   Prüfung). Der Kiosk zeigt bis zum Neustart normal weiter an; danach ist eine neue Anmeldung nötig.
+  Offene Fernsteuerungs-Seiten merken die neue Version und laden sich selbst neu (spätestens nach einer
+  Minute; ist gerade ein Bearbeiten-Dialog offen, erst nach dessen Schliessen) – erst dann sind neue
+  Einstellungen sichtbar.
   Startet die neue Version nicht, kehrt der Kiosk von selbst zur vorherigen zurück und meldet
   «Update fehlgeschlagen». Das Ergebnis des letzten Laufs (auch des nächtlichen) steht ebenfalls hier.
 - **Aktionen** – Neu laden, Identifizieren, Bildschirm aus/an und **App neu starten** (der Bildschirm ist
@@ -228,4 +231,5 @@ Schlüssel erstellt werden: [API_SETUP.md](../API_SETUP.md).
 | «Sitzung abgelaufen» | Die App wurde neu gestartet (nachts, Update) oder der PIN geändert – neu anmelden. |
 | Anzeige «Offline» | Kiosk ausgeschaltet, startet gerade neu oder Netzwerk getrennt; die Seite verbindet sich von selbst wieder. |
 | Änderung erscheint nicht am Kiosk | Verbindungsstatus oben prüfen; unter Übersicht «Neu laden» antippen. |
+| Neue Einstellung fehlt nach einem Update | Die Seite lädt sich selbst neu; sonst im Browser neu laden (F5 bzw. Seite nach unten ziehen). |
 | Widget zeigt «… ist nicht eingerichtet» | Verbindung auf der Seite lagra bzw. planbar einrichten. |

@@ -17,7 +17,8 @@ export function SessionOverlay({ children }: { children: ReactNode }) {
     if (!dialog) return;
     mounted.current = true;
     if (!dialog.open) dialog.showModal();
-    const unregister = registerModalDialog(dialog);
+    // A reload for a new kiosk build may happen while only the login is open.
+    const unregister = registerModalDialog(dialog, { holdsInput: false });
     return () => {
       mounted.current = false;
       if (dialog.open) dialog.close();
