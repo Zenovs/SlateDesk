@@ -2,10 +2,14 @@
  * Lifetime widget – a dot circles calmly as long as everything runs. When it
  * stands still, something hangs and needs a restart.
  *
- * The motion is the signal, so it must stop with whatever hangs:
- * - it is moved frame by frame from JavaScript (requestAnimationFrame), never
- *   by a CSS animation – the compositor keeps a CSS animation running while
- *   the page's script is stuck
+ * The motion is the signal, so it must stop with whatever hangs – and still
+ * run without a stutter when the page is busy:
+ * - the rotation is an animation of the compositor (Web Animations API on its
+ *   own layer): smooth, no repaint per frame, independent of the script
+ * - but it only ever has a buffer of a few seconds (BUFFER_MS), which the
+ *   script tops up. If the page's script hangs, nobody tops it up and the dot
+ *   stops when the buffer runs out – an endless CSS animation would keep
+ *   turning on the compositor
  * - the backend is asked for a sign of life every few seconds (`heartbeat`,
  *   which also reads the state store); without an answer the dot stops and
  *   turns red
@@ -23,8 +27,11 @@ const PULSE_EVERY_MS = 5_000;
 /** A heartbeat without answer for this long, or this many failed in a row: the backend hangs. */
 const STALL_AFTER_MS = 20_000;
 const MAX_FAILURES = 3;
-/** Longest step of one frame – after a pause (hidden page) the dot goes on instead of jumping. */
-const MAX_FRAME_MS = 100;
+/** Motion the compositor runs ahead of the script: if the page hangs, the dot stops after this long. */
+const BUFFER_MS = 4_000;
+/** The buffer is topped up whenever less than this is left. */
+const REFILL_BELOW_MS = 2_000;
+const REFILL_CHECK_MS = 500;
 
 // SVG geometry (viewBox 0 0 100 100); angles in degrees, clockwise from the top.
 const CENTER = 50;
@@ -88,28 +95,76 @@ function useBackendPulse(): Pulse {
   return pulse;
 }
 
-/** Turns `ref` by 360° per `periodMs` while `running`; keeps its angle when stopped. */
-function useOrbit(ref: RefObject<SVGGElement | null>, periodMs: number, running: boolean): void {
-  const angle = useRef(0);
+interface OrbitState {
+  animation: Animation | null;
+  /** Angle the current animation started at (degrees). */
+  angle: number;
+}
+
+const endOf = (animation: Animation): number => Number(animation.effect?.getComputedTiming().endTime ?? 0);
+
+/**
+ * Turns `ref` by 360° per `periodMs` on the compositor while `running`, with
+ * a buffer of BUFFER_MS that this script keeps topping up; keeps its angle
+ * when stopped or when the speed changes.
+ */
+function useOrbit(ref: RefObject<SVGSVGElement | null>, periodMs: number, running: boolean): void {
+  const orbit = useRef<OrbitState>({ animation: null, angle: 0 });
+  const runningRef = useRef(running);
 
   useEffect(() => {
-    const group = ref.current;
-    if (!group) return;
-    const place = () => group.setAttribute('transform', `rotate(${angle.current.toFixed(2)} ${CENTER} ${CENTER})`);
-    place();
-    if (!running) return;
-    let last: number | null = null;
-    let frame = requestAnimationFrame(function step(time: number) {
-      if (last !== null) {
-        const dt = Math.min(time - last, MAX_FRAME_MS);
-        angle.current = (angle.current + (dt / periodMs) * 360) % 360;
-        place();
+    const element = ref.current;
+    const state = orbit.current;
+    if (!element || typeof element.animate !== 'function') return;
+
+    /** Where `animation` is now – or where it stopped when its buffer ran out. */
+    const angleOf = (animation: Animation): number =>
+      (state.angle + (360 * Math.min(Number(animation.currentTime ?? 0), endOf(animation))) / periodMs) % 360;
+
+    const start = (angle: number) => {
+      state.animation?.cancel();
+      state.angle = angle;
+      state.animation = element.animate(
+        [{ transform: `rotate(${angle}deg)` }, { transform: `rotate(${angle + 360}deg)` }],
+        { duration: periodMs, iterations: BUFFER_MS / periodMs, easing: 'linear', fill: 'forwards' },
+      );
+      if (!runningRef.current) state.animation.pause();
+    };
+
+    const refill = () => {
+      const animation = state.animation;
+      if (!animation || !runningRef.current) return;
+      // The buffer ran out (the page hung) – go on from where the dot stopped.
+      if (animation.playState === 'finished') {
+        start(angleOf(animation));
+        return;
       }
-      last = time;
-      frame = requestAnimationFrame(step);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [ref, periodMs, running]);
+      const time = Number(animation.currentTime ?? 0);
+      if (endOf(animation) - time < REFILL_BELOW_MS) {
+        animation.effect?.updateTiming({ iterations: (time + BUFFER_MS) / periodMs });
+      }
+    };
+
+    start(state.angle);
+    const timer = setInterval(refill, REFILL_CHECK_MS);
+    return () => {
+      clearInterval(timer);
+      const animation = state.animation;
+      if (animation) {
+        state.angle = angleOf(animation);
+        animation.cancel();
+        state.animation = null;
+      }
+    };
+  }, [ref, periodMs]);
+
+  useEffect(() => {
+    runningRef.current = running;
+    const animation = orbit.current.animation;
+    if (!animation) return;
+    if (!running) animation.pause();
+    else if (animation.playState === 'paused') animation.play();
+  }, [running]);
 }
 
 export function LifetimeWidget({ instanceId }: WidgetProps) {
@@ -118,8 +173,8 @@ export function LifetimeWidget({ instanceId }: WidgetProps) {
     ? settings.periodSeconds
     : LIFETIME_DEFAULT_SETTINGS.periodSeconds;
   const pulse = useBackendPulse();
-  const orbit = useRef<SVGGElement>(null);
-  useOrbit(orbit, periodSeconds * 1000, !pulse.stalled);
+  const spinner = useRef<SVGSVGElement>(null);
+  useOrbit(spinner, periodSeconds * 1000, !pulse.stalled);
 
   const id = useId().replace(/:/g, '');
   const tailId = `lifetime-tail-${id}`;
@@ -128,29 +183,31 @@ export function LifetimeWidget({ instanceId }: WidgetProps) {
 
   return (
     <div className={`lifetime${pulse.stalled ? ' is-stalled' : ''}`}>
-      <svg
-        className="lifetime-orbit"
-        viewBox="0 0 100 100"
+      <div
+        className="lifetime-stage"
         role="img"
         aria-label={pulse.stalled ? 'Lebenszeichen: Kiosk-Dienst antwortet nicht' : 'Lebenszeichen: alles läuft'}
       >
-        <defs>
-          <linearGradient id={tailId} gradientUnits="userSpaceOnUse" x1={TAIL_X} y1={TAIL_Y} x2={HEAD_X} y2={HEAD_Y}>
-            <stop offset="0" className="lifetime-stop" stopOpacity="0" />
-            <stop offset="1" className="lifetime-stop" stopOpacity="0.85" />
-          </linearGradient>
-          <radialGradient id={glowId}>
-            <stop offset="0" className="lifetime-stop" stopOpacity="0.45" />
-            <stop offset="1" className="lifetime-stop" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        <circle className="lifetime-track" cx={CENTER} cy={CENTER} r={RADIUS} />
-        <g ref={orbit}>
+        <svg className="lifetime-orbit" viewBox="0 0 100 100" aria-hidden="true">
+          <circle className="lifetime-track" cx={CENTER} cy={CENTER} r={RADIUS} />
+        </svg>
+        {/* Its own box: the compositor turns it as a whole (both boxes are centred the same way). */}
+        <svg ref={spinner} className="lifetime-orbit lifetime-spinner" viewBox="0 0 100 100" aria-hidden="true">
+          <defs>
+            <linearGradient id={tailId} gradientUnits="userSpaceOnUse" x1={TAIL_X} y1={TAIL_Y} x2={HEAD_X} y2={HEAD_Y}>
+              <stop offset="0" className="lifetime-stop" stopOpacity="0" />
+              <stop offset="1" className="lifetime-stop" stopOpacity="0.85" />
+            </linearGradient>
+            <radialGradient id={glowId}>
+              <stop offset="0" className="lifetime-stop" stopOpacity="0.45" />
+              <stop offset="1" className="lifetime-stop" stopOpacity="0" />
+            </radialGradient>
+          </defs>
           <path className="lifetime-tail" d={TAIL_PATH} stroke={`url(#${tailId})`} />
           <circle cx={HEAD_X} cy={HEAD_Y} r="9" fill={`url(#${glowId})`} />
           <circle className="lifetime-head" cx={HEAD_X} cy={HEAD_Y} r="3.4" />
-        </g>
-      </svg>
+        </svg>
+      </div>
       {pulse.stalled && <div className="lifetime-label is-error">Kiosk-Dienst antwortet nicht</div>}
       {showUptime && <div className="lifetime-label">Laufzeit {formatDuration(pulse.uptimeSeconds ?? 0)}</div>}
     </div>
