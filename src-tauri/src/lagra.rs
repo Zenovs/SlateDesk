@@ -547,6 +547,127 @@ impl LagraService {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Lebenszeichen: lagra watches the kiosk
+// ---------------------------------------------------------------------------
+
+/// Every minute a sign of life to lagra (`POST /api/v1/lebenszeichen`); lagra mails when they
+/// stop – the only way to hear of a hang while it lasts, the kiosk cannot report it itself.
+const HEARTBEAT_EVERY: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Heartbeat {
+    /// Kiosk name (state.kiosk.name).
+    pub name: String,
+    pub host: String,
+    pub version: String,
+    pub commit: Option<String>,
+    /// Who should hear of an outage: the first recipient of the mail settings. lagra mails
+    /// only lagra users and otherwise its admins.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub melden: Option<String>,
+}
+
+impl Heartbeat {
+    fn from_state(state: &Value) -> Self {
+        let text = |pointer: &str| {
+            state
+                .pointer(pointer)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
+        Heartbeat {
+            name: text("/kiosk/name").unwrap_or("SlateDesk").to_string(),
+            host: std::fs::read_to_string("/proc/sys/kernel/hostname")
+                .map(|h| h.trim().to_string())
+                .unwrap_or_default(),
+            version: crate::system::VERSION.to_string(),
+            commit: crate::system::commit().map(str::to_string),
+            melden: text("/mail/to")
+                .and_then(|to| to.split([',', ';']).map(str::trim).find(|a| !a.is_empty()))
+                .map(str::to_string),
+        }
+    }
+}
+
+/// Switched off with `lagra.lebenszeichen: false` (web UI); on by default.
+fn heartbeat_wanted(state: &Value) -> bool {
+    state
+        .pointer("/lagra/lebenszeichen")
+        .and_then(Value::as_bool)
+        != Some(false)
+}
+
+impl LagraService {
+    pub async fn send_heartbeat(&self, state: &Value) -> Result<(), LagraError> {
+        let config = LagraConfig::from_state(state, true)?;
+        let url = config.api_url("lebenszeichen")?;
+        let response = self
+            .client
+            .post(url)
+            .bearer_auth(&config.token)
+            .header(ACCEPT, "application/json")
+            .json(&Heartbeat::from_state(state))
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| LagraError::Unreachable(describe_error(&e)))?;
+        let status = response.status();
+        if status.is_redirection() {
+            return Err(LagraError::Redirected(status.as_u16()));
+        }
+        if status.is_success() {
+            return Ok(());
+        }
+        let body = read_body_limited(response, JSON_MAX_BYTES)
+            .await
+            .unwrap_or_default();
+        Err(status_error(status, &body))
+    }
+}
+
+/// Heartbeat loop, started once at app start. A failure is logged when it starts or changes,
+/// not every minute.
+pub async fn run_heartbeat(store: Arc<StateStore>, lagra: Arc<LagraService>) {
+    use crate::health::{self, Level};
+    let mut failing: Option<String> = None;
+    loop {
+        let snapshot = store.snapshot();
+        let result = if heartbeat_wanted(&snapshot.state) {
+            lagra.send_heartbeat(&snapshot.state).await
+        } else {
+            Err(LagraError::NotConfigured)
+        };
+        match result {
+            Ok(()) => {
+                if failing.take().is_some() {
+                    health::event(Level::Info, "Lebenszeichen an lagra kommen wieder an");
+                }
+            }
+            // Off or not set up: nothing to report.
+            Err(LagraError::NotConfigured) => failing = None,
+            Err(e) => {
+                let text = match e {
+                    LagraError::EndpointMissing => {
+                        "lagra kennt die Überwachung noch nicht – lagra-Update nötig".to_string()
+                    }
+                    other => other.to_string(),
+                };
+                if failing.as_deref() != Some(text.as_str()) {
+                    health::event(
+                        Level::Warn,
+                        format!("Lebenszeichen an lagra nicht angekommen: {text}"),
+                    );
+                    failing = Some(text);
+                }
+            }
+        }
+        tokio::time::sleep(HEARTBEAT_EVERY).await;
+    }
+}
+
 #[tauri::command]
 pub async fn lagra_get(
     path: String,
@@ -579,6 +700,40 @@ pub async fn lagra_image(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn heartbeat_names_the_kiosk_and_the_first_recipient() {
+        let state = json!({
+            "kiosk": { "name": " Büro " },
+            "mail": { "to": " ; dario@example.ch, team@example.ch" },
+            "lagra": { "lebenszeichen": true },
+        });
+        let heartbeat = Heartbeat::from_state(&state);
+        assert_eq!(heartbeat.name, "Büro");
+        assert_eq!(heartbeat.melden.as_deref(), Some("dario@example.ch"));
+        assert_eq!(heartbeat.version, crate::system::VERSION);
+        assert!(heartbeat_wanted(&state));
+        assert!(heartbeat_wanted(&json!({})), "on by default");
+        assert!(!heartbeat_wanted(
+            &json!({ "lagra": { "lebenszeichen": false } })
+        ));
+        let fallback = Heartbeat::from_state(&json!({}));
+        assert_eq!(
+            (fallback.name.as_str(), fallback.melden),
+            ("SlateDesk", None)
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_needs_lagra_to_be_set_up() {
+        let service = LagraService::new(crate::http::build_api_client().unwrap());
+        assert_eq!(
+            service
+                .send_heartbeat(&json!({ "lagra": { "enabled": false, "token": "t" } }))
+                .await,
+            Err(LagraError::NotConfigured)
+        );
+    }
 
     fn config(url: &str) -> LagraConfig {
         LagraConfig::from_state(

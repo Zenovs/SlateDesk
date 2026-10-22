@@ -18,6 +18,10 @@ Environment=SLATEDESK_HOME=%h/SlateDesk
 Restart=always
 RestartSec=5
 TimeoutStopSec=20
+# Watchdog: SlateDesk richtet ihn selbst ein (WATCHDOG_USEC) und bestätigt, solange die Anzeige
+# antwortet; bleibt das aus, startet systemd SlateDesk neu – sauber, mit SIGTERM.
+NotifyAccess=main
+WatchdogSignal=SIGTERM
 # Lüfter, die SlateDesk geregelt hat, zurück an Chip/BIOS – auch nach einem Absturz
 ExecStopPost=-/bin/sh %h/SlateDesk/scripts/fans-restore.sh %t/slatedesk-fans
 

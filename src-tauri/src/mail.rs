@@ -571,13 +571,25 @@ mod tests {
         .unwrap();
         let message = message(&config, "Gerät hing – «NAS»", "Zeile 1\nZeile 2 äöü").unwrap();
         let envelope = message.envelope();
-        assert_eq!(envelope.from().map(|a| a.to_string()).as_deref(), Some("kiosk@example.ch"));
+        assert_eq!(
+            envelope.from().map(|a| a.to_string()).as_deref(),
+            Some("kiosk@example.ch")
+        );
         assert_eq!(envelope.to().len(), 2);
         let text = String::from_utf8(message.formatted()).unwrap();
-        assert!(text.contains("From: SlateDesk <kiosk@example.ch>\r\n"), "{text}");
-        assert!(text.contains("To: dario@example.ch, team@example.ch\r\n"), "{text}");
+        assert!(
+            text.contains("From: SlateDesk <kiosk@example.ch>\r\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("To: dario@example.ch, team@example.ch\r\n"),
+            "{text}"
+        );
         assert!(text.contains("Subject: =?utf-8?"), "{text}");
-        assert!(text.contains("Content-Type: text/plain; charset=utf-8\r\n"), "{text}");
+        assert!(
+            text.contains("Content-Type: text/plain; charset=utf-8\r\n"),
+            "{text}"
+        );
         assert!(text.contains("Date: "), "{text}");
     }
 

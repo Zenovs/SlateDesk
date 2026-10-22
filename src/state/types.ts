@@ -71,6 +71,8 @@ export interface LagraConfig {
   enabled: boolean;
   url: string;
   token: string;
+  /** Sign of life to lagra every minute; lagra mails when it stops (src-tauri/src/lagra.rs). */
+  lebenszeichen: boolean;
 }
 
 export interface PlanbarConfig {

@@ -23,7 +23,7 @@ describe('withDefaults', () => {
       displaySchedule: { ...DEFAULT_STATE.kiosk.displaySchedule, enabled: true, on: '06:30' },
     });
     expect(state.theme).toEqual({ mode: 'light', accent: null });
-    expect(state.lagra).toEqual({ enabled: true, url: 'https://lagra.schnyder-werbung.ch', token: 'abc' });
+    expect(state.lagra).toEqual({ enabled: true, url: 'https://lagra.schnyder-werbung.ch', token: 'abc', lebenszeichen: true });
     // The single key of older versions reads as Unternehmen «standard» (like the backend moves it).
     expect(state.planbar).toEqual({
       enabled: false,

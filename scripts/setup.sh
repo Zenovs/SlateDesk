@@ -980,6 +980,79 @@ configure_fan_access() {
     fi
 }
 
+# ─── Watchdog ────────────────────────────────────────────────────────────────
+WATCHDOG_CONF=/etc/systemd/system.conf.d/90-slatedesk-watchdog.conf
+WATCHDOG_UNIT=/etc/systemd/system/slatedesk-watchdog.service
+
+watchdog_present() {
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        [ -e /sys/class/watchdog/watchdog0 ] && return 0
+        sleep 0.2
+    done
+    return 1
+}
+
+# Hängt das ganze Gerät (Kernel oder systemd), startet der Watchdog es nach 60 s neu: systemd
+# meldet sich regelmässig beim Watchdog-Treiber, bleibt das aus, löst er den Neustart aus.
+# Ubuntu lädt Watchdog-Treiber nicht von selbst (Sperrliste, die auch modules-load.d beachtet),
+# darum lädt slatedesk-watchdog.service ihn beim Start ausdrücklich. Ohne Hardware-Watchdog
+# dient «softdog» als Ersatz – er fängt Hänger von systemd ab, nicht aber einen stehenden Kernel.
+configure_watchdog() {
+    local module="" vendor modprobe identity
+    modprobe=$(command -v modprobe || true)
+    [ -n "$modprobe" ] || { warn "modprobe fehlt – kein Watchdog eingerichtet."; return 0; }
+    if [ -f "$WATCHDOG_UNIT" ]; then
+        module=$(awk '/^ExecStart=/ { print $NF; exit }' "$WATCHDOG_UNIT")
+    fi
+    if [ -z "$module" ]; then
+        vendor=$(awk -F': *' '/^vendor_id/ { print $2; exit }' /proc/cpuinfo 2>/dev/null || true)
+        case "$vendor" in
+            GenuineIntel) module=iTCO_wdt ;;
+            AuthenticAMD) module=sp5100_tco ;;
+        esac
+        if [ -e /sys/class/watchdog/watchdog0 ]; then
+            module=""
+        elif [ -z "$module" ] || ! "$modprobe" "$module" >/dev/null 2>&1 || ! watchdog_present; then
+            module=softdog
+            if ! "$modprobe" softdog >/dev/null 2>&1 || ! watchdog_present; then
+                warn "Kein Watchdog verfügbar – nach einem Hänger startet das Gerät nicht von selbst neu."
+                return 0
+            fi
+        fi
+    else
+        "$modprobe" "$module" >/dev/null 2>&1 || true
+    fi
+    if [ -n "$module" ]; then
+        printf '%s\n' \
+            "# SlateDesk: lädt den Watchdog-Treiber, den Ubuntu nicht von selbst lädt (scripts/setup.sh)" \
+            "[Unit]" \
+            "Description=SlateDesk Watchdog-Treiber" \
+            "DefaultDependencies=no" \
+            "Before=sysinit.target" \
+            "" \
+            "[Service]" \
+            "Type=oneshot" \
+            "RemainAfterExit=yes" \
+            "ExecStart=$modprobe $module" \
+            "" \
+            "[Install]" \
+            "WantedBy=sysinit.target" >"$WATCHDOG_UNIT"
+        systemctl daemon-reload || true
+        systemctl enable slatedesk-watchdog.service >/dev/null 2>&1 ||
+            warn "slatedesk-watchdog.service konnte nicht aktiviert werden."
+    fi
+    install -d -m 0755 "${WATCHDOG_CONF%/*}"
+    printf '%s\n' \
+        "# SlateDesk: hängt das Gerät, startet der Watchdog es neu (scripts/setup.sh)" \
+        "[Manager]" \
+        "RuntimeWatchdogSec=60s" \
+        "RebootWatchdogSec=10min" >"$WATCHDOG_CONF"
+    systemctl daemon-reexec || warn "systemctl daemon-reexec fehlgeschlagen – der Watchdog wirkt ab dem nächsten Neustart."
+    identity=$(cat /sys/class/watchdog/watchdog0/identity 2>/dev/null || echo "?")
+    ok "Watchdog aktiv ($identity): hängt das Gerät, startet es nach spätestens 60 s neu."
+}
+
 # ─── Systemprotokoll ─────────────────────────────────────────────────────────
 # Nach einem Hänger zeigt SlateDesk unter System → Protokoll die letzten Meldungen des
 # vorherigen Starts. Dafür muss das Journal einen Neustart überleben und das Kiosk-Konto es
@@ -1062,6 +1135,7 @@ main() {
     configure_autologin
     configure_fan_access
     configure_journal_access
+    configure_watchdog
 
     step "Fernsteuerung"
     configure_ufw

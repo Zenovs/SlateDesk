@@ -17,7 +17,7 @@ import { DISPLAY_SWITCHED_EVENT, useDisplaySchedule, type DisplaySwitchedEvent }
 import { initAppState, useAppState } from './state/appState';
 import { useLayoutStore } from './store/layoutStore';
 import { applyTheme, writeThemeCache } from './styles/theme';
-import { onKioskAction } from './utils/backend';
+import { isTauri, kioskAlive, onKioskAction } from './utils/backend';
 import { eventBus } from './utils/eventBus';
 import { initializeWidgets } from './widgets';
 import { knownWidgetIds } from './widgets/catalog';
@@ -26,6 +26,8 @@ import { knownWidgetIds } from './widgets/catalog';
 initializeWidgets();
 
 const IDENTIFY_MS = 10_000;
+/** Sign of life of the page for the systemd watchdog, which restarts SlateDesk after 150 s of silence. */
+const ALIVE_EVERY_MS = 15_000;
 
 const KioskShell: React.FC = () => {
   const theme = useAppState((s) => s.state.theme);
@@ -63,6 +65,16 @@ const KioskShell: React.FC = () => {
       }),
     [],
   );
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const ping = () => {
+      kioskAlive().catch((err: unknown) => console.warn('Lebenszeichen an den Watchdog fehlgeschlagen:', err));
+    };
+    ping();
+    const timer = setInterval(ping, ALIVE_EVERY_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (identifyTick === 0) return;

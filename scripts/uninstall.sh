@@ -236,6 +236,22 @@ remove_fan_access() {
     ok "Lüftersteuerung entfernt (udev-Regel; die Rechte gelten bis zum nächsten Neustart)."
 }
 
+# Watchdog (configure_watchdog in setup.sh); der Treiber bleibt bis zum Neustart geladen.
+remove_watchdog() {
+    local removed=0
+    if [ -f /etc/systemd/system.conf.d/90-slatedesk-watchdog.conf ]; then
+        rm -f /etc/systemd/system.conf.d/90-slatedesk-watchdog.conf && removed=1
+    fi
+    if [ -f /etc/systemd/system/slatedesk-watchdog.service ]; then
+        systemctl disable slatedesk-watchdog.service >/dev/null 2>&1 || true
+        rm -f /etc/systemd/system/slatedesk-watchdog.service && removed=1
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    [ "$removed" -eq 1 ] || return 0
+    systemctl daemon-reexec >/dev/null 2>&1 || true
+    ok "Watchdog entfernt."
+}
+
 remove_autologin() {
     local conf tmp
     for conf in /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
@@ -304,7 +320,7 @@ main() {
         info "Dienste/Timer stoppen und entfernen, ~/.local/opt/slatedesk und das Update-Protokoll (~/.local/state/slatedesk) löschen"
     fi
     if [ "$IS_ROOT" -eq 1 ]; then
-        info "Reste des alten Setups (dpkg-Paket, sudoers, Cron, Systemdienste), ufw-Regel und Lüftersteuerung entfernen"
+        info "Reste des alten Setups (dpkg-Paket, sudoers, Cron, Systemdienste), ufw-Regel, Lüftersteuerung und Watchdog entfernen"
     fi
     if [ "$OPT_PURGE" -eq 1 ] && [ "$USER_EXISTS" -eq 1 ]; then
         info "--purge: ~/.config/com.slatedesk.app (Dashboard, PIN), WebKit-Daten samt Sicherung und Cache löschen"
@@ -325,6 +341,7 @@ main() {
         remove_legacy
         remove_ufw_rules
         remove_fan_access
+        remove_watchdog
     fi
     if [ "$OPT_PURGE" -eq 1 ] && [ "$USER_EXISTS" -eq 1 ]; then
         if [ "$IS_ROOT" -eq 1 ]; then

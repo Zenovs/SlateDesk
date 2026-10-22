@@ -467,6 +467,29 @@ Antwort des Servers, Warnungen bei wenig Arbeitsspeicher oder heisser CPU. Ab 2 
   sudo journalctl -b -1 -k -p warning --no-pager    # Kernel-Warnungen (Speicher, Grafik, Platte)
   ```
 
+## Watchdog und Überwachung
+
+Drei Stufen holen den Kiosk nach einem Hänger zurück oder melden ihn:
+
+- **Hängt die Anzeige** (WebKit) oder SlateDesk selbst: Die Seite meldet sich alle 15 s beim Programm,
+  das Programm bestätigt systemd regelmässig, dass es lebt – aber nur, solange die Seite antwortet. Bleibt
+  das 150 s aus, startet systemd SlateDesk neu (`src-tauri/src/watchdog.rs`). Den Watchdog richtet die App
+  selbst ein (`WATCHDOG_USEC`); die Unit erlaubt nur die Meldungen (`NotifyAccess=main`), so dass eine
+  ältere Version nach einem Rollback nicht abgebrochen wird.
+- **Arbeitsspeicher fast voll** und SlateDesk (samt WebKit) belegt einen grossen Teil davon: SlateDesk
+  startet sich neu, bevor das Gerät ins Auslagern gerät – frühestens nach einer halben Stunde Laufzeit
+  (Protokoll: «Arbeitsspeicher fast voll»).
+- **Hängt das ganze Gerät:** Der Hardware-Watchdog startet es nach spätestens 60 s neu. `setup.sh` legt
+  dafür `/etc/systemd/system.conf.d/90-slatedesk-watchdog.conf` an (`RuntimeWatchdogSec=60s`) und lädt den
+  Treiber über `slatedesk-watchdog.service` – Ubuntu sperrt Watchdog-Treiber sonst. Intel: `iTCO_wdt`,
+  AMD: `sp5100_tco`; ohne Hardware-Watchdog `softdog` (fängt Hänger von systemd, nicht einen stehenden
+  Kernel). Prüfen: `cat /sys/class/watchdog/watchdog0/identity`, `systemctl show -p RuntimeWatchdogUSec`.
+
+**Überwachung durch lagra:** Ein Gerät, das hängt, kann selbst nichts melden. Darum schickt SlateDesk jede
+Minute ein Lebenszeichen an lagra (`POST /api/v1/lebenszeichen` mit dem lagra-Token). Bleibt es 5 Minuten aus,
+mailt lagra; kommt es wieder, ebenfalls. Abschalten unter lagra → Verbindung → «Von lagra überwachen lassen».
+Geplante Abschaltungen (Gerät nachts aus) lösen ebenfalls eine Mail aus.
+
 ## Lüfter
 
 Die Fernsteuerung zeigt unter **System → Lüfter** alle Lüfter, die der Kernel über hwmon meldet

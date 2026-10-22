@@ -94,7 +94,7 @@ export const DEFAULT_STATE: AppStateData = deepFreeze({
     cursorHideSeconds: 300,
     displaySchedule: { enabled: false, on: '07:00', off: '19:00', days: [1, 2, 3, 4, 5] },
   },
-  lagra: { enabled: false, url: DEFAULT_LAGRA_URL, token: '' },
+  lagra: { enabled: false, url: DEFAULT_LAGRA_URL, token: '', lebenszeichen: true },
   planbar: { enabled: false, url: DEFAULT_PLANBAR_URL, unternehmen: {} },
   mail: { enabled: false, host: '', port: DEFAULT_MAIL_PORT, user: '', password: '', from: '', to: '' },
   data: { todos: {}, announcements: {} },
@@ -283,6 +283,7 @@ function lagraWithDefaults(value: unknown): LagraConfig {
     enabled: bool(raw.enabled, DEFAULT_STATE.lagra.enabled),
     url: typeof raw.url === 'string' && raw.url.trim() ? raw.url.trim() : DEFAULT_LAGRA_URL,
     token: typeof raw.token === 'string' ? raw.token : '',
+    lebenszeichen: bool(raw.lebenszeichen, DEFAULT_STATE.lagra.lebenszeichen),
   };
 }
 

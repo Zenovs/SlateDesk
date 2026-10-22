@@ -325,6 +325,9 @@ export const planbarPatch = <T = unknown>(path: string, body: { completed: boole
 
 export const netCheck = (targets: NetCheckTarget[]): Promise<NetCheckResult[]> => call('net_check', { targets });
 
+/** The kiosk page lives – keeps the systemd watchdog (src-tauri/src/watchdog.rs) from restarting SlateDesk. */
+export const kioskAlive = (): Promise<void> => call('kiosk_alive');
+
 /** Sign of life of the backend (Lifetime widget); resolves with the app uptime in seconds. */
 export const heartbeat = (): Promise<number> => call('heartbeat');
 

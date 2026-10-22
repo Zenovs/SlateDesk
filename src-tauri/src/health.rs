@@ -6,6 +6,9 @@
 //! A run that ends without a clean exit (the app hung or crashed, the device hung or lost
 //! power) is reported by the next start: with the last values, after a device restart with the
 //! system journal of the previous boot (when readable), and by mail.
+//!
+//! Memory guard: when memory is almost full and SlateDesk (with WebKit) holds a large part of
+//! it, SlateDesk restarts itself – before the device swaps itself into a hang.
 
 use crate::proc::output_with_timeout;
 use crate::system;
@@ -14,6 +17,7 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
@@ -33,6 +37,12 @@ const HOT_CPU_C: f64 = 85.0;
 /// A warning that holds is repeated at most this often.
 const WARN_EVERY_MS: u64 = 30 * 60_000;
 const MAX_DETAIL_CHARS: usize = 8_000;
+/// Memory guard: less than this share free …
+const CRITICAL_FREE_PERCENT: u64 = 5;
+/// … while SlateDesk holds more than this share.
+const CRITICAL_APP_PERCENT: u64 = 40;
+/// No guard restart in the first half hour – a restart loop would be worse than the problem.
+const GUARD_AFTER_MS: u64 = 30 * 60_000;
 const JOURNAL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Last part of the app log offered for download.
 const APP_LOG_TAIL_BYTES: u64 = 1024 * 1024;
@@ -233,6 +243,22 @@ pub struct HealthLog {
 }
 
 static LOG: OnceLock<Arc<HealthLog>> = OnceLock::new();
+/// Restarts SlateDesk cleanly (set by lib.rs).
+type Restart = Box<dyn Fn() + Send + Sync>;
+static RESTART: OnceLock<Restart> = OnceLock::new();
+static RESTARTING: AtomicBool = AtomicBool::new(false);
+
+/// What the memory guard calls to restart SlateDesk.
+pub fn on_memory_critical(restart: impl Fn() + Send + Sync + 'static) {
+    let _ = RESTART.set(Box::new(restart));
+}
+
+fn memory_critical(sample: &Sample) -> bool {
+    let total = sample.mem_total_mb;
+    total > 0
+        && sample.mem_available_mb * 100 < total * CRITICAL_FREE_PERCENT
+        && sample.app_mb * 100 > total * CRITICAL_APP_PERCENT
+}
 
 /// The log of this run (`None` before [`start`], e.g. in tests).
 pub fn current() -> Option<Arc<HealthLog>> {
@@ -439,10 +465,23 @@ impl HealthLog {
     fn take_sample(&self) {
         let sample = measure(&self.proc_root, self.pid);
         self.check_warnings(&sample);
+        let critical =
+            memory_critical(&sample) && now_ms().saturating_sub(self.started) >= GUARD_AFTER_MS;
+        let summary = sample.summary();
         self.append(&Entry::Sample {
             t: now_ms(),
             sample,
         });
+        if critical && !RESTARTING.swap(true, Ordering::SeqCst) {
+            if let Some(restart) = RESTART.get() {
+                self.append_event(
+                    Level::Warn,
+                    format!("Arbeitsspeicher fast voll – {summary}. SlateDesk startet neu, bevor das Gerät hängt."),
+                    None,
+                );
+                restart();
+            }
+        }
     }
 
     pub fn report(&self) -> HealthReport {
@@ -804,6 +843,23 @@ mod tests {
             ),
             (4, 700, 200)
         );
+    }
+
+    #[test]
+    fn memory_guard_needs_little_free_memory_and_a_large_slatedesk() {
+        let sample = |free: u64, app: u64| Sample {
+            mem_total_mb: 8000,
+            mem_available_mb: free,
+            app_mb: app,
+            ..Sample::default()
+        };
+        assert!(memory_critical(&sample(300, 4000)));
+        assert!(!memory_critical(&sample(500, 4000)), "enough free memory");
+        assert!(
+            !memory_critical(&sample(300, 2000)),
+            "another program holds the memory"
+        );
+        assert!(!memory_critical(&Sample::default()));
     }
 
     #[test]

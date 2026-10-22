@@ -36,6 +36,13 @@ const SCHEMA: SettingsField[] = [
     label: 'API-Token',
     placeholder: 'Token aus lagra einfügen',
   },
+  {
+    type: 'boolean',
+    key: 'lebenszeichen',
+    label: 'Von lagra überwachen lassen',
+    description:
+      'Der Kiosk meldet sich jede Minute bei lagra. Bleibt das 5 Minuten aus – das Gerät hängt oder ist ohne Strom –, schickt lagra eine Mail an den Empfänger aus «Mail-Versand» (wenn er ein lagra-Konto hat, sonst an die lagra-Admins).',
+  },
 ];
 
 interface TestState {
@@ -127,6 +134,8 @@ export function LagraConnectionCard() {
         toast.success(clean.token ? 'Token gespeichert' : 'Token entfernt');
       } else if (changed.includes('enabled')) {
         toast.success(clean.enabled ? 'lagra eingeschaltet' : 'lagra ausgeschaltet');
+      } else if (changed.includes('lebenszeichen')) {
+        toast.success(clean.lebenszeichen ? 'Überwachung durch lagra eingeschaltet' : 'Überwachung durch lagra ausgeschaltet');
       } else if (changed.includes('url')) {
         toast.success('Adresse gespeichert');
       }

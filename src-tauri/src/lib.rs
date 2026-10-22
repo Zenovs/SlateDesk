@@ -15,6 +15,7 @@ mod remote;
 mod state;
 mod system;
 mod update;
+mod watchdog;
 mod web;
 
 use futures_util::future::BoxFuture;
@@ -364,7 +365,11 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(http);
 
     let health = health::start(app.path().app_log_dir().ok());
+    let restarter = handle.clone();
+    health::on_memory_critical(move || schedule_restart(restarter.clone()));
     tauri::async_runtime::spawn(health::run(health));
+    tauri::async_runtime::spawn(watchdog::run());
+    tauri::async_runtime::spawn(lagra::run_heartbeat(Arc::clone(&store), Arc::clone(&lagra)));
     tauri::async_runtime::spawn(mail::run_outbox(Arc::clone(&store)));
     tauri::async_runtime::spawn(fans::run(Arc::clone(&fans)));
     // systemd stops the service with SIGTERM (nightly restart, update, shutdown): a clean exit,
@@ -431,6 +436,7 @@ pub fn run() {
             system::system_info,
             system::report_viewport,
             system::heartbeat,
+            watchdog::kiosk_alive,
             http::http_fetch,
             feeds::feeds_fetch,
             calendar::calendar_events,

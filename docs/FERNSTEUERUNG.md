@@ -153,6 +153,11 @@ Je eine Seite pro Integration.
    nötig», wenn lagra die Endpunkte für SlateDesk noch nicht kennt.
 2. **Vorschau** – Übersicht (Server, Aufgaben, Virenscanner, DAM, NAS) und Hintergrundaufgaben. So sieht man,
    was die Widgets anzeigen.
+3. **Von lagra überwachen lassen** (Standard: an) – der Kiosk meldet sich jede Minute bei lagra. Bleibt das
+   5 Minuten aus, weil das Gerät hängt oder ohne Strom ist, schickt lagra eine Mail; meldet er sich wieder,
+   eine zweite. Empfänger ist die Adresse aus **System → Mail-Versand**, sofern sie ein lagra-Konto hat,
+   sonst gehen die Mails an die lagra-Admins. Kommen die Lebenszeichen nicht an, steht das unter
+   System → Protokoll.
 
 **planbar** – ein API-Schlüssel gehört in planbar zu genau einem Unternehmen, deshalb gibt es pro Unternehmen
 einen Eintrag:
