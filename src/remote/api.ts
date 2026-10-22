@@ -133,6 +133,30 @@ export async function lagraTest(signal?: AbortSignal): Promise<LagraTestResult> 
   return expectObject<LagraTestResult>(await request<unknown>('/api/lagra-test', { signal }), 'lagra-Test');
 }
 
+// ── Mail ─────────────────────────────────────────────────────────────────────
+
+export interface MailTestResult {
+  ok: boolean;
+  message: string;
+}
+
+/** POST /api/mail-test – sends a test mail with the stored mail settings (also while switched off). */
+export async function mailTest(signal?: AbortSignal): Promise<MailTestResult> {
+  return expectObject<MailTestResult>(await request<unknown>('/api/mail-test', { method: 'POST', signal }), 'Test-Mail');
+}
+
+export interface MailStatus {
+  /** Outage mails waiting for the next attempt. */
+  pending: number;
+  /** Last delivery attempt of an outage mail (the test mail does not count). */
+  last: { at: number; subject: string; ok: boolean; error?: string } | null;
+}
+
+/** GET /api/mail-status */
+export async function mailStatus(signal?: AbortSignal): Promise<MailStatus> {
+  return expectObject<MailStatus>(await request<unknown>('/api/mail-status', { signal }), 'Mail-Status');
+}
+
 /**
  * GET /api/planbar-test – connection test with the stored planbar settings (also when
  * switched off): Unternehmen `org`, or every Unternehmen with an API key.

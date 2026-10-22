@@ -50,6 +50,8 @@ rrule = "0.14"
 chrono = "0.4"
 chrono-tz = "0.10"
 qrcode = { version = "0.14", default-features = false }
+# Host-Monitor alerts by mail (SMTP) – rustls with the webpki roots, like reqwest.
+lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1-rustls-tls"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_24"] }

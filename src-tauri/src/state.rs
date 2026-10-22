@@ -19,7 +19,7 @@ use tokio::sync::{broadcast, Mutex};
 /// Value sent instead of a stored secret over HTTP/SSE/export.
 pub const SECRET_PLACEHOLDER: &str = "__gesetzt__";
 pub const MAX_STATE_BYTES: usize = 2 * 1024 * 1024;
-pub const ALLOWED_KEYS: [&str; 8] = [
+pub const ALLOWED_KEYS: [&str; 9] = [
     "version",
     "layout",
     "widgetSettings",
@@ -27,6 +27,7 @@ pub const ALLOWED_KEYS: [&str; 8] = [
     "kiosk",
     "lagra",
     "planbar",
+    "mail",
     "data",
 ];
 

@@ -15,6 +15,7 @@ const SECTION_NAMES: Record<string, string> = {
   kiosk: 'Kiosk-Einstellungen',
   lagra: 'lagra-Verbindung',
   planbar: 'planbar-Verbindung',
+  mail: 'Mail-Versand',
   data: 'Pinnwand und Aufgaben',
 };
 

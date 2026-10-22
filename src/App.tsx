@@ -8,6 +8,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import { Dashboard } from './components/Dashboard';
+import { HostAlertOverlay } from './components/HostAlertOverlay';
 import { IdentifyOverlay } from './components/IdentifyOverlay';
 import { LoadingScreen } from './components/LoadingScreen';
 import { TopBar } from './components/TopBar';
@@ -73,6 +74,7 @@ const KioskShell: React.FC = () => {
     <div className="app-shell">
       <TopBar />
       <Dashboard />
+      <HostAlertOverlay />
       {identifyTick > 0 && <IdentifyOverlay name={kioskName} onClose={() => setIdentifyTick(0)} />}
       {!display.active && <div className={`display-blackout${display.blackout ? ' dark' : ''}`} aria-hidden="true" />}
     </div>

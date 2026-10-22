@@ -14,6 +14,7 @@ import type {
   KioskConfig,
   LagraConfig,
   LayoutData,
+  MailConfig,
   PlanbarConfig,
   PlanbarOrgConfig,
   ThemeData,
@@ -24,6 +25,8 @@ import type {
 
 export const DEFAULT_LAGRA_URL = 'https://lagra.schnyder-werbung.ch';
 export const DEFAULT_PLANBAR_URL = 'https://planbar.dev';
+/** Same as mail.rs: 587 = STARTTLS. */
+export const DEFAULT_MAIL_PORT = 587;
 export const DEFAULT_TODO_LIST = 'Allgemein';
 
 /** Ids of `planbar.unternehmen` – same rule as planbar.rs. */
@@ -91,6 +94,7 @@ export const DEFAULT_STATE: AppStateData = deepFreeze({
   },
   lagra: { enabled: false, url: DEFAULT_LAGRA_URL, token: '' },
   planbar: { enabled: false, url: DEFAULT_PLANBAR_URL, unternehmen: {} },
+  mail: { enabled: false, host: '', port: DEFAULT_MAIL_PORT, user: '', password: '', from: '', to: '' },
   data: { todos: {}, announcements: {} },
 });
 
@@ -294,6 +298,21 @@ function planbarWithDefaults(value: unknown): PlanbarConfig {
   };
 }
 
+function mailWithDefaults(value: unknown): MailConfig {
+  const raw = asObject(value);
+  const text = (field: unknown): string => (typeof field === 'string' ? field.trim() : '');
+  return {
+    enabled: bool(raw.enabled, DEFAULT_STATE.mail.enabled),
+    host: text(raw.host),
+    port: intInRange(raw.port, 1, 65535, DEFAULT_MAIL_PORT),
+    user: text(raw.user),
+    // Not trimmed: spaces may belong to a password.
+    password: typeof raw.password === 'string' ? raw.password : '',
+    from: text(raw.from),
+    to: text(raw.to),
+  };
+}
+
 const PRIORITIES: readonly TodoPriority[] = ['niedrig', 'normal', 'hoch'];
 const LEVELS: readonly AnnouncementLevel[] = ['info', 'wichtig', 'erfolg'];
 
@@ -357,6 +376,7 @@ export function withDefaults(input: unknown): AppStateData {
     kiosk: kioskWithDefaults(raw.kiosk),
     lagra: lagraWithDefaults(raw.lagra),
     planbar: planbarWithDefaults(raw.planbar),
+    mail: mailWithDefaults(raw.mail),
     data: {
       todos: recordOf(data.todos, sanitizeTodo),
       announcements: recordOf(data.announcements, sanitizeAnnouncement),

@@ -3,6 +3,7 @@ mod display;
 mod feeds;
 mod http;
 mod lagra;
+mod mail;
 mod net;
 mod ollama;
 mod planbar;
@@ -358,6 +359,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(Arc::clone(&planbar));
     app.manage(http);
 
+    tauri::async_runtime::spawn(mail::run_outbox(Arc::clone(&store)));
+
     if remote.enabled() {
         let host: Arc<dyn KioskHost> = Arc::new(TauriHost { app: handle });
         let ctx = web::WebContext::new(store, Arc::clone(&remote), system, lagra, planbar, host);
@@ -404,6 +407,7 @@ pub fn run() {
             lagra::lagra_image,
             planbar::planbar_get,
             planbar::planbar_patch,
+            mail::mail_alert,
             net::net_check,
             net::run_speed_test,
             net::test_nas_connection,

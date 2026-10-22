@@ -11,6 +11,7 @@ export interface AppStateData {
   kiosk: KioskConfig;
   lagra: LagraConfig;
   planbar: PlanbarConfig;
+  mail: MailConfig;
   data: {
     /** Keyed by id → race-free set/delete from kiosk and web UI. */
     todos: Record<string, TodoItem>;
@@ -81,6 +82,22 @@ export interface PlanbarOrgConfig {
   name: string;
   /** Secret (`pk_live_…`) – redacted over HTTP; a new `planbar.url` over HTTP clears every key. */
   apiKey: string;
+}
+
+/** SMTP access for the Host-Monitor's outage mails (src-tauri/src/mail.rs). */
+export interface MailConfig {
+  enabled: boolean;
+  /** Postausgangsserver, e.g. asmtp.mail.hostpoint.ch – changing it over HTTP clears the password. */
+  host: string;
+  /** 465 = TLS, anything else STARTTLS. */
+  port: number;
+  user: string;
+  /** Secret – redacted over HTTP. */
+  password: string;
+  /** Sender address; '' = the user name. */
+  from: string;
+  /** Recipients, separated by comma or semicolon. */
+  to: string;
 }
 
 export type TodoPriority = 'niedrig' | 'normal' | 'hoch';

@@ -325,6 +325,12 @@ export const planbarPatch = <T = unknown>(path: string, body: { completed: boole
 
 export const netCheck = (targets: NetCheckTarget[]): Promise<NetCheckResult[]> => call('net_check', { targets });
 
+/**
+ * Queues a mail to the recipients of `state.mail`; the backend sends it in the
+ * background and retries while the network is down. Dropped when mail is off.
+ */
+export const mailAlert = (subject: string, body: string): Promise<void> => call('mail_alert', { subject, body });
+
 export const runSpeedTest = (): Promise<SpeedTestResult> => call('run_speed_test');
 
 export const testNasConnection = (ip: string): Promise<NasConnectionResult> => call('test_nas_connection', { ip });

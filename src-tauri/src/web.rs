@@ -696,6 +696,18 @@ async fn lagra_test(State(ctx): State<WebState>) -> Response {
     Json(ctx.lagra.test(&snapshot.state).await).into_response()
 }
 
+/// Sends a test mail with the stored settings (they may still be switched off).
+async fn mail_test(State(ctx): State<WebState>) -> Response {
+    let snapshot = ctx.store.snapshot();
+    let name = kiosk_name(&ctx.store);
+    Json(crate::mail::send_test(&snapshot.state, &name).await).into_response()
+}
+
+/// Waiting alerts and the last delivery attempt.
+async fn mail_status() -> Response {
+    Json(crate::mail::status()).into_response()
+}
+
 /// The Unternehmen named by [`PLANBAR_ORG_HEADER`]; an unreadable value names none that
 /// exists (planbar.rs answers «nicht eingerichtet»).
 fn planbar_org(headers: &HeaderMap) -> Option<String> {
@@ -967,6 +979,8 @@ pub fn router(ctx: WebState) -> Router {
             get(planbar_proxy_get).patch(planbar_proxy_patch),
         )
         .route("/planbar-test", get(planbar_test))
+        .route("/mail-test", post(mail_test))
+        .route("/mail-status", get(mail_status))
         .route("/export", get(export_state))
         .route("/import", post(import_state))
         .fallback(api_not_found)
@@ -1714,6 +1728,19 @@ mod tests {
             assert_eq!(reply.status, StatusCode::FORBIDDEN, "{denied}");
             assert!(reply.headers.get(UPSTREAM_HEADER).is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn mail_routes_report_missing_configuration() {
+        let h = harness(true);
+        let token = login(&h).await;
+        let test = call(&h, "POST", "/api/mail-test", Some(&token), true, None).await;
+        assert_eq!(
+            test.json(),
+            json!({ "ok": false, "message": "Kein Postausgangsserver eingetragen" })
+        );
+        let status = call(&h, "GET", "/api/mail-status", Some(&token), false, None).await;
+        assert!(status.json()["pending"].is_u64());
     }
 
     #[test]

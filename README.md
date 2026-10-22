@@ -70,7 +70,7 @@ Abschnitt «Migration vom alten Setup» lesen.
 | | QR-Code | Gäste-WLAN, Webadresse oder Text |
 | Medien | Volumio | aktueller Titel mit Wiedergabe- und Lautstärke-Tasten |
 | Netzwerk | Speedtest | Download, Upload und Ping (Cloudflare), Verlauf |
-| | Host-Monitor | Erreichbarkeit von NAS, Servern, Druckern (Ping, TCP-Port, HTTP) mit Verlauf |
+| | Host-Monitor | Erreichbarkeit von NAS, Servern, Druckern (Ping, TCP-Port, HTTP) mit Verlauf; bei Ausfall grosser Hinweis auf dem Bildschirm und Mail |
 | | Kiosk-Status | Laufzeit, Temperatur, Auslastung und QR-Code zur Fernsteuerung |
 | Sensorik & KI | Gesichtserkennung | Kamerabild mit lokaler Gesichtserkennung (face-api.js), auch nur als Personenzahl |
 | | Ruhemodus | schaltet den Bildschirm aus, wenn niemand da ist, und weckt ihn per Kamera |

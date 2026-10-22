@@ -9,6 +9,10 @@
  * outage. The history is stored per instance and per check target (kind,
  * host, port, path), so renaming a host keeps it and pointing it elsewhere
  * starts over; it is written to localStorage every few minutes, not per check.
+ *
+ * Outages also go beyond the tile (services/hostAlerts): a large notice over
+ * the whole kiosk and a mail when a host goes down and when it is back – both
+ * only from checks of this run, never from the stored history alone.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw, ServerOff, Settings2 } from 'lucide-react';
@@ -18,6 +22,14 @@ import { widgetSettingsActions } from '../state/dataActions';
 import { useWidgetSettings } from '../hooks/useWidgetSettings';
 import { usePolling } from '../hooks/usePolling';
 import {
+  outageMails,
+  readReported,
+  reportHostOutages,
+  writeReported,
+  type HostOutage,
+  type MonitoredHostState,
+} from '../services/hostAlerts';
+import {
   evaluate,
   MAX_TARGETS,
   toTarget,
@@ -25,7 +37,7 @@ import {
   type LiveResults,
   type Target,
 } from '../services/hostCheck';
-import { isTauri, KIOSK_ONLY_MESSAGE, netCheck, type NetCheckTarget } from '../utils/backend';
+import { isTauri, KIOSK_ONLY_MESSAGE, mailAlert, netCheck, type NetCheckTarget } from '../utils/backend';
 import { HOST_MONITOR_DEFAULT_SETTINGS, type HostMonitorSettings, type MonitoredHost } from './manifests/nas';
 import { ArcGauge, TimeSparkline, type ChartTone, type SparkPoint } from './shared/charts';
 import './styles/nas.css';
@@ -576,6 +588,56 @@ export function NasWidget({ instanceId }: WidgetProps) {
     () => targets.map((target) => hostStatus(target, history[target.key] ?? [], live?.[target.key], threshold, windowFrom)),
     [targets, history, live, threshold, windowFrom],
   );
+
+  // ── Outage notice and mails ──
+  const kioskName = useAppState((s) => s.state.kiosk.name);
+  /** A check of this run answered – before that, the statuses come from the stored history. */
+  const checked = polling.lastUpdated !== null;
+  const alertScreen = settings.alertScreen !== false;
+  const alertMail = settings.alertMail !== false;
+  // Keyed by content: the statuses are rebuilt every minute (time window).
+  const outagesJson = JSON.stringify(
+    statuses
+      .filter((s) => s.state === 'down')
+      .map((s): HostOutage => ({
+        key: s.target.key,
+        name: s.target.name,
+        address: s.target.address,
+        message: s.message,
+        since: s.since,
+      })),
+  );
+  const hostStatesJson = JSON.stringify(
+    statuses.map((s): MonitoredHostState => ({
+      key: s.target.key,
+      name: s.target.name,
+      address: s.target.address,
+      state: s.state,
+      message: s.message,
+      since: s.since,
+    })),
+  );
+
+  useEffect(() => {
+    const show = available && checked && alertScreen;
+    reportHostOutages(instanceId, show ? (JSON.parse(outagesJson) as HostOutage[]) : []);
+  }, [instanceId, available, checked, alertScreen, outagesJson]);
+
+  useEffect(() => () => reportHostOutages(instanceId, []), [instanceId]);
+
+  useEffect(() => {
+    if (!available || !checked) return;
+    if (!alertMail) {
+      writeReported(instanceId, {});
+      return;
+    }
+    const hosts = JSON.parse(hostStatesJson) as MonitoredHostState[];
+    const { reported, mails } = outageMails(readReported(instanceId), hosts, Date.now(), kioskName);
+    writeReported(instanceId, reported);
+    for (const mail of mails) {
+      mailAlert(mail.subject, mail.body).catch((err: unknown) => console.warn('Ausfall-Mail nicht übergeben:', err));
+    }
+  }, [instanceId, available, checked, alertMail, hostStatesJson, kioskName]);
 
   if (targets.length === 0) {
     return (

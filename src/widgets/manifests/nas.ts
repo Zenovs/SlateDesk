@@ -23,6 +23,10 @@ export type HostMonitorSettings = {
   failureThreshold: number;
   showSparkline: boolean;
   historyHours: number;
+  /** Large notice over the whole kiosk while a host is down. */
+  alertScreen: boolean;
+  /** Mail when a host goes down and when it answers again (set up in the web UI, System → Mail-Versand). */
+  alertMail: boolean;
 };
 
 export const HOST_CHECK_KINDS: readonly HostCheckKind[] = ['ping', 'tcp', 'http'];
@@ -35,6 +39,8 @@ export const HOST_MONITOR_DEFAULT_SETTINGS: HostMonitorSettings = {
   failureThreshold: 3,
   showSparkline: true,
   historyHours: 12,
+  alertScreen: true,
+  alertMail: true,
 };
 
 const hostItemFields: SettingsField[] = [
@@ -108,6 +114,24 @@ const hostMonitorSettingsSchema: SettingsField[] = [
     max: 10,
     step: 1,
   },
+  {
+    type: 'section',
+    label: 'Bei Ausfall',
+    description: 'Sobald ein Host als ausgefallen zählt – also nach den Fehlversuchen oben.',
+  },
+  {
+    key: 'alertScreen',
+    type: 'boolean',
+    label: 'Grosser Hinweis auf dem Bildschirm',
+    description: 'Bleibt über dem ganzen Dashboard, bis wieder alles erreichbar ist.',
+  },
+  {
+    key: 'alertMail',
+    type: 'boolean',
+    label: 'Mail senden',
+    description:
+      'Je eine Mail beim Ausfall und wenn der Host wieder antwortet. Server und Empfänger stehen in der Fernsteuerung unter System → Mail-Versand.',
+  },
   { type: 'section', label: 'Antwortzeit', description: 'Farben der Anzeige: grün, gelb ab «Warnung», rot ab «Kritisch».' },
   { key: 'warnLatencyMs', type: 'number', label: 'Warnung ab', unit: 'ms', min: 1, max: 10000, step: 1 },
   { key: 'critLatencyMs', type: 'number', label: 'Kritisch ab', unit: 'ms', min: 1, max: 10000, step: 1 },
@@ -129,7 +153,7 @@ export const nasManifest: WidgetManifest = {
   id: 'nas',
   name: 'Host-Monitor',
   description: 'Erreichbarkeit von NAS, Servern und Diensten',
-  version: '2.0.0',
+  version: '2.1.0',
   author: 'SlateDesk',
   category: 'Netzwerk',
   icon: 'Server',

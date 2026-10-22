@@ -548,6 +548,106 @@
   color: rgba(255, 255, 255, 0.9);
 }
 
+/* Host-Monitor outage: over the dashboard until the hosts answer again. Touches pass through,
+   so the dashboard stays usable; below the identify overlay and the display blackout. */
+.host-alert {
+  position: fixed;
+  inset: 0;
+  z-index: 99990;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-xl);
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  animation: fadeIn 200ms ease;
+}
+
+.host-alert-panel {
+  width: min(1100px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: clamp(24px, 4vw, 56px);
+  border: 6px solid rgb(var(--error-rgb));
+  border-radius: var(--radius-xl);
+  background: #1c0d0d;
+  color: #fff;
+  text-align: center;
+  animation: hostAlertPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes hostAlertPulse {
+  0%, 100% {
+    border-color: rgb(var(--error-rgb));
+    box-shadow: 0 0 64px rgba(var(--error-rgb), 0.55);
+  }
+  50% {
+    border-color: rgba(var(--error-rgb), 0.45);
+    box-shadow: 0 0 16px rgba(var(--error-rgb), 0.2);
+  }
+}
+
+.host-alert-icon {
+  flex-shrink: 0;
+  width: clamp(48px, 7vw, 96px);
+  height: clamp(48px, 7vw, 96px);
+  color: rgb(var(--error-rgb));
+}
+
+.host-alert-title {
+  font-size: clamp(32px, 6vw, 88px);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.1;
+  word-break: break-word;
+}
+
+.host-alert-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.host-alert-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0.2em 0.8em;
+  padding: 0.35em 0.7em;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: clamp(18px, 2.6vw, 34px);
+  line-height: 1.25;
+}
+
+.host-alert-name {
+  font-weight: var(--font-weight-bold);
+}
+
+.host-alert-detail {
+  color: rgba(255, 255, 255, 0.75);
+  word-break: break-word;
+}
+
+.host-alert-since {
+  color: #fca5a5;
+}
+
+.host-alert-note {
+  font-size: clamp(14px, 1.6vw, 20px);
+  color: rgba(255, 255, 255, 0.6);
+}
+
 /* Display schedule: swallows the waking touch; black when the hardware could not be switched off */
 .display-blackout {
   position: fixed;

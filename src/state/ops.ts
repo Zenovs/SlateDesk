@@ -25,6 +25,7 @@ export const ALLOWED_TOP_LEVEL_KEYS: readonly string[] = [
   'kiosk',
   'lagra',
   'planbar',
+  'mail',
   'data',
 ];
 

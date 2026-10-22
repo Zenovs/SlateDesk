@@ -202,12 +202,18 @@ Schlüssel erstellt werden: [API_SETUP.md](../API_SETUP.md).
   «Update fehlgeschlagen». Das Ergebnis des letzten Laufs (auch des nächtlichen) steht ebenfalls hier.
 - **Aktionen** – Neu laden, Identifizieren, Bildschirm aus/an und **App neu starten** (der Bildschirm ist
   einige Sekunden leer, alle Anmeldungen enden).
+- **Mail-Versand** – Postfach für die Ausfall-Mails des Host-Monitors: Empfänger (mehrere mit Komma),
+  Postausgangsserver (z. B. `asmtp.mail.hostpoint.ch`), Port 587 (STARTTLS) oder 465 (SSL/TLS), Benutzer,
+  Passwort und optional ein Absender. Zuerst den Server eintragen, dann das Passwort – ein geänderter Server
+  löscht das gespeicherte Passwort. *Test-Mail senden* prüft die Einstellungen sofort (auch ausgeschaltet).
+  Darunter steht die letzte Ausfall-Mail und ob noch Mails auf einen neuen Versuch warten: Ist das Netz
+  weg, versucht der Kiosk es jede Minute erneut, bis zu 24 Stunden lang.
 - **PIN ändern** – aktueller PIN, neuer PIN (6–12 Ziffern), Wiederholung. Andere angemeldete Browser werden
   dabei abgemeldet, der eigene bleibt angemeldet. Falsche Eingaben des aktuellen PINs zählen wie
   Fehlversuche bei der Anmeldung.
 - **Sicherung**
   - *Sicherung herunterladen* speichert `slatedesk-state.json`: Layout, Widget-Einstellungen, Inhalte,
-    Kiosk-Einstellungen, Design, lagra und planbar. Zugangsdaten stehen darin nur als «gesetzt» –
+    Kiosk-Einstellungen, Design, lagra, planbar und Mail-Versand. Zugangsdaten stehen darin nur als «gesetzt» –
     ICS-Links und andere Adressen dagegen im Klartext.
   - *Sicherung wiederherstellen* zeigt zuerst, was die Datei enthält, und ersetzt dann den **gesamten**
     Zustand. Auf demselben Kiosk bleiben gespeicherte Zugangsdaten erhalten; auf einem neuen Gerät müssen
@@ -239,3 +245,4 @@ Schlüssel erstellt werden: [API_SETUP.md](../API_SETUP.md).
 | Änderung erscheint nicht am Kiosk | Verbindungsstatus oben prüfen; unter Übersicht «Neu laden» antippen. |
 | Neue Einstellung fehlt nach einem Update | Die Seite lädt sich selbst neu; sonst im Browser neu laden (F5 bzw. Seite nach unten ziehen). |
 | Widget zeigt «… ist nicht eingerichtet» | Verbindung auf der Seite lagra bzw. planbar einrichten. |
+| Keine Ausfall-Mail | System → Mail-Versand: eingeschaltet? *Test-Mail senden* nennt den Fehler; «Letzte Ausfall-Mail» zeigt, was beim letzten Ausfall passiert ist. Im Host-Monitor muss «Mail senden» an sein. |
