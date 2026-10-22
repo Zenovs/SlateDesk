@@ -12,6 +12,7 @@ import { clockManifest } from './manifests/clock';
 import { lagraJobsManifest } from './manifests/lagra-jobs';
 import { lagraNeuManifest } from './manifests/lagra-neu';
 import { lagraStatusManifest } from './manifests/lagra-status';
+import { lifetimeManifest } from './manifests/lifetime';
 import { messagesManifest } from './manifests/messages';
 import { nasManifest } from './manifests/nas';
 import { newsManifest } from './manifests/news';
@@ -44,6 +45,7 @@ export const widgetCatalog: WidgetManifest[] = [
   sleeperManifest,
   qrCodeManifest,
   systemManifest,
+  lifetimeManifest,
   lagraStatusManifest,
   lagraJobsManifest,
   lagraNeuManifest,

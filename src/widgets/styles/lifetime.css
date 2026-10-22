@@ -1,0 +1,60 @@
+/* Lifetime (LifetimeWidget) – calm by design: faint track, one dot with a fading tail */
+
+.lifetime {
+  --lifetime-color: var(--accent-color);
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-xs);
+  overflow: hidden;
+}
+
+.lifetime.is-stalled {
+  --lifetime-color: var(--error-color);
+}
+
+.lifetime-orbit {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow: visible;
+}
+
+.lifetime-stop {
+  stop-color: var(--lifetime-color);
+}
+
+.lifetime-track {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-opacity: 0.08;
+  stroke-width: 1.2;
+}
+
+.lifetime-tail {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.lifetime-head {
+  fill: var(--lifetime-color);
+}
+
+.lifetime-label {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(11px, 9cqmin, 18px);
+  color: var(--text-secondary);
+}
+
+.lifetime-label.is-error {
+  color: var(--error-color);
+  font-weight: var(--font-weight-bold);
+}

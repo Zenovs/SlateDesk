@@ -1,6 +1,7 @@
 //! `SystemInfo` for the kiosk and the web UI, read from /proc, /sys and `df`.
 
 use crate::remote::{RemoteAuth, RemoteSummary};
+use crate::state::StateStore;
 use serde::Serialize;
 use std::fs;
 use std::net::IpAddr;
@@ -395,6 +396,19 @@ pub async fn system_info(
     remote: State<'_, Arc<RemoteAuth>>,
 ) -> Result<SystemInfo, String> {
     Ok(collect(&ctx, remote.summary()).await)
+}
+
+/// Sign of life for the Lifetime widget, app uptime in seconds. The answer needs the async
+/// runtime (which also runs the web server and every background task) and a read of the state
+/// store – a stuck runtime or a deadlocked store never answers, and the widget stops moving.
+#[tauri::command]
+pub async fn heartbeat(
+    ctx: State<'_, Arc<SystemContext>>,
+    store: State<'_, Arc<StateStore>>,
+) -> Result<u64, String> {
+    let _ = store.snapshot();
+    tokio::task::yield_now().await;
+    Ok(ctx.app_uptime().as_secs())
 }
 
 #[tauri::command]

@@ -21,6 +21,7 @@ import { clockManifest } from './manifests/clock';
 import { lagraJobsManifest } from './manifests/lagra-jobs';
 import { lagraNeuManifest } from './manifests/lagra-neu';
 import { lagraStatusManifest } from './manifests/lagra-status';
+import { lifetimeManifest } from './manifests/lifetime';
 import { messagesManifest } from './manifests/messages';
 import { nasManifest } from './manifests/nas';
 import { newsManifest } from './manifests/news';
@@ -41,6 +42,7 @@ import { ClockWidget } from './ClockWidget';
 import { LagraJobsWidget } from './LagraJobsWidget';
 import { LagraNeuWidget } from './LagraNeuWidget';
 import { LagraStatusWidget } from './LagraStatusWidget';
+import { LifetimeWidget } from './LifetimeWidget';
 import { MessagesWidget } from './MessagesWidget';
 import { NasSettingsExtra, NasWidget } from './NasWidget';
 import { NewsWidget } from './NewsWidget';
@@ -86,6 +88,7 @@ const widgetDefinitions: WidgetDefinition[] = [
   { manifest: sleeperManifest, component: SleeperWidget, settingsExtra: SleeperSettingsExtra },
   { manifest: qrCodeManifest, component: QrCodeWidget },
   { manifest: systemManifest, component: SystemWidget },
+  { manifest: lifetimeManifest, component: LifetimeWidget },
   { manifest: lagraStatusManifest, component: LagraStatusWidget },
   { manifest: lagraJobsManifest, component: LagraJobsWidget },
   { manifest: lagraNeuManifest, component: LagraNeuWidget },

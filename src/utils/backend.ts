@@ -325,6 +325,9 @@ export const planbarPatch = <T = unknown>(path: string, body: { completed: boole
 
 export const netCheck = (targets: NetCheckTarget[]): Promise<NetCheckResult[]> => call('net_check', { targets });
 
+/** Sign of life of the backend (Lifetime widget); resolves with the app uptime in seconds. */
+export const heartbeat = (): Promise<number> => call('heartbeat');
+
 /**
  * Queues a mail to the recipients of `state.mail`; the backend sends it in the
  * background and retries while the network is down. Dropped when mail is off.

@@ -400,6 +400,7 @@ pub fn run() {
             remote::remote_info,
             system::system_info,
             system::report_viewport,
+            system::heartbeat,
             http::http_fetch,
             feeds::feeds_fetch,
             calendar::calendar_events,
