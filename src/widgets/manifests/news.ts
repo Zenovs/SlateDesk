@@ -37,6 +37,14 @@ export const NEWS_DEFAULT_SETTINGS: NewsSettings = {
 
 const notTicker = (values: Record<string, unknown>): boolean => values.mode !== 'ticker';
 
+/** 45 → «45 s», 120 → «2 min», 270 → «4 min 30 s» */
+const formatSeconds = (seconds: number): string => {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes === 0) return `${rest} s`;
+  return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`;
+};
+
 const newsSettingsSchema: SettingsField[] = [
   {
     type: 'section',
@@ -74,9 +82,9 @@ const newsSettingsSchema: SettingsField[] = [
     type: 'range',
     label: 'Wechsel alle',
     min: 5,
-    max: 60,
+    max: 600,
     step: 1,
-    unit: 's',
+    format: formatSeconds,
     showIf: (values) => values.mode === 'rotation',
   },
   { key: 'showImages', type: 'boolean', label: 'Bilder anzeigen', showIf: notTicker },

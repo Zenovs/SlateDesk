@@ -537,8 +537,7 @@ function RangeControl({ id, field, value, set }: ControlProps<FieldOf<'range'>>)
           onBlur={draft.finish}
         />
         <span className="settings-range-value">
-          {draft.text}
-          {field.unit ? ` ${field.unit}` : ''}
+          {field.format ? field.format(Number(draft.text)) : `${draft.text}${field.unit ? ` ${field.unit}` : ''}`}
         </span>
       </div>
     </FieldShell>

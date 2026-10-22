@@ -59,7 +59,15 @@ export type SettingsField =
       /** Search field placeholder. */
       placeholder?: string;
     })
-  | (Base & { type: 'range'; min: number; max: number; step?: number; unit?: string })
+  | (Base & {
+      type: 'range';
+      min: number;
+      max: number;
+      step?: number;
+      unit?: string;
+      /** Shown value instead of «value unit», e.g. seconds as «4 min 30 s». */
+      format?: (value: number) => string;
+    })
   | (Base & { type: 'color' })
   /** 'HH:MM' */
   | (Base & { type: 'time' })
