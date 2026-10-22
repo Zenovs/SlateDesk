@@ -12,7 +12,8 @@
  *
  * Outages also go beyond the tile (services/hostAlerts): a large notice over
  * the whole kiosk and a mail when a host goes down and when it is back – both
- * only from checks of this run, never from the stored history alone.
+ * only from checks of this run, never from the stored history alone, and only
+ * once the outage has lasted `alertAfterMinutes`.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw, ServerOff, Settings2 } from 'lucide-react';
@@ -22,6 +23,7 @@ import { widgetSettingsActions } from '../state/dataActions';
 import { useWidgetSettings } from '../hooks/useWidgetSettings';
 import { usePolling } from '../hooks/usePolling';
 import {
+  downLongEnough,
   outageMails,
   readReported,
   reportHostOutages,
@@ -38,7 +40,12 @@ import {
   type Target,
 } from '../services/hostCheck';
 import { isTauri, KIOSK_ONLY_MESSAGE, mailAlert, netCheck, type NetCheckTarget } from '../utils/backend';
-import { HOST_MONITOR_DEFAULT_SETTINGS, type HostMonitorSettings, type MonitoredHost } from './manifests/nas';
+import {
+  ALERT_AFTER_OPTIONS,
+  HOST_MONITOR_DEFAULT_SETTINGS,
+  type HostMonitorSettings,
+  type MonitoredHost,
+} from './manifests/nas';
 import { ArcGauge, TimeSparkline, type ChartTone, type SparkPoint } from './shared/charts';
 import './styles/nas.css';
 
@@ -595,10 +602,16 @@ export function NasWidget({ instanceId }: WidgetProps) {
   const checked = polling.lastUpdated !== null;
   const alertScreen = settings.alertScreen !== false;
   const alertMail = settings.alertMail !== false;
+  const alertAfterMs =
+    (ALERT_AFTER_OPTIONS.includes(settings.alertAfterMinutes)
+      ? settings.alertAfterMinutes
+      : HOST_MONITOR_DEFAULT_SETTINGS.alertAfterMinutes) * 60_000;
+  /** Down long enough for the notice and the mail; `now` moves on every minute. */
+  const alarming = (s: HostStatus) => s.state === 'down' && downLongEnough(s.since, now, alertAfterMs);
   // Keyed by content: the statuses are rebuilt every minute (time window).
   const outagesJson = JSON.stringify(
     statuses
-      .filter((s) => s.state === 'down')
+      .filter(alarming)
       .map((s): HostOutage => ({
         key: s.target.key,
         name: s.target.name,
@@ -612,7 +625,8 @@ export function NasWidget({ instanceId }: WidgetProps) {
       key: s.target.key,
       name: s.target.name,
       address: s.target.address,
-      state: s.state,
+      // Not down long enough yet: no mail – and if it answers again before, none at all.
+      state: s.state === 'down' && !alarming(s) ? 'pending' : s.state,
       message: s.message,
       since: s.since,
     })),

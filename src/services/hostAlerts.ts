@@ -46,6 +46,14 @@ export function allOutages(byInstance: Record<string, HostOutage[]>): HostOutage
   return [...seen.values()].sort((a, b) => (a.since ?? Infinity) - (b.since ?? Infinity));
 }
 
+/**
+ * Unreachable for at least `afterMs` since its first failed check – then the
+ * notice and the mail come. An unknown start counts as long enough.
+ */
+export function downLongEnough(since: number | null, now: number, afterMs: number): boolean {
+  return since === null || now - since >= afterMs;
+}
+
 // ── Mails ────────────────────────────────────────────────────────────────────
 
 /** Hosts reported as down: check key → start of the outage (ms). */

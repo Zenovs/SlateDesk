@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allOutages, formatOutageDuration, outageMails, type MonitoredHostState } from './hostAlerts';
+import { allOutages, downLongEnough, formatOutageDuration, outageMails, type MonitoredHostState } from './hostAlerts';
 
 const T0 = Date.UTC(2026, 9, 22, 12, 0);
 const MIN = 60_000;
@@ -86,3 +86,13 @@ describe('allOutages', () => {
     expect(allOutages({ one: [nas, printer], two: [router, nas] }).map((o) => o.name)).toEqual(['Router', 'NAS', 'Drucker']);
   });
 });
+
+describe('downLongEnough', () => {
+  it('waits the set time from the first failed check', () => {
+    expect(downLongEnough(T0, T0 + 4 * MIN, 5 * MIN)).toBe(false);
+    expect(downLongEnough(T0, T0 + 5 * MIN, 5 * MIN)).toBe(true);
+    expect(downLongEnough(T0, T0, 0)).toBe(true);
+    expect(downLongEnough(null, T0, 5 * MIN)).toBe(true);
+  });
+});
+

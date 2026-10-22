@@ -23,6 +23,8 @@ export type HostMonitorSettings = {
   failureThreshold: number;
   showSparkline: boolean;
   historyHours: number;
+  /** Notice and mail only once a host has been unreachable this long (minutes, from its first failed check); 0 = as soon as it counts as down. */
+  alertAfterMinutes: number;
   /** Large notice over the whole kiosk while a host is down. */
   alertScreen: boolean;
   /** Mail when a host goes down and when it answers again (set up in the web UI, System → Mail-Versand). */
@@ -30,6 +32,8 @@ export type HostMonitorSettings = {
 };
 
 export const HOST_CHECK_KINDS: readonly HostCheckKind[] = ['ping', 'tcp', 'http'];
+
+export const ALERT_AFTER_OPTIONS: readonly number[] = [0, 2, 5, 10, 15, 30];
 
 export const HOST_MONITOR_DEFAULT_SETTINGS: HostMonitorSettings = {
   hosts: [],
@@ -39,6 +43,7 @@ export const HOST_MONITOR_DEFAULT_SETTINGS: HostMonitorSettings = {
   failureThreshold: 3,
   showSparkline: true,
   historyHours: 12,
+  alertAfterMinutes: 5,
   alertScreen: true,
   alertMail: true,
 };
@@ -117,7 +122,17 @@ const hostMonitorSettingsSchema: SettingsField[] = [
   {
     type: 'section',
     label: 'Bei Ausfall',
-    description: 'Sobald ein Host als ausgefallen zählt – also nach den Fehlversuchen oben.',
+    description: 'Das Widget zeigt einen Ausfall sofort. Hinweis und Mail kommen erst, wenn er anhält.',
+  },
+  {
+    key: 'alertAfterMinutes',
+    type: 'select',
+    label: 'Hinweis und Mail nach',
+    options: ALERT_AFTER_OPTIONS.map((minutes) => ({
+      value: minutes,
+      label: minutes === 0 ? 'Sofort (sobald als ausgefallen gezählt)' : `${minutes} Minuten`,
+    })),
+    description: 'So lange muss ein Host ununterbrochen nicht erreichbar sein. Kürzere Aussetzer zeigt nur das Widget selbst.',
   },
   {
     key: 'alertScreen',
@@ -153,7 +168,7 @@ export const nasManifest: WidgetManifest = {
   id: 'nas',
   name: 'Host-Monitor',
   description: 'Erreichbarkeit von NAS, Servern und Diensten',
-  version: '2.1.0',
+  version: '2.2.0',
   author: 'SlateDesk',
   category: 'Netzwerk',
   icon: 'Server',
