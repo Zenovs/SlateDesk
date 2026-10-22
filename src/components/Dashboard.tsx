@@ -6,12 +6,16 @@
  * layout is persisted only when the user finishes a drag or resize – never
  * from onLayoutChange, which also fires for render echoes and compaction
  * (that would write every remote change straight back).
+ *
+ * Placement is free (utils/freeGrid): a widget stays where it is dropped,
+ * also alone in the middle of the screen.
  */
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { GridLayout, useContainerWidth, verticalCompactor, type EventCallback, type Layout } from 'react-grid-layout';
+import { GridLayout, useContainerWidth, type EventCallback, type Layout } from 'react-grid-layout';
 import type { DragConfig, GridConfig, ResizeConfig } from 'react-grid-layout/core';
 import { useLayoutStore } from '../store/layoutStore';
 import { useElementSize } from '../hooks/useElementSize';
+import { useFreeCompactor } from '../hooks/useFreeCompactor';
 import { GRID_CONTAINER_PADDING, GRID_MARGIN, fitRowHeight } from '../types/grid';
 import { isTauri, reportViewport } from '../utils/backend';
 import { getManifest } from '../widgets/catalog';
@@ -72,7 +76,14 @@ export const Dashboard: React.FC = () => {
     [editMode],
   );
 
-  const persistLayout = useCallback<EventCallback>((finalLayout) => updateLayout(finalLayout), [updateLayout]);
+  const { compactor, start: startMove } = useFreeCompactor();
+  const persistLayout = useCallback<EventCallback>(
+    (finalLayout) => {
+      compactor.end();
+      updateLayout(finalLayout);
+    },
+    [compactor, updateLayout],
+  );
 
   const children = useMemo(
     () =>
@@ -108,8 +119,10 @@ export const Dashboard: React.FC = () => {
             gridConfig={gridConfig}
             dragConfig={dragConfig}
             resizeConfig={resizeConfig}
-            compactor={verticalCompactor}
+            compactor={compactor}
+            onDragStart={startMove}
             onDragStop={persistLayout}
+            onResizeStart={startMove}
             onResizeStop={persistLayout}
           >
             {children}

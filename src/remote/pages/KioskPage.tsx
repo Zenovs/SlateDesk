@@ -16,7 +16,7 @@ import { fitRowHeight } from '../../types/grid';
 import type { SettingsField } from '../../types/settings';
 import { formatNumber } from '../format';
 import { useSystemInfo } from '../hooks/useSystemInfo';
-import { compactWidgets, rescaleWidgets, rowsOnScreen } from '../kioskGrid';
+import { rescaleWidgets, rowsOnScreen, shownWidgets } from '../kioskGrid';
 import { href } from '../router';
 import { Button, Card, Field, LinkButton, Notice, PageHeader, Segmented, toast, type SegmentedOption } from '../ui';
 
@@ -351,7 +351,7 @@ function ColumnsField() {
     () =>
       target === cols
         ? null
-        : { before: bottomOf(compactWidgets(widgets, cols)), after: bottomOf(rescaleWidgets(widgets, cols, target)) },
+        : { before: bottomOf(shownWidgets(widgets)), after: bottomOf(rescaleWidgets(widgets, cols, target)) },
     [widgets, cols, target],
   );
 

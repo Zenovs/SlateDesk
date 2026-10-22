@@ -196,3 +196,21 @@ describe('firstFreeSlot', () => {
     expect(firstFreeSlot([{ x: 0, y: 0, w: 2, h: 2 }], 6, 10, 2)).toEqual({ x: 0, y: 2 });
   });
 });
+
+describe('free placement', () => {
+  const widgets = [
+    { instanceId: 'a', widgetId: 'clock', x: 0, y: 0, w: 4, h: 2 },
+    { instanceId: 'b', widgetId: 'news', x: 4, y: 5, w: 4, h: 2 },
+  ];
+
+  it('keeps a widget alone in the middle of the screen', () => {
+    const state = withDefaults({ layout: { widgets, freePlacement: true } });
+    expect(state.layout.widgets.find((w) => w.instanceId === 'b')?.y).toBe(5);
+  });
+
+  it('shows a layout of an older version as its grid did (moved up)', () => {
+    const state = withDefaults({ layout: { widgets } });
+    expect(state.layout.freePlacement).toBe(false);
+    expect(state.layout.widgets.find((w) => w.instanceId === 'b')?.y).toBe(0);
+  });
+});

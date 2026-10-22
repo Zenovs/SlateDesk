@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { bottomOf, DEFAULT_WIDGETS } from '../state/defaults';
 import type { WidgetInstance } from '../state/types';
 import { getManifest } from '../widgets/catalog';
-import { compactWidgets, rescaleWidgets } from './kioskGrid';
+import { rescaleWidgets, shownWidgets } from './kioskGrid';
 
-const DEFAULT_LAYOUT = compactWidgets([...DEFAULT_WIDGETS], 12);
+const DEFAULT_LAYOUT = shownWidgets([...DEFAULT_WIDGETS]);
 const byId = (widgets: readonly WidgetInstance[]) => new Map(widgets.map((w) => [w.instanceId, w]));
 
 function overlaps(a: WidgetInstance, b: WidgetInstance): boolean {

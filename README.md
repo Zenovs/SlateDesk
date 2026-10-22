@@ -49,7 +49,8 @@ Abschnitt «Migration vom alten Setup» lesen.
 ### Kiosk
 
 - Vollbild ohne Fensterrahmen, startet nach der automatischen Anmeldung von selbst
-- Raster mit frei wählbarer Spaltenzahl; Widgets per Ziehen verschieben und in der Grösse ändern
+- Raster mit frei wählbarer Spaltenzahl; Widgets per Ziehen frei platzieren (auch mitten auf dem Bildschirm)
+  und in der Grösse ändern
   («Bearbeiten» in der oberen Leiste oder in der Fernsteuerung)
 - Design Dunkel/Hell mit wählbarer Akzentfarbe
 - obere Leiste ausblendbar (antippen der Ecke oben rechts blendet sie für 30 Sekunden ein),

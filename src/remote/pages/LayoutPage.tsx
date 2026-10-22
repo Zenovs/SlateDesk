@@ -6,16 +6,11 @@
  * preview fills the phone's width, and a swipe to scroll must never move a
  * widget on the live kiosk. The layout is written only when a drag/resize
  * ends (never from onLayoutChange, which also fires for render echoes and
- * compaction), with «Rückgängig» in the toast.
+ * compaction), with «Rückgängig» in the toast. Placement is free like on the
+ * kiosk (utils/freeGrid).
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import {
-  GridLayout,
-  useContainerWidth,
-  verticalCompactor,
-  type EventCallback,
-  type Layout,
-} from 'react-grid-layout';
+import { GridLayout, useContainerWidth, type EventCallback, type Layout } from 'react-grid-layout';
 import type { DragConfig, GridConfig, ResizeConfig } from 'react-grid-layout/core';
 import {
   ArrowDown,
@@ -32,6 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import { WidgetIcon } from '../../components/settings/WidgetIcon';
+import { useFreeCompactor } from '../../hooks/useFreeCompactor';
 import { useAppState } from '../../state/appState';
 import { layoutActions } from '../../state/dataActions';
 import { MAX_WIDGET_ROWS } from '../../state/defaults';
@@ -39,6 +35,7 @@ import type { WidgetInstance } from '../../state/types';
 import { GRID_CONTAINER_PADDING, GRID_MARGIN } from '../../types/grid';
 import type { WidgetManifest } from '../../types/widget';
 import { availableMoves, moveItem, resizeItem, type Direction, type Moves } from '../../utils/gridMoves';
+import { resolveOverlaps } from '../../utils/freeGrid';
 import { getManifest } from '../../widgets/catalog';
 import { WidgetCatalogSheet } from '../components/WidgetCatalogSheet';
 import { useDisplayedWidgets } from '../hooks/useDisplayedWidgets';
@@ -309,7 +306,7 @@ interface LiveSize {
 
 export function LayoutPage() {
   const widgets = useAppState((s) => s.state.layout.widgets);
-  // What the kiosk shows (compacted) – for heights, labels and positions.
+  // What the kiosk shows – for heights, labels and positions.
   const displayed = useDisplayedWidgets();
   const cols = useAppState((s) => s.state.layout.cols);
   const rowHeightSetting = useAppState((s) => s.state.layout.rowHeight);
@@ -356,7 +353,8 @@ export function LayoutPage() {
     [widgets, cols],
   );
   // What the kiosk shows – the base for the selection panel's moves.
-  const shownLayout = useMemo(() => verticalCompactor.compact(layout, cols), [layout, cols]);
+  const shownLayout = useMemo(() => resolveOverlaps(layout), [layout]);
+  const { compactor, start: startMove } = useFreeCompactor();
 
   const gridConfig = useMemo<Partial<GridConfig>>(
     () => ({
@@ -380,22 +378,34 @@ export function LayoutPage() {
   );
   const resizeConfig = useMemo<Partial<ResizeConfig>>(() => ({ enabled: true, handles: RESIZE_HANDLES }), []);
 
-  const onDragStart = useCallback<EventCallback>((_layout, oldItem) => {
-    if (oldItem) setSelectedId(oldItem.i);
-  }, []);
+  const onDragStart = useCallback<EventCallback>(
+    (current, oldItem, ...rest) => {
+      startMove(current, oldItem, ...rest);
+      if (oldItem) setSelectedId(oldItem.i);
+    },
+    [startMove],
+  );
   const onResize = useCallback<EventCallback>((_layout, _oldItem, newItem) => {
     if (!newItem) return;
     setLiveSize((prev) =>
       prev && prev.i === newItem.i && prev.w === newItem.w && prev.h === newItem.h ? prev : { i: newItem.i, w: newItem.w, h: newItem.h },
     );
   }, []);
-  const onDragStop = useCallback<EventCallback>((finalLayout) => {
-    persistLayout(finalLayout, 'Widget verschoben');
-  }, []);
-  const onResizeStop = useCallback<EventCallback>((finalLayout) => {
-    setLiveSize(null);
-    persistLayout(finalLayout, 'Grösse geändert');
-  }, []);
+  const onDragStop = useCallback<EventCallback>(
+    (finalLayout) => {
+      compactor.end();
+      persistLayout(finalLayout, 'Widget verschoben');
+    },
+    [compactor],
+  );
+  const onResizeStop = useCallback<EventCallback>(
+    (finalLayout) => {
+      compactor.end();
+      setLiveSize(null);
+      persistLayout(finalLayout, 'Grösse geändert');
+    },
+    [compactor],
+  );
 
   const duplicate = useCallback(
     (instance: WidgetInstance) => {
@@ -469,7 +479,7 @@ export function LayoutPage() {
     fitRows > 0 ? `${fitRows} Zeilen eingepasst` : `Zeilenhöhe ${rowHeightSetting} px`
   }`;
   const selectedManifest = selected ? getManifest(selected.widgetId) : undefined;
-  const selectedMoves = selected ? availableMoves(shownLayout, selected.instanceId, cols, MAX_WIDGET_ROWS) : null;
+  const selectedMoves = selected ? availableMoves(shownLayout, selected.instanceId, cols, MAX_WIDGET_ROWS, true) : null;
 
   return (
     <div className="r-page r-page-wide">
@@ -525,7 +535,7 @@ export function LayoutPage() {
               gridConfig={gridConfig}
               dragConfig={dragConfig}
               resizeConfig={resizeConfig}
-              compactor={verticalCompactor}
+              compactor={compactor}
               onDragStart={onDragStart}
               onDragStop={onDragStop}
               onResizeStart={onDragStart}
@@ -557,8 +567,8 @@ export function LayoutPage() {
           manifest={selectedManifest}
           canDuplicate={!selectedManifest?.singleton}
           moves={selectedMoves}
-          onMove={(direction) => applyLayout(moveItem(shownLayout, selected.instanceId, direction, cols))}
-          onResize={(dw, dh) => applyLayout(resizeItem(shownLayout, selected.instanceId, dw, dh, cols, MAX_WIDGET_ROWS))}
+          onMove={(direction) => applyLayout(moveItem(shownLayout, selected.instanceId, direction, cols, true))}
+          onResize={(dw, dh) => applyLayout(resizeItem(shownLayout, selected.instanceId, dw, dh, cols, MAX_WIDGET_ROWS, true))}
           onDuplicate={() => duplicate(selected)}
           onRemove={() => setRemoveTarget(selected)}
           onClose={() => setSelectedId(null)}

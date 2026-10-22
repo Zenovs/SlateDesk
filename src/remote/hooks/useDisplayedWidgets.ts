@@ -1,11 +1,11 @@
 /**
  * useDisplayedWidgets – the kiosk's widgets with the positions the kiosk
- * actually shows (vertically compacted), plus their display labels.
+ * actually shows (overlaps resolved), plus their display labels.
  */
 import { useMemo } from 'react';
 import { useAppState } from '../../state/appState';
 import type { WidgetInstance } from '../../state/types';
-import { compactWidgets } from '../kioskGrid';
+import { shownWidgets } from '../kioskGrid';
 import { instanceLabels } from '../widgetInfo';
 
 export interface DisplayedWidgets {
@@ -16,9 +16,8 @@ export interface DisplayedWidgets {
 
 export function useDisplayedWidgets(): DisplayedWidgets {
   const stored = useAppState((s) => s.state.layout.widgets);
-  const cols = useAppState((s) => s.state.layout.cols);
   return useMemo(() => {
-    const widgets = compactWidgets(stored, cols);
+    const widgets = shownWidgets(stored);
     return { widgets, labels: instanceLabels(widgets) };
-  }, [stored, cols]);
+  }, [stored]);
 }

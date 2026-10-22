@@ -5,6 +5,7 @@
  * present or well-formed. `withDefaults()` turns any input into a complete,
  * render-safe AppStateData (one bad value must never blank the kiosk).
  */
+import { verticalCompactor } from 'react-grid-layout/core';
 import { isPlainObject } from './ops';
 import type {
   Announcement,
@@ -81,6 +82,7 @@ export const DEFAULT_STATE: AppStateData = deepFreeze({
     cols: DEFAULT_COLS,
     rowHeight: DEFAULT_ROW_HEIGHT,
     fitRows: 0,
+    freePlacement: true,
   },
   widgetSettings: {},
   theme: { mode: 'dark', accent: null },
@@ -195,17 +197,35 @@ export function sanitizeWidgets(input: unknown, cols: number): WidgetInstance[] 
   });
 }
 
+/**
+ * Positions as the grid of older versions showed them: every widget moved up
+ * as far as it could. Unchanged items keep their object identity.
+ */
+export function compactVertically(widgets: readonly WidgetInstance[], cols: number): WidgetInstance[] {
+  const compacted = verticalCompactor.compact(
+    widgets.map((w) => ({ i: w.instanceId, x: w.x, y: w.y, w: w.w, h: w.h })),
+    cols,
+  );
+  const byId = new Map(compacted.map((item) => [item.i, item]));
+  return widgets.map((w) => {
+    const item = byId.get(w.instanceId);
+    return item && (item.x !== w.x || item.y !== w.y) ? { ...w, x: item.x, y: item.y } : w;
+  });
+}
+
 function layoutWithDefaults(value: unknown): LayoutData {
   const raw = asObject(value);
   const cols = intInRange(raw.cols, MIN_COLS, MAX_COLS, DEFAULT_COLS);
+  // Missing list → default dashboard; an explicitly empty list stays empty.
+  const widgets = sanitizeWidgets(Array.isArray(raw.widgets) ? raw.widgets : DEFAULT_WIDGETS, cols);
+  // The default dashboard has no gaps – nothing to compact.
+  const freePlacement = raw.freePlacement === true || !Array.isArray(raw.widgets);
   return {
-    // Missing list → default dashboard; an explicitly empty list stays empty.
-    widgets: Array.isArray(raw.widgets)
-      ? sanitizeWidgets(raw.widgets, cols)
-      : sanitizeWidgets(DEFAULT_WIDGETS, cols),
+    widgets: freePlacement ? widgets : compactVertically(widgets, cols),
     cols,
     rowHeight: intInRange(raw.rowHeight, MIN_ROW_HEIGHT, MAX_ROW_HEIGHT, DEFAULT_ROW_HEIGHT),
     fitRows: intInRange(raw.fitRows, 0, MAX_FIT_ROWS, 0),
+    freePlacement,
   };
 }
 

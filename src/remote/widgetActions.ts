@@ -4,21 +4,20 @@
  */
 import { useAppState } from '../state/appState';
 import { layoutActions } from '../state/dataActions';
-import { bottomOf, sanitizeWidgets } from '../state/defaults';
+import { firstFreeSlot, sanitizeWidgets } from '../state/defaults';
 import type { StateOp, WidgetInstance } from '../state/types';
 import type { WidgetManifest } from '../types/widget';
 import { uid } from '../utils/uid';
 import { getManifest } from '../widgets/catalog';
-import { compactWidgets } from './kioskGrid';
 import { withoutSecrets } from './secrets';
 import { toast } from './ui/toast';
 
 /**
- * Widget list with `widget` appended below all others, compacted like the
- * kiosk shows it – so stored positions match what the user sees.
+ * Widget list with `widget` in the first free spot – top-most, then left-most,
+ * else below all others – like the widget picker on the kiosk.
  */
-function withAppended(widgets: readonly WidgetInstance[], widget: WidgetInstance, cols: number): WidgetInstance[] {
-  return compactWidgets(sanitizeWidgets([...widgets, { ...widget, y: bottomOf(widgets) }], cols), cols);
+function withPlaced(widgets: readonly WidgetInstance[], widget: WidgetInstance, cols: number): WidgetInstance[] {
+  return sanitizeWidgets([...widgets, { ...widget, ...firstFreeSlot(widgets, cols, widget.w, widget.h) }], cols);
 }
 
 /** The manifest allows only one instance and it is already placed. */
@@ -26,7 +25,7 @@ export function isSingletonPlaced(manifest: WidgetManifest, widgets: readonly Wi
   return manifest.singleton === true && widgets.some((w) => w.widgetId === manifest.id);
 }
 
-/** Places a new instance below all others (moving up into a free gap, like on the kiosk) with the manifest's default size. Returns its id. */
+/** Places a new instance in the first free spot with the manifest's default size. Returns its id. */
 export function addWidget(manifest: WidgetManifest): string | null {
   const { widgets, cols } = useAppState.getState().state.layout;
   if (isSingletonPlaced(manifest, widgets)) {
@@ -37,7 +36,7 @@ export function addWidget(manifest: WidgetManifest): string | null {
   const h = Math.max(1, manifest.minHeight, manifest.defaultHeight);
   const instanceId = `${manifest.id}-${uid()}`;
   void layoutActions
-    .setWidgets(withAppended(widgets, { instanceId, widgetId: manifest.id, x: 0, y: 0, w, h }, cols))
+    .setWidgets(withPlaced(widgets, { instanceId, widgetId: manifest.id, x: 0, y: 0, w, h }, cols))
     .then((ok) => {
       if (ok) toast.success(`«${manifest.name}» hinzugefügt`);
     });
@@ -45,8 +44,8 @@ export function addWidget(manifest: WidgetManifest): string | null {
 }
 
 /**
- * Copies an instance (size and settings) to a new instanceId below all
- * others – one write, so the kiosk never shows the copy without settings.
+ * Copies an instance (size and settings) to a new instanceId in the first
+ * free spot – one write, so the kiosk never shows the copy without settings.
  * Returns the new id.
  */
 export function duplicateWidget(instance: WidgetInstance, label: string): string | null {
@@ -63,7 +62,7 @@ export function duplicateWidget(instance: WidgetInstance, label: string): string
   // Stored secrets only exist at their original place on the kiosk.
   const copy = settings ? withoutSecrets(settings) : null;
   if (copy) ops.push({ op: 'set', path: ['widgetSettings', instanceId], value: copy.value });
-  const widgets = withAppended(
+  const widgets = withPlaced(
     state.layout.widgets,
     { instanceId, widgetId: instance.widgetId, x: instance.x, y: 0, w: instance.w, h: instance.h },
     state.layout.cols,

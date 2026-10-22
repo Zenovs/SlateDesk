@@ -3,7 +3,16 @@
  * missing top-level sections. Runs only in the kiosk (or local dev) context –
  * the web UI never writes defaults on its own.
  */
-import { DEFAULT_STATE, isHexColor, LEGACY_PLANBAR_ORG_ID, legacyPlanbarOrg, sanitizeWidgets, DEFAULT_COLS } from './defaults';
+import {
+  compactVertically,
+  DEFAULT_COLS,
+  DEFAULT_STATE,
+  isHexColor,
+  LEGACY_PLANBAR_ORG_ID,
+  legacyPlanbarOrg,
+  sanitizeWidgets,
+  withDefaults,
+} from './defaults';
 import { isPlainObject } from './ops';
 import type { RawState, StateOp, ThemeData, WidgetInstance } from './types';
 // Type-only imports in clock.ts: no import cycle.
@@ -104,6 +113,8 @@ const isMissing = (raw: RawState, key: string): boolean => raw[key] === undefine
  * Ops that bring a freshly loaded backend state up to date:
  * - no `layout` yet → import the legacy layout/settings/theme (once, unless
  *   `slatedesk-migrated=1`), otherwise the default dashboard
+ * - a layout of a version before free placement → its positions as that
+ *   version's grid showed them (moved up into free space), stored once
  * - every other missing top-level section → its defaults
  * Returns [] when nothing needs to be written.
  */
@@ -120,8 +131,16 @@ export function buildInitialOps(
     ops.push({
       op: 'set',
       path: ['layout'],
-      value: { ...DEFAULT_STATE.layout, widgets: legacy?.widgets ?? DEFAULT_STATE.layout.widgets },
+      value: {
+        ...DEFAULT_STATE.layout,
+        widgets: legacy?.widgets ? compactVertically(legacy.widgets, DEFAULT_COLS) : DEFAULT_STATE.layout.widgets,
+      },
     });
+  } else if (isPlainObject(raw.layout) && raw.layout.freePlacement !== true) {
+    ops.push(
+      { op: 'set', path: ['layout', 'widgets'], value: withDefaults({ layout: raw.layout }).layout.widgets },
+      { op: 'set', path: ['layout', 'freePlacement'], value: true },
+    );
   }
 
   if (isMissing(raw, 'version')) ops.push({ op: 'set', path: ['version'], value: DEFAULT_STATE.version });

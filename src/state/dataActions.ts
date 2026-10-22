@@ -107,8 +107,12 @@ export interface LayoutItemLike {
 export type NewWidget = Omit<WidgetInstance, 'instanceId'> & { instanceId?: string };
 
 function writeWidgets(next: WidgetInstance[]): Promise<boolean> {
-  if (jsonEqual(current().layout.widgets, next)) return Promise.resolve(true);
-  return apply([{ op: 'set', path: ['layout', 'widgets'], value: next }]);
+  const layout = current().layout;
+  if (layout.freePlacement && jsonEqual(layout.widgets, next)) return Promise.resolve(true);
+  const ops: StateOp[] = [{ op: 'set', path: ['layout', 'widgets'], value: next }];
+  // Placed freely from now on – the positions of an older state must not be compacted again.
+  if (!layout.freePlacement) ops.push({ op: 'set', path: ['layout', 'freePlacement'], value: true });
+  return apply(ops);
 }
 
 export const layoutActions = {

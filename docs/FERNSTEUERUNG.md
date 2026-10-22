@@ -84,11 +84,13 @@ unter **Kiosk** eingestellt.
 Zeigt das Raster des Kiosks in seinem Seitenverhältnis. Die Linie «Bildschirmende Kiosk» markiert, was auf
 dem Bildschirm noch sichtbar ist.
 
-- **Widget hinzufügen** – Katalog nach Kategorien, mit Suche. Gesichtserkennung und Ruhemodus gibt es nur
-  einmal pro Dashboard.
+- **Widget hinzufügen** – Katalog nach Kategorien, mit Suche. Ein neues Widget kommt an die oberste freie
+  Stelle. Gesichtserkennung und Ruhemodus gibt es nur einmal pro Dashboard.
 - **Verschieben** – am Griff eines Widgets ziehen. **Grösse** – an der Ecke unten rechts ziehen.
-- **Antippen** wählt ein Widget aus; darunter erscheinen Pfeile zum Verschieben, Breite und Höhe in
-  Rasterschritten, **Einstellungen**, **Duplizieren** und **Entfernen** (mit Rückfrage; die Einstellungen
+  Widgets bleiben, wo sie abgelegt werden – auch allein mitten auf dem Bildschirm, mit Platz darüber.
+  Landet ein Widget auf einem anderen, weicht dieses nach unten aus.
+- **Antippen** wählt ein Widget aus; darunter erscheinen Pfeile zum Verschieben (hoch und runter je eine
+  Zeile), Breite und Höhe in Rasterschritten, **Einstellungen**, **Duplizieren** und **Entfernen** (mit Rückfrage; die Einstellungen
   des Widgets werden mitgelöscht).
 - **Zoom** vergrössert die Vorschau auf kleinen Bildschirmen.
 

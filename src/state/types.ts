@@ -27,6 +27,13 @@ export interface LayoutData {
   rowHeight: number;
   /** 0 = off; > 0: rowHeight is computed so that this many rows fill the screen height. */
   fitRows: number;
+  /**
+   * Widgets stay where they are put (utils/freeGrid). Missing in states of
+   * older versions, whose grid moved every widget up into free space: their
+   * positions are compacted once as that grid showed them (withDefaults), and
+   * the kiosk stores the result (migrate.ts).
+   */
+  freePlacement: boolean;
 }
 
 export type ThemeMode = 'dark' | 'light';

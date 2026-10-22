@@ -3,10 +3,10 @@
  * Dashboard, so the mini-map and the layout editor show the kiosk screen
  * true to scale.
  */
-import { verticalCompactor } from 'react-grid-layout';
 import { bottomOf } from '../state/defaults';
 import type { LayoutData, WidgetInstance } from '../state/types';
 import { fitRowHeight, GRID_CONTAINER_PADDING, GRID_MARGIN } from '../types/grid';
+import { resolveOverlaps } from '../utils/freeGrid';
 import { getManifest } from '../widgets/catalog';
 
 export interface Viewport {
@@ -58,21 +58,12 @@ export function contentHeight(widgets: readonly Pick<WidgetInstance, 'y' | 'h'>[
 }
 
 /**
- * Positions as the kiosk shows them: its grid compacts vertically, so a
- * stored y can be larger than the displayed one (e.g. a widget appended
- * below all others moves up into a free gap). Unchanged items keep their
+ * Positions as the kiosk shows them: placement is free (utils/freeGrid), only
+ * widgets that overlap another are moved below it. Unchanged items keep their
  * object identity.
  */
-export function compactWidgets(widgets: readonly WidgetInstance[], cols: number): WidgetInstance[] {
-  const compacted = verticalCompactor.compact(
-    widgets.map((w) => ({ i: w.instanceId, x: w.x, y: w.y, w: w.w, h: w.h })),
-    cols,
-  );
-  const byId = new Map(compacted.map((item) => [item.i, item]));
-  return widgets.map((w) => {
-    const item = byId.get(w.instanceId);
-    return item && (item.x !== w.x || item.y !== w.y) ? { ...w, x: item.x, y: item.y } : w;
-  });
+export function shownWidgets(widgets: readonly WidgetInstance[]): WidgetInstance[] {
+  return resolveOverlaps(widgets);
 }
 
 /** Rows of `rowHeight` px that fit on a screen `height` px high (with the grid's padding and gaps). */
@@ -116,15 +107,15 @@ function scaleBoundaries(spans: readonly Span[], fromCols: number, toCols: numbe
 
 /**
  * The widgets for a new column count: the left and right edge of every
- * widget scale proportionally (it keeps its share of the screen width), then
- * the kiosk's vertical compaction runs.
+ * widget scale proportionally (it keeps its share of the screen width); rows
+ * stay as they are.
  *
  * Edges are mapped, not position and width rounded separately: the mapping
  * is monotonic, so x + w of a widget never passes x of its right neighbour
  * and nothing is pushed down a row. Minimum widths (manifest) are made room
  * for by moving neighbouring edges; only when they do not fit side by side at
  * all (e.g. three wide widgets in 6 columns) a widget overlaps its neighbour
- * and the compaction moves it down.
+ * and moves down below it.
  */
 export function rescaleWidgets(widgets: readonly WidgetInstance[], fromCols: number, toCols: number): WidgetInstance[] {
   if (fromCols === toCols || fromCols <= 0 || toCols <= 0) return [...widgets];
@@ -146,5 +137,5 @@ export function rescaleWidgets(widgets: readonly WidgetInstance[], fromCols: num
     const x = Math.min(toCols - w, Math.max(0, left));
     return { ...widget, x, w };
   });
-  return compactWidgets(scaled, toCols);
+  return shownWidgets(scaled);
 }

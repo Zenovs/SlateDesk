@@ -112,11 +112,13 @@ describe('buildInitialOps', () => {
   it('imports the legacy state into an empty backend state', () => {
     const ops = buildInitialOps({}, legacyStorage());
     const state = withDefaults(applyOps({}, ops));
+    // Where the old grid showed them: it moved every widget up into free space.
     expect(state.layout.widgets.map((w) => [w.instanceId, w.x, w.y, w.w])).toEqual([
       ['clock-1', 0, 0, 3],
-      ['news-abc', 3, 3, 4],
+      ['news-abc', 3, 0, 4],
       ['todo-1', 8, 0, 4],
     ]);
+    expect(state.layout.freePlacement).toBe(true);
     expect(state.layout.cols).toBe(12);
     expect(state.layout.rowHeight).toBe(80);
     expect(state.widgetSettings).toEqual({
@@ -158,10 +160,29 @@ describe('buildInitialOps', () => {
 
   it('does not touch legacy data when the backend already has a layout', () => {
     const storage = legacyStorage();
-    const raw: RawState = { layout: { widgets: [] }, theme: { mode: 'dark', accent: null } };
+    const raw: RawState = { layout: { widgets: [], freePlacement: true }, theme: { mode: 'dark', accent: null } };
     const ops = buildInitialOps(raw, storage);
     expect(ops.some((op) => op.path[0] === 'layout' || op.path[0] === 'theme')).toBe(false);
     expect(storage.reads).not.toContain(LEGACY_KEYS.layout);
+  });
+
+  it('stores a layout from before free placement as its grid showed it, once', () => {
+    const widgets = [
+      { instanceId: 'a', widgetId: 'clock', x: 0, y: 0, w: 4, h: 2 },
+      // A gap of three rows above (e.g. a removed widget) – the old grid moved it up.
+      { instanceId: 'b', widgetId: 'news', x: 0, y: 5, w: 4, h: 2 },
+      { instanceId: 'c', widgetId: 'todo', x: 6, y: 4, w: 4, h: 2 },
+    ];
+    const raw: RawState = { layout: { widgets, cols: 12 } };
+    const migrated = applyOps(raw, buildInitialOps(raw, null));
+    const state = withDefaults(migrated);
+    expect(state.layout.freePlacement).toBe(true);
+    expect(state.layout.widgets.map((w) => [w.instanceId, w.x, w.y])).toEqual([
+      ['a', 0, 0],
+      ['b', 0, 2],
+      ['c', 6, 0],
+    ]);
+    expect(buildInitialOps(migrated, null).some((op) => op.path[0] === 'layout')).toBe(false);
   });
 
   it('adds legacy settings without overwriting existing ones', () => {
