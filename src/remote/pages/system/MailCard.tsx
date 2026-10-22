@@ -33,7 +33,14 @@ const SCHEMA: SettingsField[] = [
     description: 'Mehrere Adressen mit Komma trennen.',
   },
   { type: 'section', label: 'Postausgangsserver (SMTP)' },
-  { type: 'text', key: 'host', label: 'Server', placeholder: 'z. B. asmtp.mail.hostpoint.ch' },
+  {
+    type: 'text',
+    key: 'host',
+    label: 'Server',
+    placeholder: 'z. B. asmtp.mail.hostpoint.ch',
+    description:
+      'Postausgangsserver (SMTP) des Postfachs, das die Mails verschickt – bei Hostpoint asmtp.mail.hostpoint.ch. Es muss nicht das Postfach des Empfängers sein.',
+  },
   {
     type: 'number',
     key: 'port',

@@ -221,9 +221,55 @@ fn describe_error(e: &lettre::transport::smtp::Error) -> String {
                 .unwrap_or_default()
         );
     }
+    if refused(e) {
+        return "Verbindung abgelehnt – auf diesem Server und Port nimmt kein Mail-Server Verbindungen an. Server und Port prüfen (Postausgang, z. B. asmtp.mail.hostpoint.ch mit 587)".to_string();
+    }
     match detail {
         Some(detail) => format!("Mail-Server nicht erreichbar: {detail}"),
         None => format!("Mail-Server nicht erreichbar: {e}"),
+    }
+}
+
+/// The server answered the connection attempt with a reset: nothing listens on that port.
+fn refused(e: &lettre::transport::smtp::Error) -> bool {
+    let mut source = e.source();
+    while let Some(err) = source {
+        if let Some(io) = err.downcast_ref::<std::io::Error>() {
+            return io.kind() == std::io::ErrorKind::ConnectionRefused;
+        }
+        source = err.source();
+    }
+    false
+}
+
+/// No SMTP answer at all (connection or network) – as opposed to an answer of the server.
+fn connection_failed(e: &lettre::transport::smtp::Error) -> bool {
+    e.status().is_none() && !e.is_tls() && !e.is_response() && !e.is_client()
+}
+
+/// Where the connection went: `asmtp.mail.hostpoint.ch:587 (217.26.49.65)`. A name that points
+/// to this device itself is named – a filtering DNS answers blocked names like that.
+async fn target(config: &MailConfig) -> String {
+    let name = format!("{}:{}", config.host, config.port);
+    if config.host.parse::<std::net::IpAddr>().is_ok() {
+        return name;
+    }
+    let mut ips: Vec<std::net::IpAddr> =
+        match tokio::net::lookup_host((config.host.as_str(), config.port)).await {
+            Ok(addrs) => addrs.map(|a| a.ip()).collect(),
+            Err(_) => return format!("{name} (Name nicht auflösbar)"),
+        };
+    ips.dedup();
+    let list = ips
+        .iter()
+        .take(4)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if ips.iter().any(|ip| ip.is_loopback() || ip.is_unspecified()) {
+        format!("{name} ({list} – zeigt auf dieses Gerät selbst, ein DNS-Filter sperrt den Namen?)")
+    } else {
+        format!("{name} ({list})")
     }
 }
 
@@ -266,8 +312,12 @@ pub async fn send(config: &MailConfig, subject: &str, body: &str) -> Result<(), 
     let transport = transport(config)?;
     match tokio::time::timeout(COMMAND_TIMEOUT * 2, transport.send(message)).await {
         Ok(Ok(_)) => Ok(()),
+        // Without any answer of the server, the message names where the connection went.
+        Ok(Err(e)) if connection_failed(&e) => {
+            Err(format!("{} – {}", target(config).await, describe_error(&e)))
+        }
         Ok(Err(e)) => Err(describe_error(&e)),
-        Err(_) => Err(TIMEOUT_MESSAGE.to_string()),
+        Err(_) => Err(format!("{} – {TIMEOUT_MESSAGE}", target(config).await)),
     }
 }
 
@@ -591,6 +641,33 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Date: "), "{text}");
+    }
+
+    #[tokio::test]
+    async fn refused_connection_names_server_port_and_address() {
+        // A port nothing listens on: bound, then released.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let config = config(json!({
+            "enabled": true,
+            "host": "localhost",
+            "port": port,
+            "user": "kiosk@example.ch",
+            "to": "dario@example.ch",
+        }))
+        .unwrap();
+        let error = send(&config, "Test", "Text").await.unwrap_err();
+        assert!(error.starts_with(&format!("localhost:{port} (")), "{error}");
+        assert!(error.contains("zeigt auf dieses Gerät selbst"), "{error}");
+        assert!(
+            error.contains(
+                "Verbindung abgelehnt – auf diesem Server und Port nimmt kein Mail-Server"
+            ),
+            "{error}"
+        );
     }
 
     #[test]
