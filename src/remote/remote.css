@@ -3684,3 +3684,54 @@ html.r-scroll-locked {
     background: var(--r-surface);
   }
 }
+
+/* Lüfter (System → FansCard) */
+.r-fans {
+  display: flex;
+  flex-direction: column;
+}
+
+.r-fan {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.r-fan:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.r-fan-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+
+.r-fan-name {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.r-fan-meta {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+
+.r-code {
+  display: block;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--r-surface);
+  font-family: ui-monospace, 'DejaVu Sans Mono', monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}

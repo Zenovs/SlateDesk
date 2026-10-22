@@ -955,6 +955,31 @@ configure_ufw() {
     [ "$active" -eq 1 ] || info "ufw ist inaktiv – die Regel greift erst nach »sudo ufw enable«."
 }
 
+# ─── Lüfter ──────────────────────────────────────────────────────────────────
+FAN_HELPER=/usr/local/lib/slatedesk/fan-access
+FAN_RULE=/etc/udev/rules.d/90-slatedesk-fans.rules
+
+# Lüfter mit PWM-Ausgang (hwmon) darf das Kiosk-Konto über die Fernsteuerung regeln: pwmN und
+# pwmN_enable gehören bei jedem Start seiner Gruppe. Vorhandene Lüfter werden gleich
+# freigegeben – ohne neue Anmeldung. Gibt es keine, regelt weiterhin das BIOS.
+configure_fan_access() {
+    local dir count
+    install -d -m 0755 "${FAN_HELPER%/*}"
+    install -m 0755 -o root -g root "$REPO_DIR/scripts/fan-access.sh" "$FAN_HELPER"
+    printf '# SlateDesk: Lüftersteuerung für das Kiosk-Konto %s (angelegt von scripts/setup.sh)\nACTION=="add", SUBSYSTEM=="hwmon", RUN+="%s /sys%%p %s"\n' \
+        "$SD_USER" "$FAN_HELPER" "$SD_GROUP" >"$FAN_RULE"
+    if command -v udevadm >/dev/null 2>&1; then udevadm control --reload >/dev/null 2>&1 || true; fi
+    for dir in /sys/class/hwmon/hwmon*; do
+        [ -d "$dir" ] && "$FAN_HELPER" "$(readlink -f "$dir")" "$SD_GROUP"
+    done
+    count=$(find -L /sys/class/hwmon/ -maxdepth 3 -name 'pwm[0-9]' -group "$SD_GROUP" 2>/dev/null | wc -l)
+    if [ "$count" -gt 0 ]; then
+        ok "Lüfter: $count Ausgänge für $SD_USER freigegeben (Fernsteuerung → System → Lüfter)."
+    else
+        info "Lüfter: keine steuerbaren Ausgänge gefunden – die Lüfter regelt das BIOS."
+    fi
+}
+
 # ─── Zusammenfassung ─────────────────────────────────────────────────────────
 summary() {
     local ip release
@@ -1015,6 +1040,7 @@ main() {
     step "Kiosk-Einstellungen"
     configure_desktop
     configure_autologin
+    configure_fan_access
 
     step "Fernsteuerung"
     configure_ufw

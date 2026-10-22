@@ -295,7 +295,7 @@ fn sensor_rank(name: &str) -> usize {
 }
 
 /// Best CPU sensor among thermal zones and hwmon chips; an unknown zone only as last resort.
-fn read_cpu_temp() -> Option<f64> {
+pub(crate) fn read_cpu_temp() -> Option<f64> {
     let mut best: Option<(usize, f64)> = None;
     let mut consider = |rank: usize, value: Option<f64>| {
         if let Some(v) = value {

@@ -1,6 +1,6 @@
 /**
  * System: device details, update with progress, actions (reload, identify,
- * display, restart), mail settings, PIN change, backup/restore and logout.
+ * display, restart), fans, mail settings, PIN change, backup/restore and logout.
  */
 import { UserRound } from 'lucide-react';
 import { LogoutButton } from '../components/LogoutButton';
@@ -9,6 +9,7 @@ import { Card, PageHeader } from '../ui';
 import { ActionsCard } from './system/ActionsCard';
 import { BackupCard } from './system/BackupCard';
 import { DeviceCard } from './system/DeviceCard';
+import { FansCard } from './system/FansCard';
 import { MailCard } from './system/MailCard';
 import { PinCard } from './system/PinCard';
 import { UpdateCard } from './system/UpdateCard';
@@ -19,10 +20,11 @@ export function SystemPage() {
   const system = useSystemInfo(SYSTEM_POLL_MS);
   return (
     <div className="r-page">
-      <PageHeader title="System" description="Geräteinfo, Updates, Neustart, Mail-Versand, PIN und Sicherung" />
+      <PageHeader title="System" description="Geräteinfo, Updates, Neustart, Lüfter, Mail-Versand, PIN und Sicherung" />
       <DeviceCard poll={system} />
       <UpdateCard info={system.data} />
       <ActionsCard />
+      <FansCard />
       <MailCard />
       <PinCard />
       <BackupCard />

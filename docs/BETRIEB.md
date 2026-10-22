@@ -442,6 +442,27 @@ Sitzungstyp prüfen:
 loginctl show-session "$(loginctl list-sessions --no-legend | awk '$3 == "slatedesk" { print $1; exit }')" -p Type
 ```
 
+## Lüfter
+
+Die Fernsteuerung zeigt unter **System → Lüfter** alle Lüfter, die der Kernel über hwmon meldet
+(`/sys/class/hwmon`), mit Drehzahl. Lüfter mit PWM-Ausgang lassen sich regeln: *Automatisch* (Chip bzw.
+BIOS wie ohne SlateDesk), *Fest* oder *Kurve* nach der CPU-Temperatur.
+
+- **Rechte:** `setup.sh` legt `/etc/udev/rules.d/90-slatedesk-fans.rules` an. Bei jedem Start gibt
+  `/usr/local/lib/slatedesk/fan-access` (Kopie von `scripts/fan-access.sh`) die Ausgänge `pwmN` und
+  `pwmN_enable` für die Gruppe des Kiosk-Kontos frei. Updates laufen ohne root – nach dem Update, das die
+  Lüftersteuerung brachte, die Installation **einmal erneut ausführen**; die Fernsteuerung weist darauf hin.
+- **Schutz:** nie unter 20 %; ab 85 °C CPU-Temperatur laufen geregelte Lüfter immer mit 100 %, eine Kurve
+  ohne Temperaturwert ebenso. Bevor SlateDesk einen Lüfter übernimmt, notiert es dessen Modus in
+  `$XDG_RUNTIME_DIR/slatedesk-fans`. Beim Beenden gibt die App die Lüfter zurück; nach einem Absturz tut es
+  `scripts/fans-restore.sh` (`ExecStopPost` von `slatedesk.service`). Nach einem Neustart des Geräts regelt
+  der Chip ohnehin selbst, bis SlateDesk wieder übernimmt.
+- **Einstellungen:** `~/.config/com.slatedesk.app/fans.json` – bewusst nicht im Dashboard-Zustand, damit eine
+  Sicherung auf anderer Hardware keine Lüfter verstellt.
+- **Keine Lüfter sichtbar:** Viele Mini-PCs (z. B. HP EliteDesk) melden ihre Lüfter Linux nicht; dann regelt
+  allein das BIOS, und die Lüfterkurve wird dort eingestellt. Prüfen mit
+  `grep . /sys/class/hwmon/hwmon*/name; ls /sys/class/hwmon/hwmon*/ | grep -E '^(fan|pwm)'`.
+
 ## Fehlersuche
 
 **Installation hängt nach «… wird eingerichtet …» bei apt:** Dann wartet ein apt-Hook des Systems
@@ -541,5 +562,7 @@ dessen eigene Installation (mit `--purge` auch dessen Daten, nicht aber den Benu
 | `auto-update.sh` | Update-Lauf (als `slatedesk`, über `slatedesk-update.service`) |
 | `uninstall.sh` | Deinstallation |
 | `session-start.sh` | Start des User-Dienstes bei der Anmeldung (Autostart) |
+| `fan-access.sh` | gibt Lüfter-Ausgänge für das Kiosk-Konto frei (von `setup.sh` installiert, über udev aufgerufen) |
+| `fans-restore.sh` | gibt geregelte Lüfter an Chip/BIOS zurück (`ExecStopPost` von `slatedesk.service`) |
 | `systemd/*.service`, `systemd/*.timer` | User-Units, werden bei Updates automatisch übernommen |
 | `setup-auto-update.sh`, `hourly-restart.sh` | veraltet: Weiterleitung auf `setup.sh` bzw. wirkungslos, damit alte Aufrufe nicht stören |

@@ -2,6 +2,7 @@
 //! served by axum on Tauri's tokio runtime. Tauri-specific bits (assets, kiosk actions) sit
 //! behind [`KioskHost`] so the router can be tested without a running app.
 
+use crate::fans::{FanService, FanSetting};
 use crate::http::ProxyResponse;
 use crate::lagra::{LagraError, LagraService};
 use crate::planbar::{PlanbarError, PlanbarService};
@@ -157,6 +158,7 @@ pub struct WebContext {
     pub system: Arc<SystemContext>,
     pub lagra: Arc<LagraService>,
     pub planbar: Arc<PlanbarService>,
+    pub fans: Arc<FanService>,
     pub host: Arc<dyn KioskHost>,
     assets: Mutex<AssetCache>,
     /// Public-looking host names accepted besides LAN names: the machine's hostname and
@@ -173,6 +175,7 @@ impl WebContext {
         system: Arc<SystemContext>,
         lagra: Arc<LagraService>,
         planbar: Arc<PlanbarService>,
+        fans: Arc<FanService>,
         host: Arc<dyn KioskHost>,
     ) -> WebState {
         Arc::new(WebContext {
@@ -181,6 +184,7 @@ impl WebContext {
             system,
             lagra,
             planbar,
+            fans,
             host,
             assets: Mutex::new(AssetCache::default()),
             extra_hosts: configured_hosts(),
@@ -708,6 +712,38 @@ async fn mail_status() -> Response {
     Json(crate::mail::status()).into_response()
 }
 
+/// Fans with speed, PWM duty and their setting (sysfs reads, off the async threads).
+async fn fans_report(State(ctx): State<WebState>) -> Response {
+    let fans = Arc::clone(&ctx.fans);
+    match tokio::task::spawn_blocking(move || fans.report(system::read_cpu_temp())).await {
+        Ok(report) => Json(report).into_response(),
+        Err(e) => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct FanUpdate {
+    id: String,
+    setting: FanSetting,
+}
+
+/// `{ "id": …, "setting": { "mode": "auto" | "fixed" | "curve", … } }` – applied at once.
+async fn fans_update(State(ctx): State<WebState>, body: Bytes) -> ApiResult {
+    let update: FanUpdate = parse_body(&body)?;
+    let fans = Arc::clone(&ctx.fans);
+    let result = tokio::task::spawn_blocking(move || {
+        let temp = system::read_cpu_temp();
+        fans.set(&update.id, update.setting, temp)
+            .map(|()| fans.report(temp))
+    })
+    .await
+    .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match result {
+        Ok(report) => Ok(Json(report).into_response()),
+        Err(message) => Err(ApiError::new(StatusCode::BAD_REQUEST, message)),
+    }
+}
+
 /// The Unternehmen named by [`PLANBAR_ORG_HEADER`]; an unreadable value names none that
 /// exists (planbar.rs answers «nicht eingerichtet»).
 fn planbar_org(headers: &HeaderMap) -> Option<String> {
@@ -981,6 +1017,7 @@ pub fn router(ctx: WebState) -> Router {
         .route("/planbar-test", get(planbar_test))
         .route("/mail-test", post(mail_test))
         .route("/mail-status", get(mail_status))
+        .route("/fans", get(fans_report).post(fans_update))
         .route("/export", get(export_state))
         .route("/import", post(import_state))
         .fallback(api_not_found)
@@ -1196,6 +1233,8 @@ mod tests {
         let api = build_api_client().unwrap();
         let lagra = Arc::new(LagraService::new(api.clone()));
         let planbar = Arc::new(PlanbarService::new(api));
+        // No hwmon chips in the test directory: the fan routes answer with an empty list.
+        let fans = Arc::new(FanService::new(dir.0.join("hwmon"), &dir.0, None));
         let host = Arc::new(FakeHost::new(with_remote));
         let pin = remote.pin();
         let ctx = WebContext::new(
@@ -1204,6 +1243,7 @@ mod tests {
             Arc::new(SystemContext::default()),
             lagra,
             planbar,
+            fans,
             host.clone(),
         );
         Harness {
@@ -1728,6 +1768,40 @@ mod tests {
             assert_eq!(reply.status, StatusCode::FORBIDDEN, "{denied}");
             assert!(reply.headers.get(UPSTREAM_HEADER).is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn fan_routes_answer_without_fans() {
+        let h = harness(true);
+        let token = login(&h).await;
+        let report = call(&h, "GET", "/api/fans", Some(&token), false, None).await;
+        assert_eq!(report.status, StatusCode::OK);
+        assert_eq!(report.json()["fans"], json!([]));
+        assert_eq!(report.json()["minPercent"], json!(20));
+        let unknown = call(
+            &h,
+            "POST",
+            "/api/fans",
+            Some(&token),
+            true,
+            Some(json!({ "id": "nct6798-x-1", "setting": { "mode": "fixed", "percent": 50 } })),
+        )
+        .await;
+        assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
+        assert_eq!(unknown.json(), json!({ "error": "Lüfter nicht gefunden" }));
+        let invalid = call(
+            &h,
+            "POST",
+            "/api/fans",
+            Some(&token),
+            true,
+            Some(json!({ "id": "x", "setting": { "mode": "fixed", "percent": 5 } })),
+        )
+        .await;
+        assert_eq!(
+            invalid.json(),
+            json!({ "error": "Drehzahl zwischen 20 und 100 % wählen" })
+        );
     }
 
     #[tokio::test]

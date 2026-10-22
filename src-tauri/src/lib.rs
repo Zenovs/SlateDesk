@@ -1,5 +1,6 @@
 mod calendar;
 mod display;
+mod fans;
 mod feeds;
 mod http;
 mod lagra;
@@ -339,6 +340,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let api = http::build_api_client()?;
     let lagra = Arc::new(lagra::LagraService::new(api.clone()));
     let planbar = Arc::new(planbar::PlanbarService::new(api));
+    let fans = Arc::new(fans::FanService::system(&config_dir));
 
     let emitter = handle.clone();
     store.set_change_hook(move |change| {
@@ -357,13 +359,23 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(Arc::clone(&system));
     app.manage(Arc::clone(&lagra));
     app.manage(Arc::clone(&planbar));
+    app.manage(Arc::clone(&fans));
     app.manage(http);
 
     tauri::async_runtime::spawn(mail::run_outbox(Arc::clone(&store)));
+    tauri::async_runtime::spawn(fans::run(Arc::clone(&fans)));
 
     if remote.enabled() {
         let host: Arc<dyn KioskHost> = Arc::new(TauriHost { app: handle });
-        let ctx = web::WebContext::new(store, Arc::clone(&remote), system, lagra, planbar, host);
+        let ctx = web::WebContext::new(
+            store,
+            Arc::clone(&remote),
+            system,
+            lagra,
+            planbar,
+            fans,
+            host,
+        );
         tauri::async_runtime::spawn(web::serve(ctx));
     } else {
         log::info!("Fernsteuerung ist deaktiviert");
@@ -422,8 +434,16 @@ pub fn run() {
             qr::qr_svg,
             app_restart,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Fans go back to the chip or BIOS; after a crash scripts/fans-restore.sh does it.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(fans) = app.try_state::<Arc<fans::FanService>>() {
+                    fans.restore_all();
+                }
+            }
+        });
 }
 
 #[cfg(test)]

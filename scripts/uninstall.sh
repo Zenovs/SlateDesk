@@ -220,6 +220,22 @@ remove_ufw_rules() {
     done
 }
 
+# Lüftersteuerung (configure_fan_access in setup.sh); die Lüfter selbst gibt SlateDesk beim
+# Beenden an das BIOS zurück.
+remove_fan_access() {
+    local removed=0
+    if [ -f /etc/udev/rules.d/90-slatedesk-fans.rules ]; then
+        rm -f /etc/udev/rules.d/90-slatedesk-fans.rules && removed=1
+    fi
+    if [ -f /usr/local/lib/slatedesk/fan-access ]; then
+        rm -f /usr/local/lib/slatedesk/fan-access && removed=1
+        rmdir /usr/local/lib/slatedesk 2>/dev/null || true
+    fi
+    [ "$removed" -eq 1 ] || return 0
+    if command -v udevadm >/dev/null 2>&1; then udevadm control --reload >/dev/null 2>&1 || true; fi
+    ok "Lüftersteuerung entfernt (udev-Regel; die Rechte gelten bis zum nächsten Neustart)."
+}
+
 remove_autologin() {
     local conf tmp
     for conf in /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
@@ -288,7 +304,7 @@ main() {
         info "Dienste/Timer stoppen und entfernen, ~/.local/opt/slatedesk und das Update-Protokoll (~/.local/state/slatedesk) löschen"
     fi
     if [ "$IS_ROOT" -eq 1 ]; then
-        info "Reste des alten Setups (dpkg-Paket, sudoers, Cron, Systemdienste) und ufw-Regel entfernen"
+        info "Reste des alten Setups (dpkg-Paket, sudoers, Cron, Systemdienste), ufw-Regel und Lüftersteuerung entfernen"
     fi
     if [ "$OPT_PURGE" -eq 1 ] && [ "$USER_EXISTS" -eq 1 ]; then
         info "--purge: ~/.config/com.slatedesk.app (Dashboard, PIN), WebKit-Daten samt Sicherung und Cache löschen"
@@ -308,6 +324,7 @@ main() {
     if [ "$IS_ROOT" -eq 1 ]; then
         remove_legacy
         remove_ufw_rules
+        remove_fan_access
     fi
     if [ "$OPT_PURGE" -eq 1 ] && [ "$USER_EXISTS" -eq 1 ]; then
         if [ "$IS_ROOT" -eq 1 ]; then

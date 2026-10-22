@@ -204,6 +204,11 @@ Schlüssel erstellt werden: [API_SETUP.md](../API_SETUP.md).
   «Update fehlgeschlagen». Das Ergebnis des letzten Laufs (auch des nächtlichen) steht ebenfalls hier.
 - **Aktionen** – Neu laden, Identifizieren, Bildschirm aus/an und **App neu starten** (der Bildschirm ist
   einige Sekunden leer, alle Anmeldungen enden).
+- **Lüfter** – Drehzahl aller Lüfter, die das Gerät meldet. Lüfter mit steuerbarem Ausgang lassen sich
+  einzeln auf *Automatisch* (BIOS), *Fest* (20–100 %) oder *Kurve* (nach der CPU-Temperatur) stellen; ab
+  85 °C laufen sie immer mit voller Drehzahl, und endet SlateDesk, regelt wieder das BIOS. Melden sich
+  Lüfter, die SlateDesk noch nicht steuern darf, zeigt die Karte den Befehl, mit dem die Installation einmal
+  erneut ausgeführt wird. Details: [BETRIEB.md](BETRIEB.md#lüfter).
 - **Mail-Versand** – Postfach für die Ausfall-Mails des Host-Monitors: Empfänger (mehrere mit Komma),
   Postausgangsserver (z. B. `asmtp.mail.hostpoint.ch`), Port 587 (STARTTLS) oder 465 (SSL/TLS), Benutzer,
   Passwort und optional ein Absender. Zuerst den Server eintragen, dann das Passwort – ein geänderter Server

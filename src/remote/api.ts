@@ -157,6 +157,49 @@ export async function mailStatus(signal?: AbortSignal): Promise<MailStatus> {
   return expectObject<MailStatus>(await request<unknown>('/api/mail-status', { signal }), 'Mail-Status');
 }
 
+// ── Fans ─────────────────────────────────────────────────────────────────────
+
+/** How SlateDesk drives a fan (src-tauri/src/fans.rs). */
+export type FanSetting =
+  | { mode: 'auto' }
+  | { mode: 'fixed'; percent: number }
+  | { mode: 'curve'; minTemp: number; maxTemp: number; minPercent: number };
+
+export interface FanInfo {
+  id: string;
+  name: string;
+  chip: string;
+  rpm: number | null;
+  /** PWM duty now; null without PWM output. */
+  percent: number | null;
+  /** SlateDesk may set it. */
+  controllable: boolean;
+  /** SlateDesk regulates it right now (else the chip or BIOS). */
+  controlled: boolean;
+  /** Held at 100 % by the temperature guard. */
+  guarded: boolean;
+  setting: FanSetting;
+}
+
+export interface FansReport {
+  fans: FanInfo[];
+  cpuTempC: number | null;
+  guardTempC: number;
+  minPercent: number;
+  /** PWM outputs exist, but the kiosk account may not write them (installer not run again yet). */
+  needsAccess: boolean;
+}
+
+/** GET /api/fans */
+export async function fans(signal?: AbortSignal): Promise<FansReport> {
+  return expectObject<FansReport>(await request<unknown>('/api/fans', { signal }), 'Lüfter');
+}
+
+/** POST /api/fans – stores the setting of one fan and applies it at once. */
+export async function setFan(id: string, setting: FanSetting): Promise<FansReport> {
+  return expectObject<FansReport>(await request<unknown>('/api/fans', { method: 'POST', body: { id, setting } }), 'Lüfter');
+}
+
 /**
  * GET /api/planbar-test – connection test with the stored planbar settings (also when
  * switched off): Unternehmen `org`, or every Unternehmen with an API key.
