@@ -252,7 +252,11 @@ Ablauf von `scripts/auto-update.sh` (läuft als `slatedesk-update.service`):
 5. Speicherplatz prüfen – unter 3 GB frei wird der Build-Cache `src-tauri/target` gelöscht, unter
    1,5 GB bricht der Lauf ab –, dann `npm ci`, aber nur, wenn sich `package-lock.json` oder die
    Node-Version geändert hat.
-6. `tauri build --ci --no-bundle -- --locked` (Cargo.lock ist versioniert).
+6. `tauri build --ci --no-bundle -- --locked` (Cargo.lock ist versioniert). Der Build läuft auf dem Kiosk
+   neben der Anzeige und ist darum gebremst: höchstens ein Rust-Job je 2 GB Arbeitsspeicher (2 GB bleiben
+   für Anzeige und System, `CARGO_BUILD_JOBS`), in einem eigenen Scope mit Speichergrenze (70 % des
+   Arbeitsspeichers, 512 MB Swap) und der ganze Update-Dienst mit `MemoryMax=80%`. Reicht das nicht,
+   scheitert das Update, und die laufende Version bleibt – statt dass das Gerät einfriert.
 7. Binary nach `releases/<kurz-commit>/` kopieren, Symlink `current` atomar umstellen, geänderte
    Unit-Dateien aus `scripts/systemd/` übernehmen.
 8. `systemctl --user restart slatedesk.service`, danach Health-Check

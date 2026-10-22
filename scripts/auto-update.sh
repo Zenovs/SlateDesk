@@ -514,6 +514,28 @@ stop_build_ticker() {
     fi
 }
 
+# Rust-Compiler brauchen je nach Crate 1–2 GB. Auf dem Kiosk läuft daneben die Anzeige – mit
+# so vielen Jobs wie Kerne war der Arbeitsspeicher eines Mini-PCs schnell voll, und das Gerät
+# hing. Darum: 2 GB für Anzeige und System, je weitere 2 GB ein Job, höchstens einer pro Kern.
+build_jobs() {
+    local mem_gb cpus jobs
+    mem_gb=$(awk '/^MemTotal:/ { printf "%d", $2 / 1048576 }' /proc/meminfo 2>/dev/null || echo 4)
+    cpus=$(nproc 2>/dev/null || echo 1)
+    jobs=$(((mem_gb - 2) / 2))
+    [ "$jobs" -ge 1 ] || jobs=1
+    [ "$jobs" -le "$cpus" ] || jobs=$cpus
+    printf '%s' "$jobs"
+}
+
+# Der Build läuft in einem eigenen Scope mit Speichergrenze: Wird es zu viel, bricht nur der Build
+# ab (das Update scheitert, die laufende Version bleibt), statt das ganze Gerät einzufrieren.
+build_guard() {
+    command -v systemd-run >/dev/null 2>&1 || return 0
+    systemd-run --user --scope --quiet --collect true >/dev/null 2>&1 || return 0
+    printf '%s\n' systemd-run --user --scope --quiet --collect \
+        -p MemoryHigh=50% -p MemoryMax=70% -p MemorySwapMax=512M --
+}
+
 build_app() {
     local expected=900 started=$SECONDS last
     last=$(cat "$BUILD_TIME_FILE" 2>/dev/null || true)
@@ -530,10 +552,16 @@ build_app() {
         args=(build --ci --bundles deb -- --locked)
     fi
 
+    local -a guard=()
+    mapfile -t guard < <(build_guard)
+    export CARGO_BUILD_JOBS
+    CARGO_BUILD_JOBS=$(build_jobs)
+    log_info "Build mit $CARGO_BUILD_JOBS parallelen Rust-Jobs$([ "${#guard[@]}" -gt 0 ] && printf ', Speichergrenze 70 %% des Arbeitsspeichers')."
+
     : >"$BUILD_MARKER"
     status build 25 "Baue SlateDesk… (ca. $(((expected + 59) / 60)) Min.)"
     start_build_ticker "$expected"
-    if ! run_logged "$SLATEDESK_HOME/node_modules/.bin/tauri" "${args[@]}"; then
+    if ! run_logged "${guard[@]}" "$SLATEDESK_HOME/node_modules/.bin/tauri" "${args[@]}"; then
         stop_build_ticker
         finish_fail 1 "Build fehlgeschlagen.$(failure_hint) Details im Update-Log."
     fi

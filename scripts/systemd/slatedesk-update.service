@@ -14,3 +14,8 @@ Environment=SLATEDESK_HOME=%h/SlateDesk
 Nice=10
 IOSchedulingClass=idle
 TimeoutStartSec=2h
+# Der Build darf die Anzeige nicht verdrängen: lieber scheitert das Update, als dass das Gerät
+# einfriert (auto-update.sh begrenzt zusätzlich die Rust-Jobs und den Build selbst).
+MemoryHigh=60%
+MemoryMax=80%
+MemorySwapMax=1G
