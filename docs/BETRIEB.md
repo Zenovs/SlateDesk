@@ -442,6 +442,31 @@ Sitzungstyp prüfen:
 loginctl show-session "$(loginctl list-sessions --no-legend | awk '$3 == "slatedesk" { print $1; exit }')" -p Type
 ```
 
+## Protokoll
+
+SlateDesk schreibt jede Minute ein Lebenszeichen nach `~/.local/state/slatedesk/health.log` (JSON-Zeilen,
+jede sofort auf die Platte): freier Arbeitsspeicher, Swap, Last, CPU-Temperatur und der Speicher von
+SlateDesk samt WebKit-Prozessen. Dazu Ereignisse – Start und Ende, Bildschirm aus/an, jede Mail mit der
+Antwort des Servers, Warnungen bei wenig Arbeitsspeicher oder heisser CPU. Ab 2 MB wird die Datei zu
+`health.log.1`; zusammen reicht das für rund zwei Wochen.
+
+- **Hänger erkennen:** `run.json` im selben Ordner markiert den laufenden Start. Fehlt beim nächsten Start
+  das saubere Ende, meldet SlateDesk *Unerwartetes Ende* – mit den letzten Werten und, wenn das Gerät neu
+  gestartet wurde, den letzten Meldungen und Kernel-Warnungen des vorherigen Starts aus dem
+  Systemprotokoll. Ist der Mail-Versand eingerichtet, kommt das auch per Mail. Ein Gerät, das hängt, kann
+  selbst keine Mail schicken – die Meldung folgt nach dem Neustart.
+- **Systemprotokoll lesen:** `setup.sh` speichert das Journal dauerhaft (`/var/log/journal`) und nimmt das
+  Kiosk-Konto in die Gruppe `systemd-journal` auf; das wirkt ab dem nächsten Neustart des Geräts. Ohne
+  diese Rechte fehlen die Kernel-Meldungen im Bericht.
+- **Fernsteuerung:** System → Protokoll zeigt Verläufe der letzten 24 Stunden und die Ereignisse; dort lassen
+  sich das ganze Protokoll und das App-Log herunterladen.
+- **Von Hand nach einem Hänger** (am Gerät):
+  ```bash
+  journalctl --list-boots | tail -3                 # wann neu gestartet wurde
+  sudo journalctl -b -1 -n 80 --no-pager            # letzte Meldungen vor dem Hänger
+  sudo journalctl -b -1 -k -p warning --no-pager    # Kernel-Warnungen (Speicher, Grafik, Platte)
+  ```
+
 ## Lüfter
 
 Die Fernsteuerung zeigt unter **System → Lüfter** alle Lüfter, die der Kernel über hwmon meldet
@@ -563,6 +588,7 @@ dessen eigene Installation (mit `--purge` auch dessen Daten, nicht aber den Benu
 | `uninstall.sh` | Deinstallation |
 | `session-start.sh` | Start des User-Dienstes bei der Anmeldung (Autostart) |
 | `fan-access.sh` | gibt Lüfter-Ausgänge für das Kiosk-Konto frei (von `setup.sh` installiert, über udev aufgerufen) |
+| (kein Skript) Protokoll | `~/.local/state/slatedesk/health.log` und `run.json`, siehe [Protokoll](#protokoll) |
 | `fans-restore.sh` | gibt geregelte Lüfter an Chip/BIOS zurück (`ExecStopPost` von `slatedesk.service`) |
 | `systemd/*.service`, `systemd/*.timer` | User-Units, werden bei Updates automatisch übernommen |
 | `setup-auto-update.sh`, `hourly-restart.sh` | veraltet: Weiterleitung auf `setup.sh` bzw. wirkungslos, damit alte Aufrufe nicht stören |

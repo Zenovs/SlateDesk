@@ -222,14 +222,20 @@ export async function changePin(current: string, next: string): Promise<void> {
 const exportUrl = '/api/export';
 const EXPORT_FILE_NAME = 'slatedesk-state.json';
 
+/** «2026-10-22» in local time – toISOString() would name a file made before 02:00 after the previous day. */
+function dateStamp(): string {
+  const today = new Date();
+  return [today.getFullYear(), today.getMonth() + 1, today.getDate()].map((n) => String(n).padStart(2, '0')).join('-');
+}
+
 /**
- * Downloads the backup as `slatedesk-state-<YYYY-MM-DD>.json`. Unlike a
- * plain link it notices an expired session instead of saving the error.
+ * Saves the answer of `path` as `fileName`. Unlike a plain link it notices an
+ * expired session instead of saving the error.
  */
-export async function downloadExport(): Promise<void> {
+async function saveDownload(path: string, fileName: string): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(exportUrl, { credentials: 'same-origin', cache: 'no-store' });
+    res = await fetch(path, { credentials: 'same-origin', cache: 'no-store' });
   } catch {
     throw new HttpError(0, 'Kiosk nicht erreichbar – Netzwerkverbindung prüfen');
   }
@@ -241,15 +247,64 @@ export async function downloadExport(): Promise<void> {
   const url = URL.createObjectURL(await res.blob());
   const link = document.createElement('a');
   link.href = url;
-  // Local date – toISOString() would name a backup made before 02:00 after the previous day.
-  const today = new Date();
-  const stamp = [today.getFullYear(), today.getMonth() + 1, today.getDate()].map((n) => String(n).padStart(2, '0')).join('-');
-  link.download = EXPORT_FILE_NAME.replace('.json', `-${stamp}.json`);
+  link.download = fileName;
   document.body.append(link);
   link.click();
   link.remove();
   // Revoking right away can cancel the download in some browsers.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/** Downloads the backup as `slatedesk-state-<YYYY-MM-DD>.json`. */
+export function downloadExport(): Promise<void> {
+  return saveDownload(exportUrl, EXPORT_FILE_NAME.replace('.json', `-${dateStamp()}.json`));
+}
+
+// ── Protokoll ────────────────────────────────────────────────────────────────
+
+export type LogLevel = 'info' | 'warn' | 'error';
+
+export interface LogEvent {
+  /** Epoch ms. */
+  t: number;
+  level: LogLevel;
+  text: string;
+  detail: string | null;
+}
+
+export interface LogSample {
+  t: number;
+  memTotalMb: number;
+  memAvailableMb: number;
+  swapUsedMb: number;
+  load1: number;
+  cpuTempC?: number;
+  /** SlateDesk with its WebKit processes. */
+  appMb: number;
+}
+
+export interface LogReport {
+  /** Start of the running app (epoch ms). */
+  started: number;
+  /** Newest first. */
+  events: LogEvent[];
+  /** Last 24 h, oldest first. */
+  samples: LogSample[];
+}
+
+/** GET /api/protokoll – samples and events of the kiosk (src-tauri/src/health.rs). */
+export async function protokoll(signal?: AbortSignal): Promise<LogReport> {
+  return expectObject<LogReport>(await request<unknown>('/api/protokoll', { signal }), 'Protokoll');
+}
+
+/** The whole log as JSON lines. */
+export function downloadProtokoll(): Promise<void> {
+  return saveDownload('/api/protokoll/export', `slatedesk-protokoll-${dateStamp()}.jsonl`);
+}
+
+/** The end of SlateDesk's own app log. */
+export function downloadAppLog(): Promise<void> {
+  return saveDownload('/api/protokoll/app-log', `slatedesk-app-${dateStamp()}.log`);
 }
 
 

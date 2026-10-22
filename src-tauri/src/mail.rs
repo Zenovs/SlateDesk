@@ -19,6 +19,7 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::Notify;
 
+use crate::health::{self, Level};
 use crate::state::StateStore;
 
 const DEFAULT_PORT: u16 = 587;
@@ -226,7 +227,7 @@ fn describe_error(e: &lettre::transport::smtp::Error) -> String {
     }
 }
 
-pub async fn send(config: &MailConfig, subject: &str, body: &str) -> Result<(), String> {
+fn message(config: &MailConfig, subject: &str, body: &str) -> Result<Message, String> {
     let mut builder = Message::builder()
         .from(config.from.clone())
         .subject(clean_subject(subject))
@@ -234,9 +235,13 @@ pub async fn send(config: &MailConfig, subject: &str, body: &str) -> Result<(), 
     for to in &config.to {
         builder = builder.to(to.clone());
     }
-    let message = builder
+    builder
         .body(clean_body(body))
-        .map_err(|e| format!("Mail konnte nicht erstellt werden: {e}"))?;
+        .map_err(|e| format!("Mail konnte nicht erstellt werden: {e}"))
+}
+
+/// TLS always: implicit on port 465, STARTTLS (required) on every other port.
+fn transport(config: &MailConfig) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
     let relay = if config.port == TLS_PORT {
         AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)
     } else {
@@ -253,7 +258,12 @@ pub async fn send(config: &MailConfig, subject: &str, body: &str) -> Result<(), 
             config.password.clone(),
         ))
     };
-    let transport: AsyncSmtpTransport<Tokio1Executor> = relay.build();
+    Ok(relay.build())
+}
+
+pub async fn send(config: &MailConfig, subject: &str, body: &str) -> Result<(), String> {
+    let message = message(config, subject, body)?;
+    let transport = transport(config)?;
     match tokio::time::timeout(COMMAND_TIMEOUT * 2, transport.send(message)).await {
         Ok(Ok(_)) => Ok(()),
         Ok(Err(e)) => Err(describe_error(&e)),
@@ -286,14 +296,17 @@ pub async fn send_test(state: &Value, kiosk_name: &str) -> MailTestResult {
     .await
     {
         Ok(()) => {
-            log::info!("Test-Mail gesendet");
+            health::event(
+                Level::Info,
+                format!("Test-Mail an {} gesendet", config.recipient_list()),
+            );
             MailTestResult {
                 ok: true,
                 message: format!("Test-Mail an {} gesendet", config.recipient_list()),
             }
         }
         Err(message) => {
-            log::warn!("Test-Mail nicht gesendet: {message}");
+            health::event(Level::Warn, format!("Test-Mail nicht gesendet: {message}"));
             MailTestResult { ok: false, message }
         }
     }
@@ -407,7 +420,10 @@ async fn deliver(outbox: &Outbox, config: impl Fn() -> Result<MailConfig, String
             Ok(config) => config,
             Err(reason) => {
                 let dropped = outbox.clear();
-                log::info!("{dropped} Mail(s) nicht gesendet: {reason}");
+                health::event(
+                    Level::Warn,
+                    format!("{dropped} Mail(s) nicht gesendet, z. B. «{subject}»: {reason}"),
+                );
                 outbox.record(&subject, &Err(reason));
                 return;
             }
@@ -416,11 +432,14 @@ async fn deliver(outbox: &Outbox, config: impl Fn() -> Result<MailConfig, String
         outbox.record(&subject, &result);
         match result {
             Ok(()) => {
-                log::info!("Mail gesendet: {subject}");
+                health::event(Level::Info, format!("Mail «{subject}» gesendet"));
                 outbox.remove(id);
             }
             Err(e) => {
-                log::warn!("Mail «{subject}» nicht gesendet, neuer Versuch in einer Minute: {e}");
+                health::event(
+                    Level::Warn,
+                    format!("Mail «{subject}» nicht gesendet, neuer Versuch in einer Minute: {e}"),
+                );
                 return;
             }
         }
@@ -539,6 +558,27 @@ mod tests {
         let named = config(named).unwrap();
         assert_eq!(named.port, 465);
         assert_eq!(named.from.name.as_deref(), Some("Büro"));
+    }
+
+    #[test]
+    fn message_has_sender_recipients_and_encoded_umlauts() {
+        let config = config(json!({
+            "enabled": true,
+            "host": "asmtp.mail.hostpoint.ch",
+            "user": "kiosk@example.ch",
+            "to": "dario@example.ch, team@example.ch",
+        }))
+        .unwrap();
+        let message = message(&config, "Gerät hing – «NAS»", "Zeile 1\nZeile 2 äöü").unwrap();
+        let envelope = message.envelope();
+        assert_eq!(envelope.from().map(|a| a.to_string()).as_deref(), Some("kiosk@example.ch"));
+        assert_eq!(envelope.to().len(), 2);
+        let text = String::from_utf8(message.formatted()).unwrap();
+        assert!(text.contains("From: SlateDesk <kiosk@example.ch>\r\n"), "{text}");
+        assert!(text.contains("To: dario@example.ch, team@example.ch\r\n"), "{text}");
+        assert!(text.contains("Subject: =?utf-8?"), "{text}");
+        assert!(text.contains("Content-Type: text/plain; charset=utf-8\r\n"), "{text}");
+        assert!(text.contains("Date: "), "{text}");
     }
 
     #[test]

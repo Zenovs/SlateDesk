@@ -712,6 +712,57 @@ async fn mail_status() -> Response {
     Json(crate::mail::status()).into_response()
 }
 
+/// Samples of the last 24 h and the newest events of the kiosk's log.
+async fn protokoll_report() -> Response {
+    let Some(log) = crate::health::current() else {
+        return Json(json!({ "started": 0, "events": [], "samples": [] })).into_response();
+    };
+    match tokio::task::spawn_blocking(move || log.report()).await {
+        Ok(report) => Json(report).into_response(),
+        Err(e) => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+fn text_download(body: String, file_name: &str) -> Response {
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                "text/plain; charset=utf-8".to_string(),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename={file_name}"),
+            ),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// The whole log (JSON lines) for a closer look.
+async fn protokoll_export() -> ApiResult {
+    let log = crate::health::current().ok_or_else(|| {
+        ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "Kein Protokoll vorhanden")
+    })?;
+    let body = tokio::task::spawn_blocking(move || log.export())
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(text_download(body, "slatedesk-protokoll.jsonl"))
+}
+
+/// The end of the app log – what SlateDesk itself reported.
+async fn protokoll_app_log() -> ApiResult {
+    let log = crate::health::current().ok_or_else(|| {
+        ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "Kein Protokoll vorhanden")
+    })?;
+    let body = tokio::task::spawn_blocking(move || log.app_log())
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "App-Log nicht gefunden"))?;
+    Ok(text_download(body, "slatedesk-app.log"))
+}
+
 /// Fans with speed, PWM duty and their setting (sysfs reads, off the async threads).
 async fn fans_report(State(ctx): State<WebState>) -> Response {
     let fans = Arc::clone(&ctx.fans);
@@ -1018,6 +1069,9 @@ pub fn router(ctx: WebState) -> Router {
         .route("/mail-test", post(mail_test))
         .route("/mail-status", get(mail_status))
         .route("/fans", get(fans_report).post(fans_update))
+        .route("/protokoll", get(protokoll_report))
+        .route("/protokoll/export", get(protokoll_export))
+        .route("/protokoll/app-log", get(protokoll_app_log))
         .route("/export", get(export_state))
         .route("/import", post(import_state))
         .fallback(api_not_found)

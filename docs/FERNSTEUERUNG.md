@@ -204,6 +204,12 @@ Schlüssel erstellt werden: [API_SETUP.md](../API_SETUP.md).
   «Update fehlgeschlagen». Das Ergebnis des letzten Laufs (auch des nächtlichen) steht ebenfalls hier.
 - **Aktionen** – Neu laden, Identifizieren, Bildschirm aus/an und **App neu starten** (der Bildschirm ist
   einige Sekunden leer, alle Anmeldungen enden).
+- **Protokoll** – jede Minute ein Lebenszeichen (Arbeitsspeicher, Swap, Last, CPU-Temperatur, Speicher von
+  SlateDesk) mit Verläufen der letzten 24 Stunden, dazu Ereignisse: Start und Ende, Bildschirm aus/an,
+  jede Mail mit der Antwort des Servers, Warnungen. Hing das Gerät oder stürzte SlateDesk ab, steht oben
+  *Unerwartetes Ende* mit den letzten Werten und den Meldungen des Systems vor dem Neustart (unter
+  *Details*); per Mail kommt das, sobald das Gerät wieder läuft. Protokoll und App-Log lassen sich
+  herunterladen. Details: [BETRIEB.md](BETRIEB.md#protokoll).
 - **Lüfter** – Drehzahl aller Lüfter, die das Gerät meldet. Lüfter mit steuerbarem Ausgang lassen sich
   einzeln auf *Automatisch* (BIOS), *Fest* (20–100 %) oder *Kurve* (nach der CPU-Temperatur) stellen; ab
   85 °C laufen sie immer mit voller Drehzahl, und endet SlateDesk, regelt wieder das BIOS. Melden sich

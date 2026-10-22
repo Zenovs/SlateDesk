@@ -382,6 +382,11 @@ async fn switch(power: Power) -> Result<String, String> {
         match apply(backend, power).await {
             Ok(()) => {
                 *lock(&WORKING) = Some(backend);
+                let state = if power == Power::Off { "aus" } else { "an" };
+                crate::health::event(
+                    crate::health::Level::Info,
+                    format!("Bildschirm {state} ({})", backend.name()),
+                );
                 return Ok(backend.name().to_string());
             }
             Err(Attempt::Unavailable) => {}
@@ -390,7 +395,7 @@ async fn switch(power: Power) -> Result<String, String> {
     }
     *lock(&WORKING) = None;
     let message = failure_message(power, &failures);
-    log::warn!("{message}");
+    crate::health::event(crate::health::Level::Warn, message.clone());
     Err(message)
 }
 

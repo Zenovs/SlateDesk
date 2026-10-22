@@ -980,6 +980,26 @@ configure_fan_access() {
     fi
 }
 
+# ─── Systemprotokoll ─────────────────────────────────────────────────────────
+# Nach einem Hänger zeigt SlateDesk unter System → Protokoll die letzten Meldungen des
+# vorherigen Starts. Dafür muss das Journal einen Neustart überleben und das Kiosk-Konto es
+# lesen dürfen (Gruppe systemd-journal – wirkt ab dem nächsten Neustart des Geräts).
+configure_journal_access() {
+    if [ ! -d /var/log/journal ]; then
+        mkdir -p /var/log/journal
+        systemd-tmpfiles --create --prefix /var/log/journal >/dev/null 2>&1 || true
+        journalctl --flush >/dev/null 2>&1 || true
+        ok "Systemprotokoll wird jetzt dauerhaft gespeichert (/var/log/journal)."
+    fi
+    getent group systemd-journal >/dev/null 2>&1 || return 0
+    if id -nG "$SD_USER" | tr ' ' '\n' | grep -qx systemd-journal; then
+        ok "$SD_USER darf das Systemprotokoll lesen."
+    else
+        usermod -aG systemd-journal "$SD_USER" || die "$SD_USER konnte nicht zur Gruppe systemd-journal hinzugefügt werden."
+        ok "$SD_USER darf das Systemprotokoll lesen (ab dem nächsten Neustart des Geräts)."
+    fi
+}
+
 # ─── Zusammenfassung ─────────────────────────────────────────────────────────
 summary() {
     local ip release
@@ -1041,6 +1061,7 @@ main() {
     configure_desktop
     configure_autologin
     configure_fan_access
+    configure_journal_access
 
     step "Fernsteuerung"
     configure_ufw

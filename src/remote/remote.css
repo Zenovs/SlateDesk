@@ -3735,3 +3735,131 @@ html.r-scroll-locked {
   overflow-wrap: anywhere;
   user-select: all;
 }
+
+/* Protokoll (System → ProtokollCard) */
+.r-log-summary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.r-log-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.r-log-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--r-surface);
+}
+
+.r-log-chart-head,
+.r-log-chart-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.r-log-chart-head {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.r-log-chart-head strong {
+  color: var(--text-primary);
+}
+
+.r-log-chart-foot {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.r-log-chart svg {
+  width: 100%;
+  height: 56px;
+}
+
+.r-log-chart-line {
+  fill: none;
+  stroke: var(--accent-color);
+  stroke-width: 1.5;
+}
+
+.r-log-chart-area {
+  fill: var(--accent-color);
+  opacity: 0.12;
+}
+
+.r-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.r-log-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.r-log-item:first-child {
+  border-top: 0;
+}
+
+.r-log-item > .r-status-dot,
+.r-log-item > span:first-child {
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.r-log-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.r-log-text {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.r-log-item.is-error .r-log-text {
+  font-weight: 700;
+}
+
+.r-log-time {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.r-log-detail summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.r-log-detail pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 320px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--r-surface);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+

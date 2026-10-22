@@ -2,6 +2,7 @@ mod calendar;
 mod display;
 mod fans;
 mod feeds;
+mod health;
 mod http;
 mod lagra;
 mod mail;
@@ -362,8 +363,25 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(Arc::clone(&fans));
     app.manage(http);
 
+    let health = health::start(app.path().app_log_dir().ok());
+    tauri::async_runtime::spawn(health::run(health));
     tauri::async_runtime::spawn(mail::run_outbox(Arc::clone(&store)));
     tauri::async_runtime::spawn(fans::run(Arc::clone(&fans)));
+    // systemd stops the service with SIGTERM (nightly restart, update, shutdown): a clean exit,
+    // so the fans go back to the BIOS and the next start reports no unexpected end.
+    let quit = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                if term.recv().await.is_some() {
+                    log::info!("SIGTERM – SlateDesk wird beendet");
+                    quit.exit(0);
+                }
+            }
+            Err(e) => log::warn!("SIGTERM wird nicht abgefangen: {e}"),
+        }
+    });
 
     if remote.enabled() {
         let host: Arc<dyn KioskHost> = Arc::new(TauriHost { app: handle });
@@ -437,11 +455,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            // Fans go back to the chip or BIOS; after a crash scripts/fans-restore.sh does it.
+            // Fans go back to the chip or BIOS (after a crash scripts/fans-restore.sh does it),
+            // and the log notes the clean exit.
             if let tauri::RunEvent::Exit = event {
                 if let Some(fans) = app.try_state::<Arc<fans::FanService>>() {
                     fans.restore_all();
                 }
+                health::stop();
             }
         });
 }
