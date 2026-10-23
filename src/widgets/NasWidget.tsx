@@ -386,7 +386,7 @@ function SingleHostView({ statuses, warn, crit, threshold, showSparkline, window
   return (
     <>
       <div className="hostmon-single-head">
-        <span className={`hostmon-pill chart-tone-${tone}`}>
+        <span className={`hostmon-pill chart-tone-${tone} is-${status.state}`}>
           <span className="hostmon-dot" />
           {stateLabel(status, threshold)}
         </span>

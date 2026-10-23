@@ -32,7 +32,9 @@ const AlertPanel: React.FC<{ outages: HostOutage[] }> = ({ outages }) => {
   return (
     <div className="host-alert" role="alert">
       <div className="host-alert-panel">
-        <AlertTriangle className="host-alert-icon" aria-hidden="true" />
+        <div className="host-alert-badge">
+          <AlertTriangle className="host-alert-icon" aria-hidden="true" />
+        </div>
         <div className="host-alert-title">
           {single ? `${outages[0].name} nicht erreichbar` : `${outages.length} Hosts nicht erreichbar`}
         </div>

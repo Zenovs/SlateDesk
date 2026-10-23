@@ -549,7 +549,10 @@
 }
 
 /* Host-Monitor outage: over the dashboard until the hosts answer again. Touches pass through,
-   so the dashboard stays usable; below the identify overlay and the display blackout. */
+   so the dashboard stays usable; below the identify overlay and the display blackout.
+   Meant to catch the eye across the room: the screen edges glow red, the panel pops in and
+   breathes, rings pulse out of the badge – all in one 2 s rhythm. Only opacity and transform
+   are animated, so the compositor does the work and the kiosk does not repaint every frame. */
 .host-alert {
   position: fixed;
   inset: 0;
@@ -558,51 +561,132 @@
   align-items: center;
   justify-content: center;
   padding: var(--spacing-xl);
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.6);
   pointer-events: none;
-  animation: fadeIn 200ms ease;
+  animation: fadeIn 300ms ease;
+}
+
+/* Red glow from the screen edges */
+.host-alert::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 35%, rgba(var(--error-rgb), 0.65) 100%);
+  animation: hostAlertGlow 2s ease-in-out 600ms infinite both;
 }
 
 .host-alert-panel {
-  width: min(1100px, 100%);
+  position: relative;
+  isolation: isolate;
+  width: min(1400px, 100%);
   max-height: 100%;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--spacing-lg);
-  padding: clamp(24px, 4vw, 56px);
-  border: 6px solid rgb(var(--error-rgb));
+  padding: clamp(28px, 4.5vw, 72px);
+  border: 8px solid rgb(var(--error-rgb));
   border-radius: var(--radius-xl);
-  background: #1c0d0d;
+  background: radial-gradient(ellipse at 50% 0%, #5c1414 0%, #240a0a 70%);
   color: #fff;
   text-align: center;
-  animation: hostAlertPulse 1.6s ease-in-out infinite;
+  animation:
+    hostAlertIn 600ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
+    hostAlertBreathe 2s ease-in-out 600ms infinite;
 }
 
-@keyframes hostAlertPulse {
-  0%, 100% {
-    border-color: rgb(var(--error-rgb));
-    box-shadow: 0 0 64px rgba(var(--error-rgb), 0.55);
+/* Glow around and inside the panel, between its background and its content */
+.host-alert-panel::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  z-index: -1;
+  border-radius: inherit;
+  box-shadow:
+    0 0 140px 24px rgba(var(--error-rgb), 0.7),
+    inset 0 0 90px rgba(var(--error-rgb), 0.5);
+  animation: hostAlertGlow 2s ease-in-out 600ms infinite both;
+}
+
+@keyframes hostAlertIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
   }
-  50% {
-    border-color: rgba(var(--error-rgb), 0.45);
-    box-shadow: 0 0 16px rgba(var(--error-rgb), 0.2);
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes hostAlertBreathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+@keyframes hostAlertGlow {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+/* Warning badge, rings pulse out of it */
+.host-alert-badge {
+  position: relative;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: clamp(76px, 10vw, 150px);
+  height: clamp(76px, 10vw, 150px);
+  border-radius: 50%;
+  background: rgb(var(--error-rgb));
+  color: #fff;
+  box-shadow: 0 0 48px rgba(var(--error-rgb), 0.8);
+}
+
+.host-alert-badge::before,
+.host-alert-badge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 4px solid rgb(var(--error-rgb));
+  border-radius: 50%;
+  opacity: 0;
+  animation: hostAlertRing 2s ease-out 600ms infinite;
+}
+
+.host-alert-badge::after {
+  animation-delay: 1600ms;
+}
+
+@keyframes hostAlertRing {
+  from {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.9);
   }
 }
 
 .host-alert-icon {
-  flex-shrink: 0;
-  width: clamp(48px, 7vw, 96px);
-  height: clamp(48px, 7vw, 96px);
-  color: rgb(var(--error-rgb));
+  width: 56%;
+  height: 56%;
+  margin-top: -4%;
+  animation: hostAlertBeat 2s ease-in-out 600ms infinite;
+}
+
+@keyframes hostAlertBeat {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
 }
 
 .host-alert-title {
-  font-size: clamp(32px, 6vw, 88px);
+  font-size: clamp(40px, 7.5vw, 120px);
   font-weight: var(--font-weight-bold);
-  line-height: 1.1;
+  line-height: 1.05;
   word-break: break-word;
+  text-shadow: 0 0 36px rgba(var(--error-rgb), 0.9);
 }
 
 .host-alert-list {
@@ -623,10 +707,11 @@
   justify-content: center;
   align-items: baseline;
   gap: 0.2em 0.8em;
-  padding: 0.35em 0.7em;
+  padding: 0.4em 0.8em;
+  border: 1px solid rgba(var(--error-rgb), 0.4);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.06);
-  font-size: clamp(18px, 2.6vw, 34px);
+  background: rgba(var(--error-rgb), 0.16);
+  font-size: clamp(20px, 3vw, 40px);
   line-height: 1.25;
 }
 
@@ -635,7 +720,7 @@
 }
 
 .host-alert-detail {
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(255, 255, 255, 0.8);
   word-break: break-word;
 }
 
@@ -644,8 +729,24 @@
 }
 
 .host-alert-note {
-  font-size: clamp(14px, 1.6vw, 20px);
-  color: rgba(255, 255, 255, 0.6);
+  font-size: clamp(14px, 1.6vw, 22px);
+  color: rgba(255, 255, 255, 0.65);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .host-alert::before,
+  .host-alert-panel,
+  .host-alert-panel::before,
+  .host-alert-badge::before,
+  .host-alert-badge::after,
+  .host-alert-icon {
+    animation: none;
+  }
+
+  .host-alert::before,
+  .host-alert-panel::before {
+    opacity: 1;
+  }
 }
 
 /* Display schedule: swallows the waking touch; black when the hardware could not be switched off */

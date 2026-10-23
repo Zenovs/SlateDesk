@@ -62,23 +62,39 @@
 
 /* ── Banner ── */
 
+/* A host is down: solid red banner that brightens in a 2 s rhythm, the whole tile glows along.
+   Only opacity and transform are animated (compositor). */
 .hostmon-banner {
+  position: relative;
+  isolation: isolate;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 0.6em;
-  padding: 0.45em 0.75em;
+  gap: 0.7em;
+  padding: 0.6em 0.85em;
   border-radius: var(--radius-md);
-  background: rgba(var(--error-rgb), 0.12);
-  border: 1px solid rgba(var(--error-rgb), 0.4);
+  background: linear-gradient(135deg, rgb(var(--error-rgb)), rgba(var(--error-rgb), 0.75));
+  color: #fff;
+  font-size: 1.1em;
   line-height: 1.25;
+  animation: hostmonPopIn 450ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.hostmon-banner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(ellipse at 20% 50%, rgba(255, 255, 255, 0.35), transparent 70%);
+  animation: hostmonGlow 2s ease-in-out infinite;
 }
 
 .hostmon-banner-icon {
   flex-shrink: 0;
-  width: 1.3em;
-  height: 1.3em;
-  color: var(--error-color);
+  width: 1.5em;
+  height: 1.5em;
+  animation: hostmonBeat 2s ease-in-out infinite;
 }
 
 .hostmon-banner-text {
@@ -89,17 +105,73 @@
   align-items: baseline;
 }
 
-.hostmon-banner-text strong {
-  color: var(--error-color);
-}
-
 .hostmon-banner-text span {
   min-width: 0;
   font-size: 0.9em;
-  color: var(--text-secondary);
+  color: rgba(255, 255, 255, 0.85);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Red, glowing frame around the whole tile while the banner shows */
+.widget-container:has(.hostmon-banner)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 3px solid rgb(var(--error-rgb));
+  border-radius: calc(var(--radius-lg) - 1px);
+  box-shadow: inset 0 0 36px rgba(var(--error-rgb), 0.55);
+  pointer-events: none;
+  animation: hostmonGlow 2s ease-in-out infinite;
+}
+
+@keyframes hostmonPopIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes hostmonGlow {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@keyframes hostmonBeat {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.18); }
+}
+
+/* Ring pulsing out of the status dot of a host that is down */
+@keyframes hostmonPing {
+  from {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+.hostmon-row.is-down .hostmon-dot,
+.hostmon-pill.is-down .hostmon-dot {
+  position: relative;
+}
+
+.hostmon-row.is-down .hostmon-dot::after,
+.hostmon-pill.is-down .hostmon-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  animation: hostmonPing 1.6s ease-out infinite;
 }
 
 /* ── Single host ── */
@@ -227,7 +299,8 @@
 }
 
 .hostmon-row.is-down {
-  background: rgba(var(--error-rgb), 0.1);
+  background: rgba(var(--error-rgb), 0.16);
+  box-shadow: inset 3px 0 0 rgb(var(--error-rgb));
 }
 
 .hostmon-row-main {
@@ -384,6 +457,24 @@
 .hostmon-test-text small {
   color: var(--text-tertiary);
   overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hostmon-banner,
+  .hostmon-banner-icon {
+    animation: none;
+  }
+
+  .hostmon-row.is-down .hostmon-dot::after,
+  .hostmon-pill.is-down .hostmon-dot::after {
+    display: none;
+  }
+
+  .hostmon-banner::before,
+  .widget-container:has(.hostmon-banner)::after {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 /* ── Small widgets ── */
